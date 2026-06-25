@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/App_icon_placeholder.svg/512px-App_icon_placeholder.svg.png">
+  <title>Salary Planner & Net Worth</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Babel for in-browser JSX transpilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Import maps to map generic library names to ESM CDNs -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.292.0",
+      "recharts": "https://esm.sh/recharts@2.1.12",
+      "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
+      "firebase/database": "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js",
+      "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import {
+      Plus, Trash2, Target, Wallet, PieChart as PieIcon, X, RotateCcw,
+      ChevronDown, Settings, Layers, TrendingUp, Check, RefreshCw,
+      ArrowLeftRight, Briefcase, AlertCircle, ArrowUpDown, Landmark, Gem,
+      Users, Cloud, LogOut
+    } from 'lucide-react';
+    import {
+      PieChart, Pie, Cell, ResponsiveContainer,
+      LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip
+    } from 'recharts';
+
+    import { initializeApp } from 'firebase/app';
+    import { getDatabase, ref, onValue, set } from 'firebase/database';
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+
+    /* =========================================================================
+       FIREBASE CONFIGURATION
+       Paste your Firebase config object here. Leave the keys exact.
+       ========================================================================= */
+    const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCOa7lqFMmscv28NBFg3-w3Zbk8P-6WeKY",
+  authDomain: "budget-tracker-app-90727.firebaseapp.com",
+  databaseURL: "https://budget-tracker-app-90727-default-rtdb.firebaseio.com",
+  projectId: "budget-tracker-app-90727",
+  storageBucket: "budget-tracker-app-90727.firebasestorage.app",
+  messagingSenderId: "637224902110",
+  appId: "1:637224902110:web:2946dd0a5aa1e01a61114f"
+};
+
+    let app, db, auth;
+    const isFirebaseConfigured = Object.keys(FIREBASE_CONFIG).length > 0;
+    if (isFirebaseConfigured) {
+      app = initializeApp(FIREBASE_CONFIG);
+      db = getDatabase(app);
+      auth = getAuth(app);
+    }
+
+    /* ----------------------------------------------------------- palette (blue) */
+    const P = {
+      bg: "#E8EDF4", ink: "#15243B", sub: "#56657E", faint: "#8A98AD",
+      line: "#D2DBE7", surface: "#FFFFFF", surfaceAlt: "#F0F4F9",
+      green: "#2C5FA8", greenDeep: "#1B3E73", greenSoft: "#E2EAF6",
+      brass: "#2E8BB0", brassSoft: "#E0EEF4", danger: "#C2533F",
+    };
+    const SEG = [
+      "#2C5FA8", "#6FA0D6", "#1B3E73", "#2E8BB0", "#4C6E9C", "#8FB4DD",
+      "#173B5E", "#5BA7C2", "#3D5A86", "#7E97C4", "#2A6F8E", "#9DB8D9",
+      "#244C7A", "#4F8FB0", "#6678A8", "#87A9CE",
+    ];
+
+    /* ----------------------------------------------------------- helpers */
+    const uid = () => Math.random().toString(36).slice(2, 9);
+    const monthLabel = () => new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    const FAV_CCY = ["USD", "SAR", "PHP", "EUR", "GBP", "AED"];
+    const CCY_NAME = { USD: "US Dollar", SAR: "Saudi Riyal", PHP: "Philippine Peso", EUR: "Euro", GBP: "British Pound", AED: "UAE Dirham", JPY: "Japanese Yen", INR: "Indian Rupee", AUD: "Australian Dollar", CAD: "Canadian Dollar", SGD: "Singapore Dollar" };
+
+    /* Free live FX rates */
+    async function fetchRates() {
+      const res = await fetch("https://open.er-api.com/v6/latest/USD");
+      const data = await res.json();
+      if (!data || data.result !== "success") throw new Error("no rates returned");
+      return { rates: data.rates, at: Date.now() };
+    }
+
+    /* Free live stock quotes */
+    async function fetchQuotes(tickers) {
+      const results = {};
+      for (const ticker of tickers) {
+        try {
+          const url = encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d`);
+          const res = await fetch(`https://api.allorigins.win/raw?url=${url}`);
+          const data = await res.json();
+          if (data?.chart?.result?.[0]?.meta?.regularMarketPrice) results[ticker] = data.chart.result[0].meta.regularMarketPrice;
+        } catch(e) {}
+      }
+      return results;
+    }
+
+    function defaultData() {
+      const groups = [
+        { id: "g1", name: "Invest & Grow" }, { id: "g2", name: "Savings" },
+        { id: "g3", name: "Essentials" }, { id: "g4", name: "Personal" }, { id: "g5", name: "Commitments" },
+      ];
+      const seed = [
+        ["Investment", 3300, "g1"], ["Long Term Savings", 2750, "g1"],
+        ["Savings", 4796, "g2"], ["Misc. Savings", 350, "g2"],
+        ["Bills", 4200, "g3"], ["Allowance", 1305, "g4"], ["Groceries", 1250, "g4"],
+        ["Car Payment", 1100, "g5"]
+      ];
+      const categories = seed.map(([name, amount, groupId], i) => ({ id: uid(), name, amount, groupId, color: SEG[i % SEG.length] }));
+      return {
+        currency: "SAR", activePlanId: "p1",
+        plans: [{ id: "p1", name: "Monthly Salary", month: monthLabel(), income: 22000, groups, categories }],
+        goals: [{ id: uid(), name: "Emergency Fund", target: 60000, saved: 18500, monthly: 2000, color: P.green }],
+        investments: [{ id: uid(), ticker: "VOO", name: "Vanguard S&P 500", broker: "Broker", shares: 5, avgCost: 420, price: 560 }],
+        projection: { monthly: 1500, years: 20 },
+        banks: [{ id: uid(), name: "Salary account", bank: "Bank", country: "SA", currency: "SAR", balance: 12000 }],
+        assets: [{ id: uid(), name: "Car", kind: "asset", currency: "SAR", value: 85000 }],
+        history: [],
+        household: { splitMine: 50, expenses: [] },
+      };
+    }
+
+    /* ----------------------------------------------------------- app */
+    function App() {
+      const [data, setData] = useState(null);
+      const [loaded, setLoaded] = useState(false);
+      const [tab, setTab] = useState("budget");
+      const [editPct, setEditPct] = useState(false);
+      const [showSettings, setShowSettings] = useState(false);
+      const [planMenu, setPlanMenu] = useState(false);
+      const [fbUser, setFbUser] = useState(undefined);
+
+      // 1. Auth Listener
+      useEffect(() => {
+        if (!isFirebaseConfigured) return;
+        return onAuthStateChanged(auth, user => { setFbUser(user); });
+      }, []);
+
+      // 2. Realtime Sync - Read from Firebase
+      useEffect(() => {
+        if (!fbUser) return;
+        const dbRef = ref(db, 'users/' + fbUser.uid + '/data');
+        const unsub = onValue(dbRef, (snap) => {
+          const val = snap.val();
+          if (val) {
+            setData(prev => JSON.stringify(prev) === JSON.stringify(val) ? prev : val);
+          } else {
+            setData(defaultData());
+          }
+          setLoaded(true);
+        });
+        return () => unsub();
+      }, [fbUser]);
+
+      // 3. Realtime Sync - Write to Firebase
+      useEffect(() => {
+        if (!loaded || !data || !fbUser) return;
+        const t = setTimeout(() => {
+          set(ref(db, 'users/' + fbUser.uid + '/data'), data);
+        }, 600); // 600ms debounce
+        return () => clearTimeout(t);
+      }, [data, loaded, fbUser]);
+
+      // Render States
+      if (!isFirebaseConfigured) return <SetupInstructions />;
+      if (fbUser === undefined) return <div className="min-h-screen flex items-center justify-center text-gray-500 font-sans">Loading...</div>;
+      if (fbUser === null) return <AuthScreen />;
+      if (!loaded || !data) return <div className="min-h-screen flex items-center justify-center text-gray-500 font-sans">Syncing workspace...</div>;
+
+      const plan = data.plans.find((p) => p.id === data.activePlanId) || data.plans[0];
+      const cur = data.currency;
+
+      const patchPlan = (patch) => setData((d) => ({ ...d, plans: d.plans.map((p) => (p.id === plan.id ? { ...p, ...patch } : p)) }));
+      const setCategories = (cats) => patchPlan({ categories: cats });
+      const setGroups = (groups) => patchPlan({ groups });
+
+      const updateCat = (id, patch) => setCategories(plan.categories.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      const addCat = (groupId) => setCategories([...plan.categories, { id: uid(), name: "New category", amount: 0, groupId, color: SEG[plan.categories.length % SEG.length] }]);
+      const removeCat = (id) => setCategories(plan.categories.filter((c) => c.id !== id));
+
+      const addGroup = () => setGroups([...plan.groups, { id: uid(), name: "New group" }]);
+      const renameGroup = (id, name) => setGroups(plan.groups.map((g) => (g.id === id ? { ...g, name } : g)));
+      const removeGroup = (id) => { setCategories(plan.categories.filter((c) => c.groupId !== id)); setGroups(plan.groups.filter((g) => g.id !== id)); };
+
+      const addPlan = () => {
+        const id = uid();
+        setData((d) => ({ ...d, activePlanId: id, plans: [...d.plans, { id, name: "New plan", month: monthLabel(), income: 0, groups: [{ id: uid(), name: "General" }], categories: [] }] }));
+        setPlanMenu(false);
+      };
+      const removePlan = (id) => setData((d) => {
+        if (d.plans.length <= 1) return d;
+        const plans = d.plans.filter((p) => p.id !== id);
+        return { ...d, plans, activePlanId: plans[0].id };
+      });
+      const renamePlan = (id, name) => setData((d) => ({ ...d, plans: d.plans.map((p) => (p.id === id ? { ...p, name } : p)) }));
+      
+      const invs = data.investments || [];
+      const addInv = () => setData((d) => ({ ...d, investments: [...(d.investments || []), { id: uid(), ticker: "", name: "", broker: "Broker", shares: 0, avgCost: 0, price: 0 }] }));
+      const updateInv = (id, patch) => setData((d) => ({ ...d, investments: (d.investments || []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+      const removeInv = (id) => setData((d) => ({ ...d, investments: (d.investments || []).filter((x) => x.id !== id) }));
+
+      const allocated = useMemo(() => plan.categories.reduce((s, c) => s + (Number(c.amount) || 0), 0), [plan]);
+      const remaining = (Number(plan.income) || 0) - allocated;
+      const fmt = (n) => `${cur} ${Math.round(Number(n) || 0).toLocaleString("en-US")}`;
+      const pct = (n) => plan.income > 0 ? ((Number(n) || 0) / plan.income) * 100 : 0;
+
+      return (
+        <div style={{ background: P.bg, color: P.ink, minHeight: "100vh" }} className="w-full font-sans">
+          <StyleBlock />
+          <div className="mx-auto" style={{ maxWidth: 920, padding: "0 16px 64px" }}>
+            <header className="pt-7 pb-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2" style={{ color: P.green }}>
+                  <Wallet size={18} strokeWidth={2.2} />
+                  <span className="text-xs font-semibold tracking-widest uppercase" style={{ letterSpacing: "0.18em" }}>Allocation</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-full" style={{ background: P.greenSoft, color: P.greenDeep }}><Cloud size={14}/> Live Sync</span>
+                  <button onClick={() => setShowSettings(true)} className="rounded-full p-2 hover:bg-gray-200 transition" title="Settings" style={{ color: P.sub }}><Settings size={18} /></button>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+                <div className="relative">
+                  <button onClick={() => setPlanMenu((v) => !v)} className="flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1" style={{ background: P.surface, border: `1px solid ${P.line}`, color: P.sub }}>
+                    <Layers size={13} /> {plan.name} <ChevronDown size={13} />
+                  </button>
+                  {planMenu && (
+                    <div className="absolute z-20 mt-1 rounded-xl py-1 shadow-lg" style={{ background: P.surface, border: `1px solid ${P.line}`, minWidth: 260 }}>
+                      {data.plans.map((p) => (
+                        <div key={p.id} className="flex items-center gap-1.5 px-2 py-1">
+                          <button onClick={() => { setData((d) => ({ ...d, activePlanId: p.id })); }} className="shrink-0 rounded-full p-1" style={{ color: p.id === plan.id ? P.green : P.faint }}>
+                            {p.id === plan.id ? <Check size={15} /> : <Layers size={14} />}
+                          </button>
+                          <input value={p.name} onChange={(e) => renamePlan(p.id, e.target.value)} className="bare flex-1 text-sm" style={{ color: p.id === plan.id ? P.green : P.ink, fontWeight: p.id === plan.id ? 600 : 400, minWidth: 0 }} />
+                          {data.plans.length > 1 && <button onClick={() => removePlan(p.id)} className="opacity-50 hover:opacity-100 text-red-500"><Trash2 size={13} /></button>}
+                        </div>
+                      ))}
+                      <button onClick={addPlan} className="flex w-full items-center gap-1.5 px-3 py-1.5 mt-1 text-sm" style={{ color: P.green, borderTop: `1px solid ${P.line}` }}><Plus size={14} /> New blank plan</button>
+                    </div>
+                  )}
+                  <div className="mt-3">
+                    <input value={plan.month} onChange={(e) => patchPlan({ month: e.target.value })} className="bare text-xs font-medium" style={{ color: P.faint, width: 160 }} />
+                    <div className="flex items-baseline gap-2 mt-0.5">
+                      <span className="text-base font-medium" style={{ color: P.sub }}>{cur}</span>
+                      <input type="number" value={plan.income} onChange={(e) => patchPlan({ income: Number(e.target.value) })} className="bare serif tabular-nums" style={{ fontSize: 40, lineHeight: 1.05, fontWeight: 500, width: 220, color: P.ink }} />
+                    </div>
+                  </div>
+                </div>
+                <RemainingChip remaining={remaining} fmt={fmt} />
+              </div>
+              <Ribbon plan={plan} income={Number(plan.income) || 0} remaining={remaining} />
+            </header>
+
+            <nav className="flex flex-wrap gap-1 mb-5">
+              {[["budget", "Budget", Wallet], ["investments", "Investments", TrendingUp], ["overview", "Overview", PieIcon]].map(([id, label, Icon]) => (
+                <button key={id} onClick={() => setTab(id)} className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition" style={tab === id ? { background: P.ink, color: "#fff" } : { background: P.surface, color: P.sub, border: `1px solid ${P.line}` }}>
+                  <Icon size={14} /> {label}
+                </button>
+              ))}
+            </nav>
+
+            {tab === "budget" && <BudgetView {...{ plan, fmt, cur, editPct, setEditPct, updateCat, addCat, removeCat, addGroup, renameGroup, removeGroup }} />}
+            {tab === "investments" && <InvestmentsView {...{ invs, addInv, updateInv, removeInv }} />}
+            {tab === "overview" && <OverviewView {...{ plan, fmt, remaining }} />}
+          </div>
+          {showSettings && <SettingsModal data={data} setData={setData} fbUser={fbUser} onClose={() => setShowSettings(false)} />}
+        </div>
+      );
+    }
+
+    /* ----------------------------------------------------------- Auth Screen */
+    function AuthScreen() {
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [isSignUp, setIsSignUp] = useState(false);
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true); setError('');
+        try {
+          if (isSignUp) await createUserWithEmailAndPassword(auth, email, password);
+          else await signInWithEmailAndPassword(auth, email, password);
+        } catch (err) {
+          setError(err.message.replace('Firebase: ', ''));
+        }
+        setLoading(false);
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4 font-sans" style={{ background: P.bg }}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8 border border-gray-100">
+            <div className="flex justify-center mb-4 text-blue-600"><Users size={40} /></div>
+            <h2 className="text-2xl font-semibold text-center text-gray-800 mb-2">Household Login</h2>
+            <p className="text-center text-sm text-gray-500 mb-6">Create or log into a shared household account to sync your devices.</p>
+            
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Household Email</label>
+                <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. thesmiths@home.com" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Shared Password</label>
+                <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" />
+              </div>
+              {error && <div className="text-xs text-red-500 bg-red-50 p-2 rounded">{error}</div>}
+              <button type="submit" disabled={loading} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm transition">
+                {loading ? 'Authenticating...' : (isSignUp ? 'Create Account' : 'Log In')}
+              </button>
+            </form>
+            <div className="mt-6 text-center text-sm text-gray-500">
+              {isSignUp ? "Already have an account?" : "Need to setup a new household?"} 
+              <button type="button" onClick={() => setIsSignUp(!isSignUp)} className="ml-1 text-blue-600 font-medium hover:underline">
+                {isSignUp ? "Log In" : "Create Account"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ----------------------------------------------------------- Setup Instructions */
+    function SetupInstructions() {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-6 font-sans bg-gray-50">
+          <div className="bg-white rounded-2xl shadow-lg w-full max-w-2xl p-8 border border-gray-200">
+            <h1 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2"><Cloud className="text-blue-600" /> Firebase Configuration Required</h1>
+            <p className="text-gray-600 mb-6">To enable real-time device syncing without a shared Google Account, this app uses Google Firebase. You need to paste your unique Firebase config code into the HTML file.</p>
+            <div className="bg-gray-900 rounded-xl p-4 mb-6 overflow-x-auto text-green-400 text-sm font-mono leading-relaxed">
+              const FIREBASE_CONFIG = &#123;<br/>
+              &nbsp;&nbsp;apiKey: "AIzaSy...",<br/>
+              &nbsp;&nbsp;authDomain: "...",<br/>
+              &nbsp;&nbsp;...<br/>
+              &#125;;
+            </div>
+            <p className="text-gray-500 text-sm">Open <code>index.html</code> in a text editor, find the <code>FIREBASE_CONFIG</code> block near the top, and replace it with your details. Save and refresh this page!</p>
+          </div>
+        </div>
+      );
+    }
+
+    /* ----------------------------------------------------------- components */
+    function StyleBlock() {
+      return (
+        <style>{`
+          * { box-sizing: border-box; }
+          .font-sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+          .serif { font-family: "Iowan Old Style", Georgia, "Times New Roman", serif; }
+          input.bare { background: transparent; border: none; outline: none; padding: 1px 2px; border-radius: 4px; transition: background .12s, box-shadow .12s; }
+          input.bare:hover { background: rgba(0,0,0,0.03); }
+          input.bare:focus { background: rgba(31,111,92,0.08); box-shadow: 0 0 0 1px rgba(31,111,92,0.35); }
+          input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+          input[type=number] { -moz-appearance: textfield; }
+          .ribbon-empty { background-image: repeating-linear-gradient(45deg, #F0F4F9, #F0F4F9 6px, #E0E7ED 6px, #E0E7ED 12px); }
+        `}</style>
+      );
+    }
+
+    function RemainingChip({ remaining, fmt }) {
+      const over = remaining < -0.5;
+      const exact = Math.abs(remaining) <= 0.5;
+      const tone = exact ? '#2C5FA8' : over ? '#C2533F' : '#2E8BB0';
+      const soft = exact ? '#E2EAF6' : over ? "#F3E1DE" : '#E0EEF4';
+      const label = exact ? "Fully allocated" : over ? "Over by" : "Unallocated";
+      return (
+        <div className="rounded-2xl px-4 py-3" style={{ background: soft, border: `1px solid ${tone}33` }}>
+          <div className="text-xs font-medium" style={{ color: tone }}>{label}</div>
+          <div className="text-xl font-semibold tabular-nums mt-0.5" style={{ color: tone }}>{exact ? fmt(0) : fmt(Math.abs(remaining))}</div>
+        </div>
+      );
+    }
+
+    function Ribbon({ plan, income, remaining }) {
+      const segs = plan.categories.filter((c) => Number(c.amount) > 0);
+      const total = Math.max(income, segs.reduce((s, c) => s + Number(c.amount), 0));
+      return (
+        <div className="mt-5">
+          <div className="flex h-4 w-full overflow-hidden rounded-full" style={{ background: '#F0F4F9', border: `1px solid #D2DBE7` }}>
+            {segs.map((c) => (<div key={c.id} className="h-full transition-all duration-300" style={{ width: `${(Number(c.amount) / total) * 100}%`, background: c.color }} />))}
+            {remaining > 0.5 && <div className="h-full flex-1 ribbon-empty" title="Unallocated" />}
+          </div>
+        </div>
+      );
+    }
+
+    function BudgetView({ plan, fmt, cur, editPct, setEditPct, updateCat, addCat, removeCat, addGroup, renameGroup, removeGroup }) {
+      const income = Number(plan.income) || 0;
+      return (
+        <div>
+          <div className="flex justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-600">Categories</h2>
+            <div className="flex gap-1 rounded-full p-0.5 text-xs bg-white border border-gray-200">
+              {["Amount", "%"].map((l, i) => {
+                const active = (i === 1) === editPct;
+                return <button key={l} onClick={() => setEditPct(i === 1)} className="rounded-full px-2.5 py-1 font-medium transition" style={active ? { background: '#15243B', color: "#fff" } : { color: '#56657E' }}>{l}</button>;
+              })}
+            </div>
+          </div>
+          {plan.groups.map((g) => {
+            const cats = plan.categories.filter((c) => c.groupId === g.id);
+            const sub = cats.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+            return (
+              <section key={g.id} className="mb-4 rounded-2xl overflow-hidden bg-white border border-gray-200">
+                <div className="flex justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                  <input value={g.name} onChange={(e) => renameGroup(g.id, e.target.value)} className="bare font-semibold text-sm w-1/2" />
+                  <div className="flex items-center gap-3 text-sm">
+                    <span className="font-medium text-gray-500">{fmt(sub)}</span>
+                    <button onClick={() => removeGroup(g.id)} className="text-red-400 hover:text-red-600"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+                {cats.map(c => (
+                  <div key={c.id} className="flex justify-between px-4 py-2 border-b last:border-b-0 border-gray-100">
+                    <div className="flex items-center gap-2 w-1/2">
+                      <div className="w-3 h-3 rounded-full" style={{ background: c.color }}></div>
+                      <input value={c.name} onChange={(e) => updateCat(c.id, { name: e.target.value })} className="bare text-sm w-full" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {editPct ? (
+                        <div className="text-sm"><input type="number" value={Math.round((c.amount / income) * 100)} onChange={(e) => updateCat(c.id, { amount: (Number(e.target.value) / 100) * income })} className="bare text-right w-12" />%</div>
+                      ) : (
+                        <div className="text-sm text-right"><span className="text-xs text-gray-400 mr-1">{cur}</span><input type="number" value={c.amount} onChange={(e) => updateCat(c.id, { amount: Number(e.target.value) })} className="bare text-right w-20" /></div>
+                      )}
+                      <button onClick={() => removeCat(c.id)} className="text-gray-300 hover:text-red-500"><X size={14} /></button>
+                    </div>
+                  </div>
+                ))}
+                <div className="px-4 py-2 bg-gray-50/30">
+                  <button onClick={() => addCat(g.id)} className="text-xs flex items-center gap-1 font-medium text-blue-600 opacity-80 hover:opacity-100"><Plus size={12} /> Add row</button>
+                </div>
+              </section>
+            );
+          })}
+          <button onClick={addGroup} className="w-full py-2.5 rounded-xl border border-dashed border-gray-300 text-sm flex justify-center items-center gap-2 text-gray-500 hover:bg-gray-50"><Plus size={16} /> Add Group</button>
+        </div>
+      );
+    }
+
+    function InvestmentsView({ invs, addInv, updateInv, removeInv }) {
+      const [loading, setLoading] = useState(false);
+      const refreshQuotes = async () => {
+        setLoading(true);
+        const tickers = invs.map(i => i.ticker).filter(Boolean);
+        if(tickers.length > 0) {
+          const quotes = await fetchQuotes(tickers);
+          for (const inv of invs) if (quotes[inv.ticker]) updateInv(inv.id, { price: quotes[inv.ticker] });
+        }
+        setLoading(false);
+      };
+      
+      return (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="font-semibold text-sm text-gray-600">Portfolio</h2>
+            <button onClick={refreshQuotes} disabled={loading} className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-xs font-semibold flex items-center gap-1">
+              <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> Refresh Live Prices
+            </button>
+          </div>
+          {invs.map(inv => (
+             <div key={inv.id} className="p-4 bg-white rounded-xl border border-gray-200 flex flex-col gap-3">
+                <div className="flex justify-between">
+                  <input value={inv.ticker} onChange={e => updateInv(inv.id, {ticker: e.target.value.toUpperCase()})} placeholder="Ticker (e.g. AAPL)" className="bare font-bold" />
+                  <button onClick={() => removeInv(inv.id)} className="text-red-400"><Trash2 size={16}/></button>
+                </div>
+                <div className="flex gap-4 text-sm bg-gray-50 p-2 rounded-lg">
+                  <label className="flex-1 flex flex-col text-gray-500 text-xs">Shares <input type="number" value={inv.shares} onChange={e => updateInv(inv.id, {shares: Number(e.target.value)})} className="bare mt-1 text-sm font-medium text-gray-900" /></label>
+                  <label className="flex-1 flex flex-col text-gray-500 text-xs">Avg Cost <input type="number" value={inv.avgCost} onChange={e => updateInv(inv.id, {avgCost: Number(e.target.value)})} className="bare mt-1 text-sm font-medium text-gray-900" /></label>
+                  <label className="flex-1 flex flex-col text-blue-600 text-xs font-semibold">Live Price <input type="number" value={inv.price} onChange={e => updateInv(inv.id, {price: Number(e.target.value)})} className="bare mt-1 text-sm text-blue-700" /></label>
+                </div>
+             </div>
+          ))}
+          <button onClick={addInv} className="w-full py-3 border border-dashed border-gray-300 rounded-xl flex items-center justify-center gap-2 text-sm text-gray-500 hover:bg-gray-50"><Plus size={16}/> Add Investment</button>
+        </div>
+      );
+    }
+
+    function OverviewView({ plan, fmt, remaining }) {
+      const chartData = plan.categories.filter(c => c.amount > 0).map(c => ({ name: c.name, value: c.amount, fill: c.color }));
+      if (remaining > 0) chartData.push({ name: 'Unallocated', value: remaining, fill: '#E0E7ED' });
+      return (
+        <div className="p-6 rounded-2xl flex flex-col items-center bg-white border border-gray-200">
+          <h2 className="text-lg font-semibold mb-2">Allocation Overview</h2>
+          <div style={{ width: '100%', height: 320 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={chartData} cx="50%" cy="50%" innerRadius={85} outerRadius={120} dataKey="value" stroke="none">
+                  {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
+                </Pie>
+                <Tooltip formatter={(value) => fmt(value)} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3 w-full">
+            {chartData.map((d, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs text-gray-600"><span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: d.fill }}></span> <span className="truncate">{d.name}</span> <span className="font-medium text-gray-400">({Math.round(d.value/plan.income*100)}%)</span></div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function SettingsModal({ data, setData, fbUser, onClose }) {
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="font-semibold flex items-center gap-2"><Settings size={18}/> Settings</h2>
+              <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100"><X size={18}/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold flex items-center gap-2 text-blue-900"><Cloud size={16}/> Sync Status</h3>
+                  <span className="text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full font-medium">Online</span>
+                </div>
+                <p className="text-xs text-blue-700/80 mb-3">Logged in securely as:<br/><strong className="text-blue-900">{fbUser.email}</strong></p>
+                <button onClick={() => signOut(auth)} className="w-full py-2 bg-white border border-blue-200 text-blue-800 rounded shadow-sm text-xs font-semibold flex justify-center items-center gap-2 hover:bg-blue-50"><LogOut size={14}/> Log Out</button>
+              </div>
+              <div className="pt-2">
+                <button onClick={() => setData(defaultData())} className="w-full py-2.5 bg-red-50 text-red-600 rounded-lg text-sm font-medium flex justify-center items-center gap-2 hover:bg-red-100 transition"><RotateCcw size={16}/> Reset to Sample Data</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Initialize React
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
