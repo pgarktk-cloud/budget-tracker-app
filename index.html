@@ -3,18 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="apple-touch-icon" href="https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/App_icon_placeholder.svg/512px-App_icon_placeholder.svg.png">
-  <title>Salary Planner & Net Worth</title>
-  
-  <!-- Tailwind CSS -->
+  <title>Salary Planner</title>
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- Babel for in-browser JSX transpilation -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Import maps to map generic library names to ESM CDNs -->
   <script type="importmap">
   {
     "imports": {
@@ -32,45 +25,28 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useMemo, useRef } from 'react';
+  <script type="text/babel">
+    import React, { useState, useEffect, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import {
-      Plus, Trash2, Target, Wallet, PieChart as PieIcon, X, RotateCcw,
-      ChevronDown, Settings, Layers, TrendingUp, Check, RefreshCw,
-      ArrowLeftRight, Briefcase, AlertCircle, ArrowUpDown, Landmark, Gem,
-      Users, Cloud, LogOut
-    } from 'lucide-react';
-    import {
-      PieChart, Pie, Cell, ResponsiveContainer,
-      LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip
-    } from 'recharts';
-
+    import { Plus, Trash2, Wallet, PieChart as PieIcon, X, RotateCcw, ChevronDown, Settings, Layers, TrendingUp, Check, RefreshCw, Users, Cloud, LogOut } from 'lucide-react';
+    import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
     import { initializeApp } from 'firebase/app';
     import { getDatabase, ref, onValue, set } from 'firebase/database';
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 
-    /* =========================================================================
-       FIREBASE CONFIGURATION
-       Paste your Firebase config object here. Leave the keys exact.
-       ========================================================================= */
     const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCOa7lqFMmscv28NBFg3-w3Zbk8P-6WeKY",
-  authDomain: "budget-tracker-app-90727.firebaseapp.com",
-  databaseURL: "https://budget-tracker-app-90727-default-rtdb.firebaseio.com",
-  projectId: "budget-tracker-app-90727",
-  storageBucket: "budget-tracker-app-90727.firebasestorage.app",
-  messagingSenderId: "637224902110",
-  appId: "1:637224902110:web:2946dd0a5aa1e01a61114f"
-};
+      apiKey: "AIzaSyCOa7lqFMmscv28NBFg3-w3Zbk8P-6WeKY",
+      authDomain: "budget-tracker-app-90727.firebaseapp.com",
+      databaseURL: "https://budget-tracker-app-90727-default-rtdb.firebaseio.com",
+      projectId: "budget-tracker-app-90727",
+      storageBucket: "budget-tracker-app-90727.firebasestorage.app",
+      messagingSenderId: "637224902110",
+      appId: "1:637224902110:web:2946dd0a5aa1e01a61114f"
+    };
 
-    let app, db, auth;
-    const isFirebaseConfigured = Object.keys(FIREBASE_CONFIG).length > 0;
-    if (isFirebaseConfigured) {
-      app = initializeApp(FIREBASE_CONFIG);
-      db = getDatabase(app);
-      auth = getAuth(app);
-    }
+    const app = initializeApp(FIREBASE_CONFIG);
+    const db = getDatabase(app);
+    const auth = getAuth(app);
 
     /* ----------------------------------------------------------- palette (blue) */
     const P = {
