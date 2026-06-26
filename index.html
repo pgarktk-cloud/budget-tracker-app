@@ -175,47 +175,98 @@ async function fetchRates() {
    Stooq symbol convention: US tickers get ".us" suffix, e.g. aapl.us
    Returns { TICKER: priceUSD, ... }
    ========================================================================= */
-// Finnhub free API key — get yours free at https://finnhub.io (takes 30 seconds)
-// Paste your key below after signing up:
-const FINNHUB_API_KEY = "d8v0c6hr01qrt65ul4k0d8v0c6hr01qrt65ul4kg";
+// ── API KEYS FOR LIVE STOCK PRICES ────────────────────────────────────────
+// Finnhub  (US stocks: AAPL, VOO, MSFT…)  free at https://finnhub.io
+const FINNHUB_API_KEY   = "d8v0c6hr01qrt65ul4k0d8v0c6hr01qrt65ul4kg";
+// Twelve Data (international: VWRA, LSE, Euronext…) free at https://twelvedata.com
+const TWELVEDATA_API_KEY = "5442b0f679b74eb89da9d76e049b9bf5";
+// ───────────────────────────────────────────────────────────────────────────
 
-/* Live stock quotes via Finnhub (free, CORS-open, 60 calls/min).
-   Falls back to Yahoo Finance as a secondary attempt. */
+/* Ticker routing helper.
+   Twelve Data uses  VWRA:LSE  format for international tickers.
+   If a user types  VWRA  we try Finnhub first (returns nothing for LSE),
+   then Twelve Data with common suffixes automatically. */
+const LSE_SUFFIX_RE   = /\.L$/i;
+const EURONEXT_RE     = /\.PA$|\.AS$|\.BR$|\.LI$/i;
+const XETRA_RE        = /\.DE$/i;
+
+function toTwelveSymbol(t) {
+  // already has exchange suffix the user typed, e.g. VWRA.L
+  if (LSE_SUFFIX_RE.test(t))   return t.replace(LSE_SUFFIX_RE,   '') + ':LSE';
+  if (EURONEXT_RE.test(t))     return t.replace(/\.[A-Z]+$/i,    '') + ':XPAR'; // rough default
+  if (XETRA_RE.test(t))        return t.replace(XETRA_RE,        '') + ':XETR';
+  // bare ticker — pass as-is; Twelve Data will match US exchange first
+  return t.toUpperCase();
+}
+
+/* Live quotes — three-tier waterfall:
+   1. Finnhub   → real-time US (AAPL, VOO, etc.)
+   2. Twelve Data → international + any US tickers Finnhub missed (VWRA, VWCE, etc.)
+   3. Yahoo Finance → last-ditch no-key fallback (CORS unreliable but worth trying) */
 async function fetchQuotes(tickers) {
   const out = {};
 
-  // --- Primary: Finnhub ---
-  if (!FINNHUB_API_KEY.startsWith("PASTE_")) {
+  // ── 1. Finnhub (US, real-time) ─────────────────────────────────────────
+  if (!FINNHUB_API_KEY.startsWith('PASTE_')) {
     await Promise.all(tickers.map(async (t) => {
       try {
         const r = await fetch(
-          `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t.toUpperCase())}&token=${FINNHUB_API_KEY}`
+          \`https://finnhub.io/api/v1/quote?symbol=\${encodeURIComponent(t.toUpperCase())}&token=\${FINNHUB_API_KEY}\`
         );
         if (!r.ok) return;
         const j = await r.json();
-        // j.c = current price, j.pc = previous close
         const price = j.c && j.c > 0 ? j.c : (j.pc && j.pc > 0 ? j.pc : null);
         if (price) out[t.toUpperCase()] = price;
       } catch (e) { /* skip */ }
     }));
-    if (Object.keys(out).length > 0) return out;
   }
 
-  // --- Fallback: Yahoo Finance v8 (no key, may have CORS issues on some networks) ---
-  await Promise.all(tickers.map(async (t) => {
-    if (out[t.toUpperCase()]) return; // already got it from Finnhub
+  // ── 2. Twelve Data (international + anything Finnhub missed) ───────────
+  const needTwelve = tickers.filter(t => !out[t.toUpperCase()]);
+  if (needTwelve.length > 0 && !TWELVEDATA_API_KEY.startsWith('PASTE_')) {
+    // Twelve Data accepts a comma-separated list — one API call for all missing tickers
+    const symbols = needTwelve.map(toTwelveSymbol).join(',');
     try {
       const r = await fetch(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(t.toUpperCase())}?interval=1d&range=1d`
+        \`https://api.twelvedata.com/price?symbol=\${encodeURIComponent(symbols)}&apikey=\${TWELVEDATA_API_KEY}\`
       );
-      if (!r.ok) return;
-      const j = await r.json();
-      const price = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (price && price > 0) out[t.toUpperCase()] = price;
+      if (r.ok) {
+        const j = await r.json();
+        needTwelve.forEach((t, i) => {
+          const sym = toTwelveSymbol(t);
+          // response is { sym: { price: "123.45" } } for multi, or { price: "123.45" } for single
+          const entry = needTwelve.length === 1 ? j : j[sym];
+          if (entry && entry.price && !entry.code) { // code field = error
+            const price = parseFloat(entry.price);
+            if (price > 0) out[t.toUpperCase()] = price;
+          }
+        });
+      }
     } catch (e) { /* skip */ }
-  }));
+  }
 
-  if (Object.keys(out).length === 0) throw new Error("no quotes");
+  // ── 3. Yahoo Finance (no key, last resort, may have CORS issues) ────────
+  const needYahoo = tickers.filter(t => !out[t.toUpperCase()]);
+  if (needYahoo.length > 0) {
+    await Promise.all(needYahoo.map(async (t) => {
+      // Yahoo uses .L suffix for LSE: VWRA → VWRA.L
+      const sym = t.toUpperCase();
+      const attempts = [sym, sym + '.L', sym + '.AS']; // try bare, then LSE, then Euronext
+      for (const s of attempts) {
+        try {
+          const r = await fetch(
+            \`https://query1.finance.yahoo.com/v8/finance/chart/\${encodeURIComponent(s)}?interval=1d&range=1d\`
+          );
+          if (!r.ok) continue;
+          const j = await r.json();
+          const price = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
+          if (price && price > 0) { out[sym] = price; break; }
+        } catch (e) { /* skip */ }
+      }
+    }));
+  }
+
+  if (Object.keys(out).length === 0) throw new Error('no quotes');
   return out;
 }
 
@@ -1087,9 +1138,9 @@ function InvestmentsView({ invs, addInv, updateInv, removeInv, sarRate, projecti
       else if (hit < tickers.length) setErr("Some tickers weren't found — those still need manual prices.");
       setUpdatedAt(Date.now());
     } catch (e) { setErr(
-      FINNHUB_API_KEY.startsWith("PASTE_")
-        ? "Add your free Finnhub API key to index.html to enable live prices (see instructions below)."
-        : "Live quotes failed — check your Finnhub key or edit prices by hand."
+      FINNHUB_API_KEY.startsWith("PASTE_") && TWELVEDATA_API_KEY.startsWith("PASTE_")
+        ? "Add a Finnhub key (US) and/or Twelve Data key (international) to enable live prices."
+        : "Live quotes failed — check your API keys or edit prices by hand."
     ); }
     setLoading(false);
   };
@@ -1122,9 +1173,13 @@ function InvestmentsView({ invs, addInv, updateInv, removeInv, sarRate, projecti
           <I.Refresh size={14} style={loading ? { animation:"spin .9s linear infinite" } : null} /> {loading ? "Fetching…" : "Refresh prices"}
         </button>
       </div>
-      {FINNHUB_API_KEY.startsWith("PASTE_") && !err && (
+      {(FINNHUB_API_KEY.startsWith("PASTE_") || TWELVEDATA_API_KEY.startsWith("PASTE_")) && !err && (
         <div style={{ fontSize:12, color:P.brass, marginBottom:8, padding:"8px 12px", background:P.brassSoft, borderRadius:8 }}>
-          ⚠️ Live prices need a free Finnhub API key — see the setup instructions below, or edit prices by hand.
+          {FINNHUB_API_KEY.startsWith("PASTE_") && TWELVEDATA_API_KEY.startsWith("PASTE_")
+            ? "⚠️ Add a free Finnhub key (US stocks) and/or Twelve Data key (VWRA + international) to enable live prices."
+            : FINNHUB_API_KEY.startsWith("PASTE_")
+              ? "ℹ️ Twelve Data active for international tickers (VWRA etc). Add a free Finnhub key for real-time US stocks."
+              : "ℹ️ Finnhub active for US stocks. Add a free Twelve Data key to also fetch VWRA and other international tickers."}
         </div>
       )}
       {err && <div style={{ fontSize:12, color:P.danger, marginBottom:8 }}>{err}</div>}
