@@ -205,7 +205,7 @@ function migrate(d) {
    Uses Google Identity Services token client (no backend needed).
    Set your OAuth Client ID below after the setup steps in the guide.
    ========================================================================= */
-const GOOGLE_CLIENT_ID = "PASTE_YOUR_GOOGLE_CLIENT_ID_HERE";
+const GOOGLE_CLIENT_ID = "162677799244-aobgmvtfsdb5resdf06pao8vn47a18ln.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const DRIVE_FILENAME = "allocation-data.json";
 
