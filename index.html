@@ -1,56 +1,61 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@18.2.0",
-      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-      "lucide-react": "https://esm.sh/lucide-react@0.292.0",
-      "recharts": "https://esm.sh/recharts@2.1.12",
-      "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
-      "firebase/database": "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js",
-      "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js"
-    }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Allocation — Salary &amp; Net Worth</title>
+
+<!-- PWA: lets you "Add to Home Screen" as a real app on iPad / iPhone / Android / Windows -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#15243B" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Allocation" />
+<link rel="apple-touch-icon" href="icon-180.png" />
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js" crossorigin></script>
+<!-- Google Identity for Drive sync -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<style>
+  :root{
+    --bg:#E8EDF4; --ink:#15243B; --sub:#56657E; --faint:#8A98AD;
+    --line:#D2DBE7; --surface:#FFFFFF; --surfaceAlt:#F0F4F9;
+    --green:#2C5FA8; --greenDeep:#1B3E73; --greenSoft:#E2EAF6;
+    --brass:#2E8BB0; --brassSoft:#E0EEF4; --danger:#C2533F;
   }
-  </script>
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);
+    -webkit-text-size-adjust:100%;
+  }
+  .serif{font-family:"Iowan Old Style",Georgia,"Times New Roman",serif;}
+  .tabular-nums{font-variant-numeric:tabular-nums;}
+  input.bare{
+    background:transparent;border:none;outline:none;padding:1px 2px;
+    border-radius:4px;transition:background .12s,box-shadow .12s;font:inherit;color:inherit;
+  }
+  input.bare:hover{background:rgba(0,0,0,0.03);}
+  input.bare:focus{background:rgba(44,95,168,0.08);box-shadow:0 0 0 1px rgba(44,95,168,0.35);}
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+  input[type=number]{-moz-appearance:textfield;}
+  button{cursor:pointer;font:inherit;}
+  .spin{animation:spin .9s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  :focus-visible{outline:2px solid var(--green);outline-offset:1px;}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;}}
+  /* safe-area padding so the app isn't under the iPad/iPhone notch when installed */
+  #root{padding-top:env(safe-area-inset-top);}
+</style>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="text/babel">
-    import React, { useState, useEffect } from 'react';
-    import { createRoot } from 'react-dom/client';
-    import { initializeApp } from 'firebase/app';
-    import { getDatabase } from 'firebase/database';
-    import { getAuth } from 'firebase/auth';
-
-    const FIREBASE_CONFIG = {
-      apiKey: "AIzaSyCOa7lqFMmscv28NBFg3-w3Zbk8P-6WeKY",
-      authDomain: "budget-tracker-app-90727.firebaseapp.com",
-      databaseURL: "https://budget-tracker-app-90727-default-rtdb.firebaseio.com",
-      projectId: "budget-tracker-app-90727",
-      storageBucket: "budget-tracker-app-90727.firebasestorage.app",
-      messagingSenderId: "637224902110",
-      appId: "1:637224902110:web:2946dd0a5aa1e01a61114f"
-    };
-
-    initializeApp(FIREBASE_CONFIG);
-    
-    // Minimal app skeleton to test if it loads
-    function App() {
-      return (
-        <div className="p-10 text-center font-sans">
-          <h1 className="text-2xl font-bold">App is running!</h1>
-          <p>If you see this, the code is valid.</p>
-        </div>
-      );
-    }
-    
-    createRoot(document.getElementById('root')).render(<App />);
-  </script>
+<div id="root"></div>
+<script type="text/babel" data-presets="react" src="app.jsx"></script>
 </body>
 </html>
