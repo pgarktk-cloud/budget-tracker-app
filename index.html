@@ -1,0 +1,2237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>Allocation — Salary &amp; Net Worth</title>
+<link rel="manifest" href="manifest.webmanifest"/>
+<meta name="theme-color" content="#15243B"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Allocation"/>
+<link rel="apple-touch-icon" href="icon-180.png"/>
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.10/babel.min.js" crossorigin="anonymous"></script>
+<style>
+:root{
+  --bg:#E8EDF4;--ink:#15243B;--sub:#56657E;--faint:#8A98AD;
+  --line:#D2DBE7;--sf:#FFFFFF;--sfA:#F0F4F9;
+  --gr:#2C5FA8;--grD:#1B3E73;--grS:#E2EAF6;
+  --br:#2E8BB0;--brS:#E0EEF4;--red:#C2533F;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;}
+.serif{font-family:"Iowan Old Style",Georgia,serif;}
+.tnum{font-variant-numeric:tabular-nums;}
+input.bare{background:transparent;border:none;outline:none;padding:1px 2px;border-radius:4px;transition:background .12s,box-shadow .12s;font:inherit;color:inherit;}
+input.bare:hover{background:rgba(0,0,0,.04);}
+input.bare:focus{background:rgba(44,95,168,.08);box-shadow:0 0 0 1px rgba(44,95,168,.35);}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
+input[type=number]{-moz-appearance:textfield;}
+button{cursor:pointer;font:inherit;}
+select{font:inherit;}
+.spin{animation:spin .9s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+:focus-visible{outline:2px solid var(--gr);outline-offset:1px;}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;}}
+#root{padding-top:env(safe-area-inset-top);}
+#loading{position:fixed;inset:0;background:#E8EDF4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;}
+.loader{width:32px;height:32px;border:3px solid #D2DBE7;border-top-color:#2C5FA8;border-radius:50%;animation:spin .8s linear infinite;}
+.modal-bg{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(12,22,40,.45);}
+.modal{border-radius:18px;padding:20px;width:100%;max-width:400px;max-height:88vh;overflow-y:auto;background:var(--sf);}
+</style>
+</head>
+<body>
+<div id="loading"><div class="loader"></div><span>Loading Allocation…</span></div>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const{useState,useEffect,useMemo,useRef,useCallback}=React;
+const _RC=(typeof Recharts!=='undefined')?Recharts:window.Recharts||{};
+const{PieChart,Pie,Cell,ResponsiveContainer,LineChart,Line,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
+
+/* ── palette ── */
+const P={bg:"#E8EDF4",ink:"#15243B",sub:"#56657E",faint:"#8A98AD",line:"#D2DBE7",sf:"#FFFFFF",sfA:"#F0F4F9",gr:"#2C5FA8",grD:"#1B3E73",grS:"#E2EAF6",br:"#2E8BB0",brS:"#E0EEF4",red:"#C2533F"};
+const SEG=["#2C5FA8","#6FA0D6","#1B3E73","#2E8BB0","#4C6E9C","#8FB4DD","#173B5E","#5BA7C2","#3D5A86","#7E97C4","#2A6F8E","#9DB8D9","#244C7A","#4F8FB0","#6678A8","#87A9CE"];
+
+/* ── icons ── */
+const Ic=(paths,vb="0 0 24 24")=>(p)=>React.createElement("svg",{width:p.size||16,height:p.size||16,viewBox:vb,fill:"none",stroke:"currentColor",strokeWidth:p.sw||2,strokeLinecap:"round",strokeLinejoin:"round",style:p.style,className:p.className},paths);
+const I={
+  Plus:Ic([<line key="h" x1="12" y1="5" x2="12" y2="19"/>,<line key="v" x1="5" y1="12" x2="19" y2="12"/>]),
+  X:Ic([<line key="a" x1="18" y1="6" x2="6" y2="18"/>,<line key="b" x1="6" y1="6" x2="18" y2="18"/>]),
+  Trash:Ic([<polyline key="a" points="3 6 5 6 21 6"/>,<path key="b" d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>]),
+  Settings:Ic([<circle key="c" cx="12" cy="12" r="3"/>,<path key="p" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>]),
+  Wallet:Ic([<path key="a" d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/>,<path key="b" d="M3 5v14a2 2 0 0 0 2 2h16v-5"/>,<path key="c" d="M18 12a2 2 0 0 0 0 4h4v-4z"/>]),
+  Layers:Ic([<polygon key="a" points="12 2 2 7 12 12 22 7 12 2"/>,<polyline key="b" points="2 17 12 22 22 17"/>,<polyline key="c" points="2 12 12 17 22 12"/>]),
+  Target:Ic([<circle key="a" cx="12" cy="12" r="10"/>,<circle key="b" cx="12" cy="12" r="6"/>,<circle key="c" cx="12" cy="12" r="2"/>]),
+  Trending:Ic([<polyline key="a" points="23 6 13.5 15.5 8.5 10.5 1 18"/>,<polyline key="b" points="17 6 23 6 23 12"/>]),
+  Gem:Ic([<path key="a" d="M6 3h12l4 6-10 13L2 9z"/>,<path key="b" d="M11 3 8 9l4 13 4-13-3-6"/>,<path key="c" d="M2 9h20"/>]),
+  Swap:Ic([<polyline key="a" points="17 1 21 5 17 9"/>,<path key="b" d="M3 11V9a4 4 0 0 1 4-4h14"/>,<polyline key="c" points="7 23 3 19 7 15"/>,<path key="d" d="M21 13v2a4 4 0 0 1-4 4H3"/>]),
+  PieI:Ic([<path key="a" d="M21.21 15.89A10 10 0 1 1 8 2.83"/>,<path key="b" d="M22 12A10 10 0 0 0 12 2v10z"/>]),
+  Bank:Ic([<line key="a" x1="3" y1="22" x2="21" y2="22"/>,<line key="b" x1="6" y1="18" x2="6" y2="11"/>,<line key="c" x1="10" y1="18" x2="10" y2="11"/>,<line key="d" x1="14" y1="18" x2="14" y2="11"/>,<line key="e" x1="18" y1="18" x2="18" y2="11"/>,<polygon key="f" points="12 2 20 7 4 7"/>]),
+  Users:Ic([<path key="a" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>,<circle key="b" cx="9" cy="7" r="4"/>,<path key="c" d="M23 21v-2a4 4 0 0 0-3-3.87"/>,<path key="d" d="M16 3.13a4 4 0 0 1 0 7.75"/>]),
+  Refresh:Ic([<polyline key="a" points="23 4 23 10 17 10"/>,<polyline key="b" points="1 20 1 14 7 14"/>,<path key="c" d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>]),
+  Check:Ic([<polyline key="a" points="20 6 9 17 4 12"/>]),
+  Chevron:Ic([<polyline key="a" points="6 9 12 15 18 9"/>]),
+  Cloud:Ic([<path key="a" d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>]),
+  Download:Ic([<path key="a" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>,<polyline key="b" points="7 10 12 15 17 10"/>,<line key="c" x1="12" y1="15" x2="12" y2="3"/>]),
+  Upload:Ic([<path key="a" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>,<polyline key="b" points="17 8 12 3 7 8"/>,<line key="c" x1="12" y1="3" x2="12" y2="15"/>]),
+  Reset:Ic([<polyline key="a" points="1 4 1 10 7 10"/>,<path key="b" d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>]),
+  ArrowUp:Ic([<line key="a" x1="12" y1="19" x2="12" y2="5"/>,<polyline key="b" points="5 12 12 5 19 12"/>]),
+  ArrowDown:Ic([<line key="a" x1="12" y1="5" x2="12" y2="19"/>,<polyline key="b" points="19 12 12 19 5 12"/>]),
+  Calendar:Ic([<rect key="a" x="3" y="4" width="18" height="18" rx="2"/>,<line key="b" x1="16" y1="2" x2="16" y2="6"/>,<line key="c" x1="8" y1="2" x2="8" y2="6"/>,<line key="d" x1="3" y1="10" x2="21" y2="10"/>]),
+  PiggyBank:Ic([<path key="a" d="M19 11a7.5 7.5 0 0 1-7.5 7.5A7.5 7.5 0 0 1 4 11v-1a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v1z"/>,<path key="b" d="M19 11c.9 0 1.8.2 2.6.5L23 9l-2-1.5"/>,<path key="c" d="M9 11v-1"/>,<path key="d" d="M8 15h8"/>]),
+  Receipt:Ic([<polyline key="a" points="6 2 3 6 3 22 21 22 21 6 18 2"/>,<rect key="b" x="6" y="2" width="12" height="6"/>,<line key="c" x1="8" y1="13" x2="16" y2="13"/>,<line key="d" x1="8" y1="17" x2="16" y2="17"/>]),
+};
+
+/* ── utils ── */
+const uid=()=>Math.random().toString(36).slice(2,9);
+const STORAGE_KEY="salaryPlanner:v3";
+const monthLabel=()=>new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
+const FX_CODES=["USD","SAR","PHP","AED","EUR","GBP","JPY","INR","AUD","CAD","SGD"];
+const BANK_CCY=["SAR","PHP","USD","AED","EUR","GBP"];
+const COUNTRIES=[["SA","Saudi Arabia"],["PH","Philippines"],["Other","Other"]];
+
+/* ── Cloudflare Worker URL ──
+   Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
+const PROXY_URL="https://alloc-kv.jastinefodra21.workers.dev";
+// e.g. "https://allocation-proxy.yourname.workers.dev"
+
+/* ── FX rates (free, no key) ── */
+async function fetchRates(){
+  try{
+    const r=await fetch("https://open.er-api.com/v6/latest/USD");
+    if(r.ok){const j=await r.json();if(j&&j.rates){const rt={};FX_CODES.forEach(c=>{if(j.rates[c]!=null)rt[c]=j.rates[c];});rt.USD=1;return{rates:rt,at:Date.now()};}}
+  }catch(e){}
+  try{
+    const r=await fetch("https://api.frankfurter.app/latest?from=USD&to="+FX_CODES.filter(c=>c!=="USD").join(","));
+    if(r.ok){const j=await r.json();if(j&&j.rates){return{rates:{USD:1,...j.rates},at:Date.now()};}}
+  }catch(e){}
+  throw new Error("no rates");
+}
+
+/* ── Stock quotes via Cloudflare Worker proxy ──
+   Worker fetches Yahoo Finance server-side (no CORS), returns JSON.
+   Finnhub handles US stocks directly as a fast fallback.                 */
+const FINNHUB_KEY="d8v0c6hr01qrt65ul4k0d8v0c6hr01qrt65ul4kg";
+
+/* Map tickers to the right Yahoo symbol.
+   VWRA → VWRA.L (LSE), bare US tickers stay as-is.                      */
+const LSE_SET=new Set(["VWRA","VWRP","VWCE","VWRL","CSPX","EIMI","SWDA","IGLN","IUSA","ISF","HMWO","SSAC","VAGP","AGGG"]);
+function toYahooSym(t){
+  const b=t.toUpperCase().replace(/\.L$/i,"");
+  return LSE_SET.has(b)?b+".L":b;
+}
+function baseKey(t){return t.toUpperCase().replace(/\.L$|\.AS$|\.DE$/i,"");}
+
+async function fetchQuotes(tickers){
+  const out={};
+
+  /* ── 1. Cloudflare Worker → Yahoo Finance (handles VWRA + all tickers) */
+  if(!PROXY_URL.startsWith("PASTE_")){
+    const syms=tickers.map(toYahooSym).join(",");
+    try{
+      const r=await fetch(`${PROXY_URL}/quote?symbols=${encodeURIComponent(syms)}`);
+      if(r.ok){
+        const j=await r.json();
+        Object.entries(j).forEach(([sym,price])=>{
+          if(price>0)out[baseKey(sym)]=price;
+        });
+      }
+    }catch(e){}
+  }
+
+  /* ── 2. Finnhub direct (US, real-time, no proxy needed) ── */
+  if(!FINNHUB_KEY.startsWith("PASTE_")){
+    const missing=tickers.filter(t=>!out[baseKey(t)]);
+    await Promise.all(missing.map(async t=>{
+      try{
+        const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(baseKey(t))}&token=${FINNHUB_KEY}`);
+        if(!r.ok)return;
+        const j=await r.json();
+        const p=j.c>0?j.c:(j.pc>0?j.pc:null);
+        if(p)out[baseKey(t)]=p;
+      }catch(e){}
+    }));
+  }
+
+  if(Object.keys(out).length===0)throw new Error("no quotes");
+  return out;
+}
+
+/* ── Projection helper ── */
+function projectSeries(start,monthly,years,annualPct){
+  const r=annualPct/100/12;const out=[];
+  for(let y=0;y<=years;y++){
+    const m=y*12;
+    const fv=r===0?start+monthly*m:start*Math.pow(1+r,m)+monthly*((Math.pow(1+r,m)-1)/r);
+    out.push(Math.round(fv));
+  }
+  return out;
+}
+
+/* ── Compute holding stats from trade log ── */
+function holdingStats(trades=[]){
+  let shares=0,cost=0;
+  (trades||[]).forEach(tr=>{
+    const s=Number(tr.shares)||0,p=Number(tr.price)||0;
+    if(tr.type==="buy"){shares+=s;cost+=s*p;}
+    else if(tr.type==="sell"){
+      const avgBefore=shares>0?cost/shares:0;
+      shares=Math.max(0,shares-s);
+      cost=shares*avgBefore;
+    }
+  });
+  const avgCost=shares>0?cost/shares:0;
+  return{shares,avgCost,totalCost:cost};
+}
+
+/* ── Liability remaining balance (auto-decrements by month) ── */
+function liabilityBalance(liab){
+  if(!liab.installment)return Number(liab.value)||0;
+  const{monthly,monthsRemaining,asOfDate}=liab;
+  if(!monthly||!monthsRemaining||!asOfDate)return Number(liab.value)||0;
+  const now=new Date();
+  const ref=new Date(asOfDate);
+  const elapsed=Math.max(0,(now.getFullYear()-ref.getFullYear())*12+(now.getMonth()-ref.getMonth()));
+  const remaining=Math.max(0,monthsRemaining-elapsed);
+  return(Number(monthly)||0)*remaining;
+}
+
+/* ── Default data ── */
+function defaultData(){
+  const groups=[{id:"g1",name:"Invest & Grow"},{id:"g2",name:"Savings"},{id:"g3",name:"Essentials"},{id:"g4",name:"Personal"},{id:"g5",name:"Commitments"}];
+  const seed=[
+    ["Investment (GoTrade)",3300,"g1"],["Long Term Savings",2750,"g1"],
+    ["Savings (Seabank)",4796,"g2"],["Misc. Savings",350,"g2"],
+    ["Bills",4200,"g3"],["Subscriptions",209,"g3"],["Postpaid Bill",90,"g3"],
+    ["Allowance",1305,"g4"],["Shopping",1250,"g4"],["Gym",750,"g4"],
+    ["Charlene",750,"g4"],["Braces",150,"g4"],
+    ["Toyota Raize",1100,"g5"],["Tuition Fee Wife",1000,"g5"],
+  ];
+  const categories=seed.map(([name,amount,groupId],i)=>({id:uid(),name,amount,groupId,color:SEG[i%SEG.length],subs:[]}));
+  const buyDate=new Date().toISOString().slice(0,10);
+  return{
+    currency:"SAR",owners:{me:"Me",wife:"My wife"},
+    activePlanId:{me:"p1",wife:"pw1"},
+    plans:[
+      {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:22000,groups,categories},
+      {id:"pw1",owner:"wife",name:"Monthly Salary",month:monthLabel(),income:0,
+       groups:[{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"}],
+       categories:[
+         {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[]},
+         {id:uid(),name:"Bills",amount:0,groupId:"wg2",color:SEG[3],subs:[]},
+         {id:uid(),name:"Shopping",amount:0,groupId:"wg3",color:SEG[5],subs:[]},
+       ]},
+    ],
+    goals:[
+      {id:uid(),owner:"me",name:"Emergency Fund",target:60000,contributions:[{id:uid(),date:buyDate,amount:18500,note:"Opening balance"}],monthly:2000,color:P.gr},
+      {id:uid(),owner:"me",name:"Family Trip",target:25000,contributions:[{id:uid(),date:buyDate,amount:6000,note:""}],monthly:1000,color:P.br},
+      {id:uid(),owner:"wife",name:"New Laptop",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
+    ],
+    investments:[
+      {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",
+       trades:[{id:uid(),date:buyDate,type:"buy",shares:10,price:180}]},
+      {id:uid(),ticker:"VOO",name:"Vanguard S&P 500",broker:"GoTrade",
+       trades:[{id:uid(),date:buyDate,type:"buy",shares:5,price:420}]},
+      {id:uid(),ticker:"VWRA",name:"Vanguard FTSE All-World",broker:"GoTrade",
+       trades:[{id:uid(),date:buyDate,type:"buy",shares:8,price:160}]},
+    ],
+    livePrice:{},
+    projection:{monthly:1500,years:20,rate:8},
+    banks:[
+      {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000},
+      {id:uid(),owner:"me",name:"Savings",bank:"BDO",country:"PH",currency:"PHP",balance:150000},
+      {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000},
+    ],
+    assets:[
+      {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000},
+      {id:uid(),name:"Car loan",kind:"liability",currency:"SAR",value:0,
+       installment:true,monthly:1100,monthsRemaining:24,asOfDate:new Date().toISOString().slice(0,10)},
+    ],
+    history:[],
+    household:{splitMine:50,expenses:[
+      {id:uid(),name:"Rent",amount:2000,color:SEG[0]},
+      {id:uid(),name:"Transport",amount:500,color:SEG[3]},
+      {id:uid(),name:"Groceries",amount:1200,color:SEG[5]},
+      {id:uid(),name:"Utilities",amount:400,color:SEG[8]},
+    ]},
+  };
+}
+
+function migrate(d){
+  if(!d||typeof d!=="object")return defaultData();
+  if(!d.owners)d.owners={me:"Me",wife:"My wife"};
+  // migrate activePlanId from string to {me, wife}
+  if(typeof d.activePlanId==="string"){
+    const oldId=d.activePlanId;
+    d.activePlanId={me:oldId,wife:null};
+    // create a blank wife plan if none exists
+    if(!(d.plans||[]).find(p=>p.owner==="wife")){
+      const wid=uid();
+      d.plans=[...(d.plans||[]),{id:wid,owner:"wife",name:"Monthly Salary",
+        month:monthLabel(),income:0,
+        groups:[{id:uid(),name:"Savings"},{id:uid(),name:"Essentials"},{id:uid(),name:"Personal"}],
+        categories:[]}];
+      d.activePlanId.wife=wid;
+    }
+  }
+  if(!d.activePlanId||typeof d.activePlanId!=="object")d.activePlanId={me:(d.plans||[])[0]?.id,wife:null};
+  // ensure all plans have an owner
+  (d.plans||[]).forEach(p=>{if(!p.owner)p.owner="me";});
+  // ensure wife activePlanId points to a real plan
+  if(!d.activePlanId.wife){
+    const wifePlan=(d.plans||[]).find(p=>p.owner==="wife");
+    if(wifePlan)d.activePlanId.wife=wifePlan.id;
+  }
+  // ensure expenses have owner
+  (d.expenses||[]).forEach(e=>{if(!e.owner)e.owner="me";});
+  // ensure monthlyPlans have owner
+  (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";});
+  (d.banks||[]).forEach(b=>{if(!b.owner)b.owner="me";});
+  (d.goals||[]).forEach(g=>{
+    if(!g.owner)g.owner="me";
+    // migrate old saved→contributions
+    if(g.saved!==undefined&&!g.contributions){
+      g.contributions=[{id:uid(),date:new Date().toISOString().slice(0,10),amount:g.saved,note:"Migrated balance"}];
+      delete g.saved;
+    }
+    if(!g.contributions)g.contributions=[];
+  });
+  (d.plans||[]).forEach(plan=>{
+    (plan.categories||[]).forEach(c=>{
+      if(!c.subs)c.subs=[];
+    });
+  });
+  (d.investments||[]).forEach(inv=>{
+    // migrate old shares/avgCost→trades
+    if(!inv.trades){
+      const s=Number(inv.shares)||0,a=Number(inv.avgCost)||0;
+      inv.trades=s>0?[{id:uid(),date:new Date().toISOString().slice(0,10),type:"buy",shares:s,price:a}]:[];
+      delete inv.shares;delete inv.avgCost;
+    }
+  });
+  (d.assets||[]).forEach(a=>{
+    if(a.kind==="liability"&&!a.installment){a.installment=false;}
+  });
+  if(!d.livePrice)d.livePrice={};
+  if(!d.portHistory)d.portHistory=[];
+  if(!d.expenses)d.expenses=[];
+  if(!d.monthlyPlans)d.monthlyPlans=[];
+  return d;
+}
+
+/* ── Cloudflare KV Sync ──────────────────────────────────────────────────────
+   No login ever required. Set SYNC_TOKEN to the same secret you put in worker.js.
+   The Worker URL is already set above as PROXY_URL.
+   ─────────────────────────────────────────────────────────────────────────── */
+const SYNC_TOKEN="kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
+
+const KVSync={
+  lastPulledAt:null,
+  _ready(){return !PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");},
+  _headers(){return{"Content-Type":"application/json","X-Sync-Token":SYNC_TOKEN};},
+  async load(){
+    if(!this._ready())return null;
+    const r=await fetch(`${PROXY_URL}/sync`,{headers:this._headers()});
+    if(!r.ok)return null;
+    const j=await r.json();
+    if(j.savedAt)this.lastPulledAt=j.savedAt;
+    return j.data||null;
+  },
+  async save(data){
+    if(!this._ready())return{ok:false,reason:"not configured"};
+    const body=JSON.stringify({data,savedAt:new Date().toISOString(),lastPulledAt:this.lastPulledAt});
+    const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
+    if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
+    const j=await r.json();
+    if(j.savedAt)this.lastPulledAt=j.savedAt;
+    return j;
+  },
+  async checkMeta(){
+    if(!this._ready())return null;
+    const r=await fetch(`${PROXY_URL}/sync/meta`,{headers:this._headers()});
+    if(!r.ok)return null;
+    return await r.json();
+  },
+};
+
+/* ════════════════════════════════════════════════════════════════════════
+   MAIN APP
+   ════════════════════════════════════════════════════════════════════════ */
+function App(){
+  const[data,setData]=useState(defaultData);
+  const[loaded,setLoaded]=useState(false);
+  const[tab,setTab]=useState("budget");
+  const[planMenu,setPlanMenu]=useState(false);
+  const[showSettings,setShowSettings]=useState(false);
+  const[syncMsg,setSyncMsg]=useState("");
+  const[syncing,setSyncing]=useState(false);
+  const[lastSyncedAt,setLastSyncedAt]=useState(null);
+  const skipSave=useRef(false);
+  const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
+
+  /* load */
+  useEffect(()=>{
+    try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)setData(migrate(JSON.parse(raw)));}catch(e){}
+    setLoaded(true);
+    if(typeof window.__hideLoading==="function")window.__hideLoading();
+  },[]);
+
+  /* persist */
+  useEffect(()=>{
+    if(!loaded)return;
+    if(skipSave.current){skipSave.current=false;return;}
+    const t=setTimeout(async()=>{
+      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
+      if(kvReady){
+        try{
+          setSyncing(true);
+          const result=await KVSync.save(data);
+          if(result.conflict){
+            setSyncMsg("⚠️ Conflict — tap Pull to get latest");
+          }else{
+            setLastSyncedAt(new Date());
+            setSyncMsg("Synced ✓");
+          }
+        }catch(e){setSyncMsg("Sync failed — saved locally");}
+        setSyncing(false);setTimeout(()=>setSyncMsg(""),3000);
+      }
+    },600);
+    return()=>clearTimeout(t);
+  },[data,loaded,kvReady]);
+
+  /* KV pull — fetch latest from Cloudflare KV */
+  const pullKV=async()=>{
+    if(!kvReady){setSyncMsg("Add Worker URL + sync token first");setTimeout(()=>setSyncMsg(""),3000);return;}
+    try{
+      setSyncing(true);setSyncMsg("Pulling…");
+      const remote=await KVSync.load();
+      if(remote&&Array.isArray(remote.plans)){
+        skipSave.current=true;
+        setData(migrate(remote));
+        setLastSyncedAt(new Date());
+        setSyncMsg("Up to date ✓");
+      }else setSyncMsg("Nothing saved yet — will sync on next change");
+    }catch(e){setSyncMsg("Pull failed — check Worker URL");}
+    setSyncing(false);setTimeout(()=>setSyncMsg(""),3000);
+  };
+
+  /* which owner is active in Budget/Expenses tabs */
+  const[budgetOwner,setBudgetOwner]=useState("me");
+
+  /* active plan for each owner */
+  const activePlanId=data.activePlanId||{me:data.plans?.[0]?.id,wife:null};
+  const plan=data.plans.find(p=>p.id===activePlanId[budgetOwner])||
+             data.plans.find(p=>p.owner===budgetOwner)||
+             data.plans[0];
+  const cur=data.currency;
+
+  /* plan mutators — always operate on current budgetOwner's plan */
+  const patchPlan=patch=>setData(d=>({...d,plans:d.plans.map(p=>p.id===plan.id?{...p,...patch}:p)}));
+  const setCats=cats=>patchPlan({categories:cats});
+  const setGrps=gs=>patchPlan({groups:gs});
+  const updateCat=(id,patch)=>setCats(plan.categories.map(c=>c.id===id?{...c,...patch}:c));
+  const addCat=gid=>setCats([...plan.categories,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[plan.categories.length%SEG.length],subs:[]}]);
+  const removeCat=id=>setCats(plan.categories.filter(c=>c.id!==id));
+  const addSub=catId=>setCats(plan.categories.map(c=>c.id===catId?{...c,subs:[...(c.subs||[]),{id:uid(),name:"New item",amount:0}]}:c));
+  const updateSub=(catId,subId,patch)=>setCats(plan.categories.map(c=>c.id===catId?{...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}:c));
+  const removeSub=(catId,subId)=>setCats(plan.categories.map(c=>c.id===catId?{...c,subs:(c.subs||[]).filter(s=>s.id!==subId)}:c));
+  const addGroup=()=>setGrps([...plan.groups,{id:uid(),name:"New group"}]);
+  const renameGroup=(id,name)=>setGrps(plan.groups.map(g=>g.id===id?{...g,name}:g));
+  const removeGroup=id=>{setCats(plan.categories.filter(c=>c.groupId!==id));setGrps(plan.groups.filter(g=>g.id!==id));};
+
+  /* add a new plan for the current owner */
+  const addPlan=()=>{
+    const id=uid();
+    setData(d=>({...d,
+      activePlanId:{...activePlanId,[budgetOwner]:id},
+      plans:[...d.plans,{id,owner:budgetOwner,name:"New plan",month:monthLabel(),
+        income:0,groups:[{id:uid(),name:"General"}],categories:[]}]
+    }));
+    setPlanMenu(false);
+  };
+  const removePlan=id=>setData(d=>{
+    const ownerPlans=d.plans.filter(p=>p.owner===budgetOwner);
+    if(ownerPlans.length<=1)return d;
+    const plans=d.plans.filter(p=>p.id!==id);
+    const fallback=plans.find(p=>p.owner===budgetOwner)?.id||plans[0]?.id;
+    return{...d,plans,activePlanId:{...activePlanId,[budgetOwner]:fallback}};
+  });
+  const renamePlan=(id,name)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===id?{...p,name}:p)}));
+  const switchPlan=id=>setData(d=>({...d,activePlanId:{...activePlanId,[budgetOwner]:id}}));
+
+  /* ── monthly budget plans ──
+     monthlyPlans: [{ month:"2026-06", planId:"p1" }]
+     Maps each calendar month to a specific budget plan.
+     Falls back to activePlanId when no mapping exists. */
+  const monthlyPlans=data.monthlyPlans||[];
+
+  /* owner-aware: find the plan for a given month + owner */
+  const planForMonth=(mo,owner=budgetOwner)=>{
+    const mapping=monthlyPlans.find(m=>m.month===mo&&m.owner===owner);
+    const pid=mapping?mapping.planId:activePlanId[owner];
+    return data.plans.find(p=>p.id===pid)||data.plans.find(p=>p.owner===owner)||data.plans[0];
+  };
+
+  const assignPlanToMonth=(mo,planId,owner=budgetOwner)=>setData(d=>({
+    ...d,
+    monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId}]
+  }));
+
+  const clonePlanForMonth=(mo,sourcePlanId,owner=budgetOwner)=>{
+    const source=data.plans.find(p=>p.id===sourcePlanId)||data.plans[0];
+    const newId=uid();
+    const cloned={
+      ...source,
+      id:newId,
+      name:new Date(Number(mo.split("-")[0]),Number(mo.split("-")[1])-1,1)
+        .toLocaleDateString("en-US",{month:"long",year:"numeric"}),
+      month:new Date(Number(mo.split("-")[0]),Number(mo.split("-")[1])-1,1)
+        .toLocaleDateString("en-US",{month:"long",year:"numeric"}),
+      // deep-clone groups and categories so edits don't affect source
+      groups:source.groups.map(g=>({...g,id:uid()})),
+      categories:source.categories.map((c,i)=>{
+        const newGid=source.groups[source.groups.findIndex(g=>g.id===c.groupId)];
+        return{...c,id:uid(),subs:(c.subs||[]).map(s=>({...s,id:uid()}))};
+      }),
+    };
+    // fix groupIds to point to new group ids
+    const groupIdMap={};
+    source.groups.forEach((g,i)=>{groupIdMap[g.id]=cloned.groups[i].id;});
+    cloned.categories=cloned.categories.map(c=>({...c,groupId:groupIdMap[c.groupId]||c.groupId}));
+
+    cloned.owner=owner;
+    setData(d=>({
+      ...d,
+      plans:[...d.plans,cloned],
+      monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:newId}]
+    }));
+    return newId;
+  };
+
+  const removePlanForMonth=(mo,owner=budgetOwner)=>setData(d=>({
+    ...d,monthlyPlans:(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner))
+  }));
+
+  /* goals */
+  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length]}]}));
+  const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch}:g)}));
+  const removeGoal=id=>setData(d=>({...d,goals:d.goals.filter(g=>g.id!==id)}));
+  const addContribution=(goalId,amount,note="")=>{
+    const contrib={id:uid(),date:new Date().toISOString().slice(0,10),amount:Number(amount),note};
+    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib]}:g)}));
+  };
+  const removeContribution=(goalId,cid)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).filter(c=>c.id!==cid)}:g)}));
+
+  /* investments */
+  const invs=data.investments||[];
+  const addInv=()=>setData(d=>({...d,investments:[...(d.investments||[]),{id:uid(),ticker:"",name:"",broker:"",trades:[]}]}));
+  const updateInv=(id,patch)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,...patch}:x)}));
+  const removeInv=id=>setData(d=>({...d,investments:(d.investments||[]).filter(x=>x.id!==id)}));
+  const addTrade=(invId,trade)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}]}:x)}));
+  const removeTrade=(invId,tid)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).filter(t=>t.id!==tid)}:x)}));
+  const setProjection=patch=>setData(d=>({...d,projection:{...(d.projection||{monthly:1500,years:20,rate:8}),...patch}}));
+  const livePrice=data.livePrice||{};
+  const setLivePrice=prices=>setData(d=>({...d,livePrice:{...(d.livePrice||{}),...prices}}));
+
+  /* portfolio history — snapshot of total USD value taken when user refreshes prices */
+  const portHistory=data.portHistory||[];
+  const addPortSnap=(valueUSD)=>{
+    const month=new Date().toISOString().slice(0,7);
+    setData(d=>{
+      const rest=(d.portHistory||[]).filter(h=>h.month!==month);
+      return{...d,portHistory:[...rest,{id:uid(),month,value:Math.round(valueUSD)}].sort((a,b)=>a.month.localeCompare(b.month))};
+    });
+  };
+
+  /* expense tracker — transactions per budget category */
+  const expenses=data.expenses||[];
+  const addExpenseTx=(catId,name,amount,date,owner=budgetOwner)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,amount:Number(amount),date,owner}]}));
+  const removeExpenseTx=id=>setData(d=>({...d,expenses:(d.expenses||[]).filter(e=>e.id!==id)}));
+
+  /* FX */
+  const[rates,setRates]=useState(null);
+  const[ratesAt,setRatesAt]=useState(null);
+  const[ratesErr,setRatesErr]=useState(false);
+  const[ratesLoading,setRatesLoading]=useState(false);
+  const loadRates=async()=>{
+    setRatesLoading(true);setRatesErr(false);
+    try{const{rates:r,at}=await fetchRates();setRates(r);setRatesAt(at);}
+    catch(e){setRatesErr(true);}
+    setRatesLoading(false);
+  };
+  useEffect(()=>{loadRates();},[]);
+  const convert=(amt,from,to)=>{
+    if(!rates||!rates[from]||!rates[to])return null;
+    return(Number(amt)||0)/rates[from]*rates[to];
+  };
+  const sarRate=rates&&rates.SAR?rates.SAR:null;
+
+  /* banks */
+  const banks=data.banks||[];
+  const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0}]}));
+  const updateBank=(id,patch)=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,...patch}:b)}));
+  const removeBank=id=>setData(d=>({...d,banks:(d.banks||[]).filter(b=>b.id!==id)}));
+
+  /* assets */
+  const assets=data.assets||[];
+  const addAsset=kind=>setData(d=>({...d,assets:[...(d.assets||[]),
+    kind==="liability"
+      ?{id:uid(),name:"New liability",kind:"liability",currency:"SAR",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10)}
+      :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",value:0}
+  ]}));
+  const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch}:a)}));
+  const removeAsset=id=>setData(d=>({...d,assets:(d.assets||[]).filter(a=>a.id!==id)}));
+
+  /* net worth */
+  const sarOf=(amt,ccy)=>{const v=convert(amt,ccy,"SAR");return v==null?0:v;};
+  const banksSar=banks.reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+  const invSar=invs.reduce((s,hld)=>{
+    const{shares}=holdingStats(hld.trades);
+    const price=livePrice[baseKey(hld.ticker)]||0;
+    return s+shares*price*(sarRate||0);
+  },0);
+  const assetSar=assets.filter(a=>a.kind==="asset").reduce((s,a)=>s+sarOf(a.value,a.currency),0);
+  const liabSar=assets.filter(a=>a.kind==="liability").reduce((s,a)=>s+sarOf(liabilityBalance(a),a.currency),0);
+  const netWorth=banksSar+invSar+assetSar-liabSar;
+
+  /* history */
+  const history=data.history||[];
+  const captureSnapshot=()=>{
+    const month=new Date().toISOString().slice(0,7);
+    setData(d=>{const rest=(d.history||[]).filter(h=>h.month!==month);
+      return{...d,history:[...rest,{id:uid(),month,net:Math.round(netWorth),banks:Math.round(banksSar),investments:Math.round(invSar),assets:Math.round(assetSar),liabilities:Math.round(liabSar)}].sort((a,b)=>a.month.localeCompare(b.month))};});
+  };
+  const addPastSnap=(month,net)=>setData(d=>{const rest=(d.history||[]).filter(h=>h.month!==month);
+    return{...d,history:[...rest,{id:uid(),month,net:Math.round(net),banks:0,investments:0,assets:0,liabilities:0}].sort((a,b)=>a.month.localeCompare(b.month))};});
+  const removeSnap=id=>setData(d=>({...d,history:(d.history||[]).filter(h=>h.id!==id)}));
+
+  /* household */
+  const hh=data.household||{splitMine:50,expenses:[]};
+  const setSplit=v=>setData(d=>({...d,household:{...(d.household||{splitMine:50,expenses:[]}),splitMine:v}}));
+  const addExpense=()=>setData(d=>{const h=d.household||{splitMine:50,expenses:[]};return{...d,household:{...h,expenses:[...h.expenses,{id:uid(),name:"New expense",amount:0,color:SEG[h.expenses.length%SEG.length]}]}};});
+  const updateExpense=(id,patch)=>setData(d=>{const h=d.household;return{...d,household:{...h,expenses:h.expenses.map(e=>e.id===id?{...e,...patch}:e)}};});
+  const removeExpense=id=>setData(d=>{const h=d.household;return{...d,household:{...h,expenses:h.expenses.filter(e=>e.id!==id)}};});
+
+  const setOwnerName=(key,name)=>setData(d=>({...d,owners:{...d.owners,[key]:name}}));
+
+  /* derived */
+  const allocated=useMemo(()=>plan.categories.reduce((s,c)=>s+(Number(c.amount)||0),0),[plan]);
+  const remaining=(Number(plan.income)||0)-allocated;
+  const fmt=n=>`${cur} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
+  const pct=n=>plan.income>0?((Number(n)||0)/plan.income)*100:0;
+
+  const TABS=[
+    ["budget","Budget",I.Wallet],["expenses","Expenses",I.Receipt],["household","Household",I.Users],
+    ["banks","Banks",I.Bank],["investments","Investments",I.Trending],
+    ["networth","Net Worth",I.Gem],["goals","Goals",I.Target],
+    ["currency","Currency",I.Swap],["overview","Overview",I.PieI],
+  ];
+
+  return(
+    <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
+      <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px 80px"}}>
+
+        {/* header */}
+        <header style={{paddingTop:28,paddingBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,color:P.gr}}>
+              <I.Wallet size={18} sw={2.2}/>
+              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Allocation</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
+              <button onClick={pullKV} title={kvReady?"Pull latest from Cloudflare KV":"Configure Worker URL and sync token to enable sync"}
+                style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
+                  background:kvReady?P.grS:P.sf,color:kvReady?P.grD:P.sub,border:`1px solid ${kvReady?P.grS:P.line}`}}>
+                <I.Cloud size={13} style={syncing?{animation:"spin .9s linear infinite"}:null}/>
+                {lastSyncedAt?"Synced":kvReady?"Pull":"Sync"}
+              </button>
+              <button onClick={()=>setShowSettings(true)} style={{borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
+                <I.Settings size={18}/>
+              </button>
+            </div>
+          </div>
+
+          <div style={{marginTop:16,display:"flex",flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between",gap:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,color:P.sub}}>
+              <I.Wallet size={13}/>
+              <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>{plan.month} · Income</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
+                <span style={{fontSize:14,color:P.sub}}>{cur}</span>
+                <input type="number" value={plan.income} onChange={e=>patchPlan({income:Number(e.target.value)})}
+                  className="bare tnum serif" style={{fontSize:30,fontWeight:600,width:170,textAlign:"right",color:P.ink}}/>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* tabs */}
+        <nav style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:20}}>
+          {TABS.map(([id,label,Icon])=>(
+            <button key={id} onClick={()=>setTab(id)}
+              style={tab===id
+                ?{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.ink,color:"#fff",border:"none"}
+                :{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.sf,color:P.sub,border:`1px solid ${P.line}`}}>
+              <Icon size={14}/>{label}
+            </button>
+          ))}
+        </nav>
+
+        {tab==="budget"&&<BudgetView {...{plan,plans:data.plans,fmt,pct,cur,updateCat,addCat,removeCat,addSub,updateSub,removeSub,addGroup,renameGroup,removeGroup,allocated,remaining,budgetOwner,setBudgetOwner,owners:data.owners,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu}}/>}
+        {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,removeExpenseTx,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners}}/>}
+        {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
+        {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
+        {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
+        {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
+        {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert}}/>}
+        {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
+        {tab==="overview"&&<OverviewView {...{plan,fmt,pct,allocated,remaining}}/>}
+      </div>
+      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),pullKV,kvReady,lastSyncedAt,setOwnerName,owners:data.owners}}/>}
+    </div>
+  );
+}
+
+/* ── BUDGET VIEW — percentage shown inline beside amount ── */
+function BudgetView({plan,plans,fmt,pct,cur,updateCat,addCat,removeCat,addSub,updateSub,removeSub,addGroup,renameGroup,removeGroup,allocated,remaining,budgetOwner,setBudgetOwner,owners,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu}){
+  /* filter to only this owner's plans for the plan switcher */
+  const ownerPlans=(plans||[]).filter(p=>p.owner===budgetOwner);
+  const[expandedSubs,setExpandedSubs]=useState({});
+  const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
+  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+
+  /* Effective amount for a category:
+     if it has subs, display the sum of subs (and keep manual input for override if subs empty)
+     The amount field is always editable; subs sum auto-fills it when subs exist. */
+  const effectiveAmt=c=>{
+    const subs=c.subs||[];
+    if(subs.length>0)return subs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
+    return Number(c.amount)||0;
+  };
+
+  /* When a sub changes, update the parent amount to the new subs sum */
+  const handleSubChange=(catId,subId,patch)=>{
+    updateSub(catId,subId,patch);
+    // re-compute total after update (optimistic — React batches this)
+    const cat=plan.categories.find(c=>c.id===catId);
+    if(!cat)return;
+    const newSubs=(cat.subs||[]).map(s=>s.id===subId?{...s,...patch}:s);
+    const sum=newSubs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
+    updateCat(catId,{amount:sum});
+  };
+  const handleAddSub=catId=>{
+    addSub(catId);
+    setExpandedSubs(s=>({...s,[catId]:true}));
+  };
+  const handleRemoveSub=(catId,subId)=>{
+    removeSub(catId,subId);
+    // re-sum after removal
+    const cat=plan.categories.find(c=>c.id===catId);
+    if(!cat)return;
+    const newSubs=(cat.subs||[]).filter(s=>s.id!==subId);
+    const sum=newSubs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
+    updateCat(catId,{amount:sum});
+  };
+
+  return(
+    <div>
+      {/* ── owner toggle ── */}
+      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+
+      {/* ── plan switcher for this owner ── */}
+      <PlanSwitcher {...{ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu,fmt,cur}}/>
+
+      <div style={{...card,padding:16,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Allocated {fmt(allocated)}</span>
+          <span style={{fontSize:13,fontWeight:600,color:remaining<0?P.red:P.gr}}>
+            {remaining<0?"Over by ":"Left "}{fmt(Math.abs(remaining))}
+          </span>
+        </div>
+        <div style={{marginTop:10,height:10,background:P.sfA,borderRadius:999,overflow:"hidden",display:"flex"}}>
+          {plan.categories.map(c=>(
+            <div key={c.id} style={{width:`${pct(effectiveAmt(c))}%`,background:c.color}} title={c.name}/>
+          ))}
+        </div>
+      </div>
+
+      {plan.groups.map(g=>{
+        const items=plan.categories.filter(c=>c.groupId===g.id);
+        const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
+        return(
+          <section key={g.id} style={{...card,overflow:"hidden",marginBottom:16}}>
+            {/* Group header */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",background:P.sfA,borderBottom:`1px solid ${P.line}`}}>
+              <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600}}/>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:13,fontWeight:600,color:P.sub}} className="tnum">{fmt(groupTotal)}</span>
+                <button onClick={()=>removeGroup(g.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.Trash size={14}/></button>
+              </div>
+            </div>
+
+            {items.map(c=>{
+              const subs=c.subs||[];
+              const hasSubs=subs.length>0;
+              const effAmt=effectiveAmt(c);
+              const subsOpen=expandedSubs[c.id];
+              return(
+                <div key={c.id} style={{borderBottom:`1px solid ${P.sfA}`}}>
+                  {/* Category row */}
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px"}}>
+                    <span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>
+                    <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare" style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400}}/>
+                    <span className="tnum" style={{fontSize:12,color:P.faint,width:44,textAlign:"right"}}>{pct(effAmt).toFixed(1)}%</span>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <span style={{fontSize:11,color:P.faint}}>{cur}</span>
+                      {hasSubs
+                        /* when subs exist, show computed total (read-only style) */
+                        ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.gr}}>{effAmt.toLocaleString("en-US")}</span>
+                        /* no subs — manual input as before */
+                        :<input type="number" value={c.amount} onChange={e=>updateCat(c.id,{amount:Number(e.target.value)})}
+                          className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600}}/>
+                      }
+                    </div>
+                    {/* sub-toggle button */}
+                    <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
+                      style={{background:"transparent",border:"none",color:subsOpen?P.gr:P.faint,padding:2,display:"flex",alignItems:"center"}}>
+                      <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+                    </button>
+                    <button onClick={()=>removeCat(c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.3}}><I.X size={15}/></button>
+                  </div>
+
+                  {/* Sub-items panel */}
+                  {subsOpen&&(
+                    <div style={{background:"#F7FAFD",borderTop:`1px solid ${P.line}`}}>
+                      {subs.map(sub=>(
+                        <div key={sub.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 16px 7px 36px",borderBottom:`1px solid ${P.line}`}}>
+                          {/* indent indicator */}
+                          <span style={{width:6,height:6,borderRadius:999,background:P.faint,flexShrink:0}}/>
+                          <input value={sub.name} onChange={e=>handleSubChange(c.id,sub.id,{name:e.target.value})}
+                            className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.ink}}/>
+                          <div style={{display:"flex",alignItems:"center",gap:4}}>
+                            <span style={{fontSize:11,color:P.faint}}>{cur}</span>
+                            <input type="number" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:Number(e.target.value)})}
+                              className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600}}/>
+                          </div>
+                          <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.35}}><I.X size={13}/></button>
+                        </div>
+                      ))}
+                      {/* sub total when multiple subs */}
+                      {subs.length>1&&(
+                        <div style={{display:"flex",justifyContent:"flex-end",padding:"5px 16px 5px 36px",fontSize:12,color:P.sub}} className="tnum">
+                          Subtotal: {cur} {effAmt.toLocaleString("en-US")}
+                        </div>
+                      )}
+                      <button onClick={()=>handleAddSub(c.id)}
+                        style={{display:"flex",alignItems:"center",gap:5,padding:"7px 16px 7px 36px",fontSize:13,color:P.gr,background:"transparent",border:"none",width:"100%"}}>
+                        <I.Plus size={12}/>Add sub-item
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Quick "add sub-item" link when panel is closed (only shows when no subs yet) */}
+                  {!subsOpen&&!hasSubs&&(
+                    <div style={{paddingLeft:36,paddingBottom:6,marginTop:-4}}>
+                      <button onClick={()=>handleAddSub(c.id)}
+                        style={{fontSize:11,color:P.faint,background:"transparent",border:"none",padding:"0 0 2px",display:"flex",alignItems:"center",gap:4}}>
+                        <I.Plus size={10}/>add sub-items
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <button onClick={()=>addCat(g.id)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
+              <I.Plus size={14}/>Add category
+            </button>
+          </section>
+        );
+      })}
+      <button onClick={addGroup} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr}}>
+        <I.Plus size={14}/>Add group
+      </button>
+    </div>
+  );
+}
+
+
+
+/* ── SHARED: Owner toggle pill (Me / Wife) ── */
+function OwnerToggle({owner,setOwner,owners}){
+  return(
+    <div style={{display:"flex",gap:4,marginBottom:14,background:P.sfA,borderRadius:999,padding:3,width:"fit-content"}}>
+      {["me","wife"].map(ok=>(
+        <button key={ok} onClick={()=>setOwner(ok)}
+          style={{borderRadius:999,padding:"6px 18px",fontSize:13,fontWeight:600,border:"none",
+            background:owner===ok?(ok==="me"?P.gr:P.br):"transparent",
+            color:owner===ok?"#fff":(ok==="me"?P.grD:P.br),
+            transition:"background .15s,color .15s"}}>
+          {owners[ok]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ── SHARED: Plan switcher (shows only the current owner's plans) ── */
+function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu,fmt,cur}){
+  if(!ownerPlans||ownerPlans.length===0)return null;
+  return(
+    <div style={{marginBottom:14,position:"relative"}}>
+      <button onClick={()=>setPlanMenu(v=>!v)}
+        style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:500,borderRadius:999,
+          padding:"5px 12px",background:P.sf,border:`1px solid ${P.line}`,color:P.sub}}>
+        <I.Layers size={13}/>{plan?.name||"Select plan"}<I.Chevron size={13}/>
+      </button>
+      {planMenu&&(
+        <div style={{position:"absolute",zIndex:20,marginTop:4,borderRadius:12,padding:"4px 0",
+          boxShadow:"0 8px 28px rgba(12,22,40,.18)",background:P.sf,border:`1px solid ${P.line}`,minWidth:280}}>
+          {ownerPlans.map(p=>(
+            <div key={p.id} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 8px"}}>
+              <button onClick={()=>{switchPlan(p.id);setPlanMenu(false);}}
+                style={{flexShrink:0,borderRadius:999,padding:4,background:"transparent",border:"none",
+                  color:p.id===plan?.id?P.gr:P.faint}}>
+                {p.id===plan?.id?<I.Check size={15}/>:<I.Layers size={14}/>}
+              </button>
+              <input value={p.name} onChange={e=>renamePlan(p.id,e.target.value)}
+                className="bare" style={{flex:1,fontSize:14}}/>
+              <span className="tnum" style={{fontSize:11,color:P.faint}}>
+                {cur} {(p.income||0).toLocaleString("en-US")}
+              </span>
+              {ownerPlans.length>1&&(
+                <button onClick={()=>removePlan(p.id)}
+                  style={{background:"transparent",border:"none",color:P.red,opacity:.5}}>
+                  <I.X size={14}/>
+                </button>
+              )}
+            </div>
+          ))}
+          <div style={{borderTop:`1px solid ${P.line}`,marginTop:4,paddingTop:4}}>
+            <button onClick={addPlan}
+              style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"6px 10px",
+                fontSize:13,color:P.gr,background:"transparent",border:"none"}}>
+              <I.Plus size={14}/>New plan for this person
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── EXPENSE TRACKER VIEW ── */
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,removeExpenseTx,fmt,cur,budgetOwner,setBudgetOwner,owners}){
+  const nowMonth=new Date().toISOString().slice(0,7);
+  const[viewMonth,setViewMonth]=useState(nowMonth);
+  const[showAdd,setShowAdd]=useState(false);
+  const[filterCat,setFilterCat]=useState("all");
+  const[collapsedMonths,setCollapsedMonths]=useState({});
+  const[showPlanPicker,setShowPlanPicker]=useState(false);
+  const[cloneSource,setCloneSource]=useState("");
+
+  const addMonths=(ym,n)=>{
+    const[y,m]=ym.split("-").map(Number);
+    const d=new Date(y,m-1+n,1);
+    return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  };
+  const fmtMonth=m=>{
+    const[y,mo]=m.split("-");
+    return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+  };
+  const isFuture=viewMonth>nowMonth;
+  const isNow=viewMonth===nowMonth;
+
+  /* which plan applies to the viewed month */
+  const monthPlan=planForMonth(viewMonth,budgetOwner);
+  const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner);
+
+  /* envelopes from the MONTH'S plan (not necessarily the active plan) */
+  const envelopes=useMemo(()=>{
+    const env=[];
+    (monthPlan.groups||[]).forEach(g=>{
+      (monthPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
+        const effAmt=(c.subs||[]).length>0
+          ?(c.subs||[]).reduce((s,sub)=>s+(Number(sub.amount)||0),0)
+          :Number(c.amount)||0;
+        if(effAmt>0)env.push({id:c.id,name:c.name,group:g.name,budget:effAmt,color:c.color});
+      });
+    });
+    return env;
+  },[monthPlan]);
+
+  const viewMonthExpenses=useMemo(()=>
+    expenses.filter(e=>e.date&&e.date.startsWith(viewMonth)&&(e.owner||'me')===budgetOwner)
+  ,[expenses,viewMonth,budgetOwner]);
+
+  const spentMap=useMemo(()=>{
+    const m={};
+    viewMonthExpenses.forEach(e=>{m[e.catId]=(m[e.catId]||0)+e.amount;});
+    return m;
+  },[viewMonthExpenses]);
+
+  const totalBudget=envelopes.reduce((s,e)=>s+e.budget,0);
+  const totalSpent=Object.values(spentMap).reduce((s,v)=>s+v,0);
+  const totalLeft=totalBudget-totalSpent;
+
+  const statusColor=(spent,budget)=>{
+    if(budget===0)return P.sub;
+    const r=spent/budget;
+    if(r>=1)return P.red;
+    if(r>=0.8)return"#E07B2A";
+    return P.gr;
+  };
+  const statusBg=(spent,budget)=>{
+    if(budget===0)return P.sfA;
+    const r=spent/budget;
+    if(r>=1)return"#FDF0EE";
+    if(r>=0.8)return"#FEF4E8";
+    return P.sfA;
+  };
+
+  const[form,setForm]=useState({catId:"",name:"",amount:"",date:viewMonth+"-01"});
+  useEffect(()=>{setForm(f=>({...f,date:viewMonth+"-01"}));},[viewMonth]);
+
+  const submitTx=()=>{
+    if(!form.catId||!form.name||!form.amount)return;
+    addExpenseTx(form.catId,form.name,Number(form.amount),form.date);
+    setForm(f=>({...f,name:"",amount:"",date:viewMonth+"-01"}));
+    setShowAdd(false);
+  };
+
+  /* transaction log grouped by month */
+  const ownerExpenses=expenses.filter(e=>(e.owner||'me')===budgetOwner);
+  const allFiltered=filterCat==="all"?[...ownerExpenses]:ownerExpenses.filter(e=>e.catId===filterCat);
+  const byMonth={};
+  allFiltered.forEach(tx=>{
+    const mo=(tx.date||"").slice(0,7);
+    if(!mo)return;
+    if(!byMonth[mo])byMonth[mo]=[];
+    byMonth[mo].push(tx);
+  });
+  const allMonths=Object.keys(byMonth).sort((a,b)=>b.localeCompare(a));
+
+  /* handle clone/assign */
+  const handleCreatePlan=()=>{
+    const sourceId=cloneSource||(ownerPlans[0]?.id||plans[0]?.id||"");
+    if(sourceId)clonePlanForMonth(viewMonth,sourceId,budgetOwner);
+    setShowPlanPicker(false);
+    setCloneSource("");
+  };
+  const handleAssignExisting=(pid)=>{
+    assignPlanToMonth(viewMonth,pid,budgetOwner);
+    setShowPlanPicker(false);
+  };
+
+  /* owner's plans for the plan picker */
+  const ownerPlans=(plans||[]).filter(p=>p.owner===budgetOwner);
+
+  return(
+    <div>
+      {/* ── owner toggle ── */}
+      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+
+      {/* ── month navigator ── */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:P.sf,borderRadius:16,padding:"10px 14px",border:`1px solid ${P.line}`}}>
+        <button onClick={()=>setViewMonth(m=>addMonths(m,-1))}
+          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>‹</button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <div style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmtMonth(viewMonth)}</div>
+          <div style={{fontSize:11,fontWeight:600,marginTop:1,
+            color:isFuture?P.br:isNow?P.gr:P.faint}}>
+            {isFuture?"Planning ahead":isNow?"Current month":"Past month"}
+          </div>
+        </div>
+        <button onClick={()=>setViewMonth(m=>addMonths(m,1))}
+          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>›</button>
+        {viewMonth!==nowMonth&&(
+          <button onClick={()=>setViewMonth(nowMonth)}
+            style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,background:P.grS,color:P.grD,border:"none"}}>
+            Today
+          </button>
+        )}
+      </div>
+
+      {/* ── monthly plan banner ── */}
+      <div style={{borderRadius:14,padding:"12px 14px",marginBottom:12,
+        background:hasOwnPlan?P.grS:P.sfA,border:`1px solid ${hasOwnPlan?P.grS:P.line}`,
+        display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:600,color:hasOwnPlan?P.grD:P.sub}}>
+            {hasOwnPlan?`📋 ${monthPlan.name}`:"📋 Using default plan"}
+          </div>
+          <div style={{fontSize:11,color:hasOwnPlan?P.gr:P.faint,marginTop:2}}>
+            {hasOwnPlan
+              ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US")} · Custom budget for ${fmtMonth(viewMonth)}`
+              :`Showing allocations from "${monthPlan.name}". Create a custom plan for ${fmtMonth(viewMonth)} to set a different income or allocation.`
+            }
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,flexShrink:0}}>
+          {hasOwnPlan
+            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)}
+                style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:"transparent",
+                  border:`1px solid ${P.line}`,color:P.red,fontWeight:500}}>
+                Remove
+              </button>
+            :<button onClick={()=>{setCloneSource(plans[0]?.id||"");setShowPlanPicker(true);}}
+                style={{fontSize:11,borderRadius:8,padding:"4px 10px",
+                  background:P.gr,color:"#fff",border:"none",fontWeight:600}}>
+                + Create plan
+              </button>
+          }
+        </div>
+      </div>
+
+      {/* ── hero summary ── */}
+      <div style={{borderRadius:16,padding:16,marginBottom:16,
+        background:isFuture?`linear-gradient(135deg,${P.br} 0%,${P.grD} 100%)`:P.ink,color:"#fff"}}>
+        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>
+          {fmtMonth(viewMonth)} {isFuture?"plan":"spending"}
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:20,alignItems:"baseline"}}>
+          <div>
+            <div style={{fontSize:11,color:"#9DB0CC"}}>{isFuture?"Planned":"Spent"}</div>
+            <div className="serif tnum" style={{fontSize:28,fontWeight:600,
+              color:totalSpent>totalBudget?"#F87171":"#fff"}}>{fmt(totalSpent)}</div>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:"#9DB0CC"}}>Budget</div>
+            <div className="tnum" style={{fontSize:20,fontWeight:600,color:"#9DB0CC"}}>{fmt(totalBudget)}</div>
+          </div>
+          <div style={{marginLeft:"auto",textAlign:"right"}}>
+            <div style={{fontSize:11,color:"#9DB0CC"}}>{totalLeft>=0?(isFuture?"Available":"Remaining"):"Over budget"}</div>
+            <div className="tnum" style={{fontSize:20,fontWeight:600,
+              color:totalLeft>=0?"#4ADE80":"#F87171"}}>{fmt(Math.abs(totalLeft))}</div>
+          </div>
+        </div>
+        <div style={{marginTop:12,height:6,background:"rgba(255,255,255,.15)",borderRadius:999,overflow:"hidden"}}>
+          <div style={{width:`${Math.min(100,totalBudget>0?(totalSpent/totalBudget)*100:0)}%`,height:"100%",
+            background:totalSpent>=totalBudget?"#F87171":totalSpent/totalBudget>=.8?"#E07B2A":"#4ADE80",
+            transition:"width .4s"}}/>
+        </div>
+      </div>
+
+      {/* ── envelopes ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Envelopes</h2>
+        <button onClick={()=>setShowAdd(true)}
+          style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",
+            fontSize:14,fontWeight:500,background:isFuture?P.br:P.gr,color:"#fff",border:"none"}}>
+          <I.Plus size={14}/>{isFuture?"Plan transaction":"Add transaction"}
+        </button>
+      </div>
+
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+        {envelopes.length===0
+          ?<div style={{borderRadius:14,padding:16,textAlign:"center",fontSize:13,color:P.faint,
+              background:P.sf,border:`1px solid ${P.line}`}}>
+              No budget categories found. Add categories in the Budget tab first.
+            </div>
+          :envelopes.map(env=>{
+            const spent=spentMap[env.id]||0;
+            const left=env.budget-spent;
+            const ratio=env.budget>0?spent/env.budget:0;
+            const color=statusColor(spent,env.budget);
+            const bg=statusBg(spent,env.budget);
+            return(
+              <div key={env.id} style={{borderRadius:14,padding:"12px 16px",background:P.sf,border:`1px solid ${P.line}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
+                  <span style={{flex:1,fontSize:14,fontWeight:600,color:P.ink}}>{env.name}</span>
+                  <span style={{fontSize:11,color:P.faint}}>{env.group}</span>
+                </div>
+                <div style={{height:6,background:P.sfA,borderRadius:999,overflow:"hidden",marginBottom:6}}>
+                  <div style={{width:`${Math.min(100,ratio*100)}%`,height:"100%",background:color,transition:"width .3s"}}/>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12}} className="tnum">
+                  <span style={{color:P.sub}}>
+                    {isFuture?"Planned":"Spent"} <strong style={{color:P.ink}}>{fmt(spent)}</strong> of {fmt(env.budget)}
+                  </span>
+                  <span style={{fontWeight:600,color,background:bg,borderRadius:8,padding:"1px 8px"}}>
+                    {left>=0?`${fmt(left)} left`:`${fmt(-left)} over`}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        }
+      </div>
+
+      {/* ── transaction log — all months collapsible ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>All transactions</h2>
+        <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
+          style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
+            border:`1px solid ${P.line}`,color:P.sub}}>
+          <option value="all">All categories</option>
+          {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+      </div>
+
+      {allMonths.length===0
+        ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
+            background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
+            No transactions yet. Tap "Add transaction" to start tracking.
+          </div>
+        :allMonths.map(mo=>{
+          const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
+          const isCurrent=mo===nowMonth;
+          const isViewing=mo===viewMonth;
+          const isFutureMo=mo>nowMonth;
+          const defaultOpen=isCurrent||isFutureMo||isViewing;
+          const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
+          const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
+          const moLabel=fmtMonth(mo);
+
+          // use correct envelopes for THIS month's plan
+          const moPlan=planForMonth(mo);
+          const moEnvs=[];
+          (moPlan.groups||[]).forEach(g=>{
+            (moPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
+              moEnvs.push({id:c.id,name:c.name,color:c.color});
+            });
+          });
+
+          let headerBg=P.sfA;
+          if(isCurrent)headerBg=P.grS;
+          else if(isFutureMo)headerBg=P.brS;
+          const labelColor=isCurrent?P.grD:isFutureMo?P.br:P.ink;
+
+          return(
+            <div key={mo} style={{borderRadius:16,overflow:"hidden",background:P.sf,
+              border:`2px solid ${isViewing?P.gr:P.line}`,marginBottom:10,transition:"border-color .2s"}}>
+              <button
+                onClick={()=>setCollapsedMonths(c=>({...c,[mo]:isOpen}))}
+                style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+                  padding:"12px 16px",background:headerBg,border:"none",cursor:"pointer",
+                  borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                    transition:"transform .2s",flexShrink:0}}/>
+                  <span style={{fontSize:14,fontWeight:700,color:labelColor}}>{moLabel}</span>
+                  {isCurrent&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
+                    background:P.gr,color:"#fff",fontWeight:700}}>NOW</span>}
+                  {isFutureMo&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
+                    background:P.br,color:"#fff",fontWeight:700}}>PLANNED</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
+                  <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(monthTotal)}</span>
+                </div>
+              </button>
+
+              {isOpen&&txs.map((tx,idx)=>{
+                const env=moEnvs.find(e=>e.id===tx.catId);
+                return(
+                  <div key={tx.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",
+                    borderBottom:idx<txs.length-1?`1px solid ${P.sfA}`:"none"}}>
+                    <div style={{width:8,height:8,borderRadius:999,
+                      background:env?.color||P.faint,flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:500,color:P.ink,
+                        whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{tx.name}</div>
+                      <div style={{fontSize:11,color:P.faint}}>{tx.date}{env?` · ${env.name}`:""}</div>
+                    </div>
+                    <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(tx.amount)}</span>
+                    <button onClick={()=>removeExpenseTx(tx.id)}
+                      style={{background:"transparent",border:"none",color:P.red,opacity:.4}}>
+                      <I.X size={14}/>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })
+      }
+
+      {/* ── add transaction modal ── */}
+      {showAdd&&(
+        <div className="modal-bg" onClick={()=>setShowAdd(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
+                {isFuture?"Plan transaction":"Add transaction"}
+              </h3>
+              <button onClick={()=>setShowAdd(false)}
+                style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+            </div>
+            <div style={{fontSize:12,color:isFuture?P.br:P.faint,marginBottom:14}}>
+              {isFuture?`Planning ahead for ${fmtMonth(viewMonth)}`:`Recording for ${fmtMonth(viewMonth)}`}
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Category</div>
+              <select value={form.catId} onChange={e=>setForm(f=>({...f,catId:e.target.value}))}
+                style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                  background:P.sfA,border:`1px solid ${form.catId?P.line:P.red}`,color:P.ink}}>
+                <option value="">Select a category…</option>
+                {(monthPlan.groups||[]).map(g=>(
+                  <optgroup key={g.id} label={g.name}>
+                    {(monthPlan.categories||[]).filter(c=>c.groupId===g.id).map(c=>(
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Description</div>
+              <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
+                placeholder="e.g. Electricity bill"
+                style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                  background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+            </div>
+
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({cur})</div>
+                <input type="number" value={form.amount}
+                  onChange={e=>setForm(f=>({...f,amount:e.target.value}))} placeholder="0"
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                    background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Date</div>
+                <input type="date" value={form.date}
+                  onChange={e=>setForm(f=>({...f,date:e.target.value}))}
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                    background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              </div>
+            </div>
+
+            {form.catId&&form.amount&&(()=>{
+              const env=envelopes.find(e=>e.id===form.catId);
+              if(!env)return null;
+              const already=spentMap[form.catId]||0;
+              const after=already+Number(form.amount);
+              const left=env.budget-after;
+              return(
+                <div style={{borderRadius:10,padding:10,marginBottom:12,
+                  background:left<0?"#FDF0EE":left/env.budget<.2?"#FEF4E8":P.sfA,
+                  fontSize:13}} className="tnum">
+                  <span style={{color:P.sub}}>{env.name}: </span>
+                  <span style={{fontWeight:600,color:statusColor(after,env.budget)}}>
+                    {left>=0?`${fmt(left)} remaining after this`:`${fmt(-left)} over budget`}
+                  </span>
+                </div>
+              );
+            })()}
+
+            <button onClick={submitTx}
+              style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                background:isFuture?P.br:P.gr,color:"#fff",border:"none",
+                opacity:(!form.catId||!form.name||!form.amount)?.5:1}}>
+              {isFuture?"Save planned transaction":"Record transaction"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── create monthly plan modal ── */}
+      {showPlanPicker&&(
+        <div className="modal-bg" onClick={()=>setShowPlanPicker(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
+                Create plan for {fmtMonth(viewMonth)}
+              </h3>
+              <button onClick={()=>setShowPlanPicker(false)}
+                style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+            </div>
+
+            <div style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
+              This creates a <strong>copy</strong> of an existing plan that you can adjust
+              independently — different income, tweaked allocations — without changing the original.
+            </div>
+
+            <div style={{fontSize:12,color:P.sub,marginBottom:6,fontWeight:600}}>
+              Clone from which plan?
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+              {ownerPlans.map(p=>(
+                <button key={p.id} onClick={()=>setCloneSource(p.id)}
+                  style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",
+                    background:cloneSource===p.id?P.grS:P.sfA,
+                    border:`2px solid ${cloneSource===p.id?P.gr:P.line}`,
+                    color:cloneSource===p.id?P.grD:P.ink}}>
+                  <div>
+                    <div style={{fontWeight:600}}>{p.name}</div>
+                    <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                      {cur} {(p.income||0).toLocaleString("en-US")} · {(p.categories||[]).length} categories
+                    </div>
+                  </div>
+                  {cloneSource===p.id&&<I.Check size={16} style={{color:P.gr,flexShrink:0}}/>}
+                </button>
+              ))}
+            </div>
+
+            <button onClick={handleCreatePlan} disabled={!cloneSource}
+              style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                background:P.gr,color:"#fff",border:"none",opacity:cloneSource?1:.4}}>
+              Create plan for {fmtMonth(viewMonth)}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── HOUSEHOLD VIEW ── */
+function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners}){
+  const total=hh.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const mine=total*(hh.splitMine/100),theirs=total-mine;
+  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+  return(
+    <div>
+      <div style={{...card,padding:16,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:600,color:P.sub,marginBottom:10}}>Shared monthly expenses · {fmt(total)}</div>
+        <div style={{display:"flex",gap:12,marginBottom:12}}>
+          <div style={{flex:1,background:P.grS,borderRadius:12,padding:12}}>
+            <div style={{fontSize:11,color:P.grD}}>{owners.me} pays ({hh.splitMine}%)</div>
+            <div className="serif tnum" style={{fontSize:22,fontWeight:600,color:P.grD}}>{fmt(mine)}</div>
+          </div>
+          <div style={{flex:1,background:P.brS,borderRadius:12,padding:12}}>
+            <div style={{fontSize:11,color:P.br}}>{owners.wife} pays ({100-hh.splitMine}%)</div>
+            <div className="serif tnum" style={{fontSize:22,fontWeight:600,color:P.br}}>{fmt(theirs)}</div>
+          </div>
+        </div>
+        <input type="range" min="0" max="100" value={hh.splitMine} onChange={e=>setSplit(Number(e.target.value))} style={{width:"100%"}}/>
+      </div>
+      <section style={{...card,overflow:"hidden"}}>
+        {hh.expenses.map(e=>(
+          <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderBottom:`1px solid ${P.sfA}`}}>
+            <span style={{width:10,height:10,borderRadius:999,background:e.color,flexShrink:0}}/>
+            <input value={e.name} onChange={ev=>updateExpense(e.id,{name:ev.target.value})} className="bare" style={{flex:1,fontSize:14}}/>
+            <input type="number" value={e.amount} onChange={ev=>updateExpense(e.id,{amount:Number(ev.target.value)})}
+              className="bare tnum" style={{width:92,textAlign:"right",fontSize:14,fontWeight:600}}/>
+            <button onClick={()=>removeExpense(e.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.3}}><I.X size={15}/></button>
+          </div>
+        ))}
+        <button onClick={addExpense} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
+          <I.Plus size={14}/>Add shared expense
+        </button>
+      </section>
+    </div>
+  );
+}
+
+/* ── BANKS VIEW ── */
+function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners}){
+  const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
+  const sarOf=b=>{const v=convert(b.balance,b.currency,"SAR");return v==null?0:v;};
+  const total=banks.reduce((s,b)=>s+sarOf(b),0);
+  const usdTotal=sarRate?Math.round(total/sarRate):null;
+  const phpTotal=convert?convert(total,"SAR","PHP"):null;
+  const Row=b=>(
+    <div key={b.id} style={{padding:"12px 16px",borderBottom:`1px solid ${P.sfA}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <input value={b.name} placeholder="Account name" onChange={e=>updateBank(b.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0}}/>
+        <button onClick={()=>removeBank(b.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
+      </div>
+      <div style={{marginTop:8,display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
+        <input value={b.bank} placeholder="Bank name" onChange={e=>updateBank(b.id,{bank:e.target.value})} className="bare" style={{fontSize:12,color:P.sub,width:110}}/>
+        <select value={b.country} onChange={e=>updateBank(b.id,{country:e.target.value})} style={{borderRadius:999,padding:"2px 8px",fontSize:12,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+          {COUNTRIES.map(([c,l])=><option key={c} value={c}>{l}</option>)}
+        </select>
+        <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})} style={{borderRadius:999,padding:"2px 8px",fontSize:12,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+          {BANK_CCY.map(c=><option key={c}>{c}</option>)}
+        </select>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:12,color:P.faint}}>{b.currency}</span>
+          <input type="number" value={b.balance} onChange={e=>updateBank(b.id,{balance:Number(e.target.value)})} className="bare tnum" style={{width:100,textAlign:"right",fontSize:14,fontWeight:600}}/>
+        </div>
+      </div>
+      {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,textAlign:"right",marginTop:4,color:P.faint}}>= {sar(sarOf(b))}</div>}
+    </div>
+  );
+  return(
+    <div>
+      <div style={{background:P.ink,color:"#fff",borderRadius:16,padding:16,marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Cash across all accounts</div>
+        <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
+        <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:"#9DB0CC",fontSize:14}}>
+          <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
+          <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
+        </div>
+      </div>
+      {["me","wife"].map(ok=>{
+        const items=banks.filter(b=>b.owner===ok);
+        const sub=items.reduce((s,b)=>s+sarOf(b),0);
+        return(
+          <section key={ok} style={{marginBottom:16,borderRadius:16,overflow:"hidden",background:P.sf,border:`1px solid ${P.line}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderBottom:`1px solid ${P.line}`,background:ok==="me"?P.grS:P.brS}}>
+              <span style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br}}>{owners[ok]}</span>
+              <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.sub}}>{sar(sub)}</span>
+            </div>
+            {items.map(Row)}
+            <button onClick={()=>addBank(ok)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
+              <I.Plus size={14}/>Add {owners[ok]}'s account
+            </button>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── INVESTMENTS VIEW — trade log ── */
+function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,projection,setProjection,portHistory,addPortSnap}){
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState("");
+  const[updatedAt,setUpdatedAt]=useState(null);
+  const[tradeModal,setTradeModal]=useState(null); // invId
+  const[tradeForm,setTradeForm]=useState({type:"buy",shares:"",price:"",date:new Date().toISOString().slice(0,10)});
+  const[expandedId,setExpandedId]=useState(null);
+
+  const usd=n=>`$${(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+
+  const rows=invs.map(hld=>{
+    const{shares,avgCost,totalCost}=holdingStats(hld.trades);
+    const price=livePrice[baseKey(hld.ticker||"")]||0;
+    const value=shares*price;
+    const gain=value-totalCost;
+    const gainPct=totalCost>0?(gain/totalCost)*100:0;
+    return{...hld,shares,avgCost,totalCost,price,value,gain,gainPct};
+  });
+  const totVal=rows.reduce((s,r)=>s+r.value,0);
+  const totCost=rows.reduce((s,r)=>s+r.totalCost,0);
+  const totGain=totVal-totCost;
+  const totGainPct=totCost>0?(totGain/totCost)*100:0;
+
+  const refresh=async()=>{
+    const tickers=[...new Set(invs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean))];
+    if(!tickers.length){setErr("Add a ticker symbol first.");return;}
+    setLoading(true);setErr("");
+    try{
+      const q=await fetchQuotes(tickers);
+      setLivePrice(q);
+      setUpdatedAt(Date.now());
+      const hit=tickers.filter(t=>q[baseKey(t)]!=null).length;
+      if(!hit)setErr("No prices found. Check your Worker URL or ticker symbols.");
+      else if(hit<tickers.length)setErr(`Got ${hit}/${tickers.length} prices — remaining tickers not found.`);
+      else setErr("");
+      // auto-capture portfolio snapshot for the history chart
+      const newTotVal=invs.reduce((s,hld)=>{
+        const{shares}=holdingStats(hld.trades);
+        const p=q[baseKey(hld.ticker||"")]||livePrice[baseKey(hld.ticker||"")]||0;
+        return s+shares*p;
+      },0);
+      if(newTotVal>0)addPortSnap(newTotVal);
+    }catch(e){
+      setErr(PROXY_URL.startsWith("PASTE_")&&FINNHUB_KEY.startsWith("PASTE_")
+        ?"Set up your Cloudflare Worker (for VWRA/LSE) and/or Finnhub key (for US stocks) — see the setup guide."
+        :"Price fetch failed — check your Worker URL or Finnhub key.");
+    }
+    setLoading(false);
+  };
+
+  const openTrade=invId=>{
+    setTradeModal(invId);
+    setTradeForm({type:"buy",shares:"",price:"",date:new Date().toISOString().slice(0,10)});
+  };
+  const submitTrade=()=>{
+    if(!tradeForm.shares||!tradeForm.price)return;
+    addTrade(tradeModal,{type:tradeForm.type,shares:Number(tradeForm.shares),price:Number(tradeForm.price),date:tradeForm.date});
+    setTradeModal(null);
+  };
+
+  const gTone=n=>n>0?P.gr:n<0?P.red:P.sub;
+  const series=projectSeries(totVal,projection.monthly,projection.years,projection.rate||8);
+  const projData=series.map((v,i)=>({year:`Y${i}`,value:v}));
+
+  return(
+    <div>
+      {/* hero */}
+      <div style={{borderRadius:16,padding:20,marginBottom:16,background:P.ink,color:"#fff"}}>
+        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Portfolio value (USD)</div>
+        <span className="serif tnum" style={{fontSize:38,fontWeight:600}}>{usd(totVal)}</span>
+        {sarRate&&<div className="tnum" style={{fontSize:14,color:"#9DB0CC",marginTop:4}}>≈ SAR {Math.round(totVal*sarRate).toLocaleString("en-US")}</div>}
+        <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:20,fontSize:14}} className="tnum">
+          <span style={{color:"#9DB0CC"}}>Cost {usd(totCost)}</span>
+          <span style={{color:totGain>=0?"#6FC6DA":"#E89B8C",fontWeight:600}}>
+            {totGain>=0?"▲":"▼"} {usd(Math.abs(totGain))} ({totGainPct.toFixed(1)}%)
+          </span>
+        </div>
+      </div>
+
+      {/* portfolio history chart */}
+      {portHistory.length>0&&(()=>{
+        const pts=[...portHistory].sort((a,b)=>a.month.localeCompare(b.month));
+        const first=pts[0].value,last=pts[pts.length-1].value;
+        const trending=last>=first;
+        const chartColor=trending?"#4ADE80":"#F87171";
+        const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
+        const data=pts.map(p=>({label:fmtMo(p.month),value:p.value}));
+        const pctChange=first>0?((last-first)/first*100):0;
+        return(
+          <div style={{borderRadius:16,padding:16,marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <h3 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Portfolio over time</h3>
+              <span className="tnum" style={{fontSize:13,fontWeight:600,color:trending?P.gr:P.red}}>
+                {trending?"▲":"▼"} {Math.abs(pctChange).toFixed(1)}% total
+              </span>
+            </div>
+            <div style={{width:"100%",height:160}}>
+              <ResponsiveContainer>
+                <LineChart data={data} margin={{top:4,right:8,bottom:0,left:-16}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={P.sfA}/>
+                  <XAxis dataKey="label" tick={{fontSize:10,fill:P.faint}}/>
+                  <YAxis tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`$${Math.round(v/1000)}k`}/>
+                  <Tooltip formatter={v=>`$${Math.round(v).toLocaleString("en-US")}`}/>
+                  <Line type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2.5} dot={{r:3,fill:chartColor}}/>
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+              Captured monthly when you refresh prices · {pts.length} data point{pts.length!==1?"s":""}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* controls */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Holdings</h2>
+        <button onClick={refresh} disabled={loading}
+          style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 12px",fontSize:14,fontWeight:500,background:P.gr,color:"#fff",border:"none",opacity:loading?.6:1}}>
+          <I.Refresh size={14} style={loading?{animation:"spin .9s linear infinite"}:null}/>
+          {loading?"Fetching…":"Refresh prices"}
+        </button>
+      </div>
+      {err&&<div style={{fontSize:12,color:P.red,marginBottom:8,padding:"8px 12px",background:"#FDF0EE",borderRadius:8}}>{err}</div>}
+      {updatedAt&&!err&&<div style={{fontSize:11,color:P.faint,marginBottom:8}}>Prices updated {new Date(updatedAt).toLocaleTimeString()}</div>}
+
+      {/* holdings list */}
+      <div style={{borderRadius:16,overflow:"hidden",marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
+        {rows.map(r=>(
+          <div key={r.id} style={{borderBottom:`1px solid ${P.sfA}`}}>
+            {/* summary row */}
+            <div style={{padding:"12px 16px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <input value={r.ticker} placeholder="TICKER"
+                  onChange={e=>updateInv(r.id,{ticker:e.target.value.toUpperCase()})}
+                  onBlur={async e=>{
+                    const t=(e.target.value||"").trim().toUpperCase();
+                    if(!t||r.name)return; // don't overwrite existing name
+                    // Try Finnhub search for company name
+                    if(!FINNHUB_KEY.startsWith("PASTE_")){
+                      try{
+                        const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`);
+                        const j=await res.json();
+                        const match=(j.result||[]).find(x=>x.symbol===t||x.symbol===t+".US");
+                        if(match&&match.description)return updateInv(r.id,{name:match.description});
+                      }catch(e){}
+                    }
+                    // Fallback: use Finnhub quote for name via symbol
+                    if(!PROXY_URL.startsWith("PASTE_")){
+                      try{
+                        const res=await fetch(`${PROXY_URL}/name?symbol=${encodeURIComponent(t)}`);
+                        if(res.ok){const j=await res.json();if(j.name)updateInv(r.id,{name:j.name});}
+                      }catch(e){}
+                    }
+                  }}
+                  className="bare" style={{fontSize:14,fontWeight:700,width:80,letterSpacing:".03em"}}/>
+                <input value={r.name} placeholder={r.ticker?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.sub,flex:1,minWidth:0}}/>
+                <span className="tnum" style={{fontSize:14,fontWeight:600}}>{usd(r.value)}</span>
+                <button onClick={()=>removeInv(r.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
+              </div>
+              <div style={{marginTop:6,display:"flex",flexWrap:"wrap",alignItems:"center",gap:14,fontSize:13,color:P.sub}} className="tnum">
+                <span>{r.shares.toFixed(4)} shares</span>
+                <span>Avg {usd(r.avgCost)}</span>
+                <span>Price {r.price>0?usd(r.price):"—"}</span>
+                <span style={{color:gTone(r.gain),fontWeight:600,marginLeft:"auto"}}>
+                  {r.gain>=0?"▲":"▼"} {usd(Math.abs(r.gain))} ({r.gainPct.toFixed(1)}%)
+                </span>
+              </div>
+              {/* trade log toggle + add trade */}
+              <div style={{marginTop:8,display:"flex",gap:8}}>
+                <button onClick={()=>openTrade(r.id)}
+                  style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:500,background:P.grS,color:P.grD,border:"none"}}>
+                  <I.Plus size={12}/>Add trade
+                </button>
+                {(r.trades||[]).length>0&&(
+                  <button onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}
+                    style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"4px 10px",fontSize:12,color:P.sub,background:P.sfA,border:`1px solid ${P.line}`}}>
+                    {expandedId===r.id?"Hide":"Show"} {r.trades.length} trade{r.trades.length!==1?"s":""}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* trade history */}
+            {expandedId===r.id&&(r.trades||[]).length>0&&(
+              <div style={{background:P.sfA,borderTop:`1px solid ${P.line}`}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:11,fontWeight:600,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>
+                  <span>Date</span><span style={{textAlign:"right"}}>Type</span><span style={{textAlign:"right"}}>Shares</span><span style={{textAlign:"right"}}>Price</span><span/>
+                </div>
+                {[...(r.trades||[])].sort((a,b)=>a.date.localeCompare(b.date)).map(tr=>(
+                  <div key={tr.id} style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:13,alignItems:"center",borderTop:`1px solid ${P.line}`}}>
+                    <span className="tnum" style={{color:P.sub}}>{tr.date}</span>
+                    <span style={{textAlign:"right",fontWeight:600,color:tr.type==="buy"?P.gr:P.red,textTransform:"uppercase",fontSize:11}}>{tr.type}</span>
+                    <span className="tnum" style={{textAlign:"right"}}>{(Number(tr.shares)||0).toFixed(4)}</span>
+                    <span className="tnum" style={{textAlign:"right"}}>{usd(tr.price)}</span>
+                    <button onClick={()=>removeTrade(r.id,tr.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,padding:4}}><I.X size={12}/></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <button onClick={addInv} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
+          <I.Plus size={14}/>Add holding
+        </button>
+      </div>
+
+      {/* projection */}
+      <div style={{borderRadius:16,padding:16,background:P.sf,border:`1px solid ${P.line}`}}>
+        <h3 style={{fontSize:14,fontWeight:600,color:P.sub,margin:"0 0 8px"}}>Growth projection ({projection.rate||8}%/yr)</h3>
+        <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:10,fontSize:13}}>
+          <label style={{color:P.sub}}>+$/mo <input type="number" value={projection.monthly} onChange={e=>setProjection({monthly:Number(e.target.value)})} className="bare tnum" style={{width:80,fontWeight:600}}/></label>
+          <label style={{color:P.sub}}>Years <input type="number" value={projection.years} onChange={e=>setProjection({years:Number(e.target.value)})} className="bare tnum" style={{width:56,fontWeight:600}}/></label>
+          <label style={{color:P.sub}}>Rate % <input type="number" value={projection.rate??8} onChange={e=>setProjection({rate:Number(e.target.value)})} className="bare tnum" style={{width:48,fontWeight:600}} step="0.5" min="0" max="30"/></label>
+          <span className="tnum" style={{marginLeft:"auto",fontWeight:600,color:P.gr}}>→ ${series[series.length-1].toLocaleString("en-US")}</span>
+        </div>
+        <div style={{width:"100%",height:180}}>
+          <ResponsiveContainer>
+            <LineChart data={projData} margin={{top:8,right:8,bottom:0,left:-12}}>
+              <CartesianGrid strokeDasharray="3 3" stroke={P.sfA}/>
+              <XAxis dataKey="year" tick={{fontSize:11,fill:P.faint}}/>
+              <YAxis tick={{fontSize:11,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
+              <Tooltip formatter={v=>`$${Math.round(v).toLocaleString("en-US")}`}/>
+              <Line type="monotone" dataKey="value" stroke={P.br} strokeWidth={2} dot={false}/>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Add trade modal */}
+      {tradeModal&&(
+        <div className="modal-bg" onClick={()=>setTradeModal(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
+                Add trade — {invs.find(x=>x.id===tradeModal)?.ticker||""}
+              </h3>
+              <button onClick={()=>setTradeModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:16}}>
+              {["buy","sell"].map(t=>(
+                <button key={t} onClick={()=>setTradeForm(f=>({...f,type:t}))}
+                  style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:14,fontWeight:600,textTransform:"capitalize",
+                    background:tradeForm.type===t?(t==="buy"?P.gr:P.red):"transparent",
+                    color:tradeForm.type===t?"#fff":(t==="buy"?P.gr:P.red),
+                    border:`2px solid ${t==="buy"?P.gr:P.red}`}}>
+                  {t==="buy"?"▲ Buy":"▼ Sell"}
+                </button>
+              ))}
+            </div>
+            {[["date","Date","date"],["shares","Shares","number"],["price","Price per share (USD)","number"]].map(([k,label,type])=>(
+              <div key={k} style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>{label}</div>
+                <input type={type} value={tradeForm[k]} onChange={e=>setTradeForm(f=>({...f,[k]:e.target.value}))}
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              </div>
+            ))}
+            {tradeForm.shares&&tradeForm.price&&(
+              <div style={{background:P.sfA,borderRadius:10,padding:10,marginBottom:12,fontSize:13,color:P.sub}} className="tnum">
+                Total: ${(Number(tradeForm.shares)*Number(tradeForm.price)).toLocaleString("en-US",{minimumFractionDigits:2})}
+              </div>
+            )}
+            <button onClick={submitTrade}
+              style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                background:tradeForm.type==="buy"?P.gr:P.red,color:"#fff",border:"none"}}>
+              Confirm {tradeForm.type==="buy"?"Purchase":"Sale"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── NET WORTH VIEW — installment liabilities ── */
+function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}){
+  const[gran,setGran]=useState("month");
+  const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
+  const[pv,setPv]=useState("");
+  const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
+  const usd=sarRate?Math.round(netWorth/sarRate):null;
+  const php=convert?convert(netWorth,"SAR","PHP"):null;
+  const parts=[{label:"Bank accounts",value:banksSar,color:SEG[0]},{label:"Investments",value:invSar,color:SEG[3]},{label:"Other assets",value:assetSar,color:SEG[5]},{label:"Liabilities",value:-liabSar,color:P.red}];
+  const gross=banksSar+invSar+assetSar;
+  const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
+  const sorted=[...history].sort((a,b)=>a.month.localeCompare(b.month));
+  let pts;
+  if(gran==="year"){const m={};sorted.forEach(s=>{m[s.month.slice(0,4)]=s;});pts=Object.entries(m).map(([y,s])=>({label:y,net:s.net}));}
+  else pts=sorted.map(s=>({label:fmtMo(s.month),net:s.net}));
+  const last=sorted[sorted.length-1];
+  const delta=last?netWorth-last.net:null;
+  const assetItems=assets.filter(a=>a.kind==="asset");
+  const liabItems=assets.filter(a=>a.kind==="liability");
+
+  const AssetRow=({a})=>(
+    <div style={{padding:"12px 16px",borderBottom:`1px solid ${P.sfA}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0}}/>
+        <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{borderRadius:8,padding:"2px 6px",fontSize:12,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+          {BANK_CCY.map(c=><option key={c}>{c}</option>)}
+        </select>
+        <button onClick={()=>removeAsset(a.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
+      </div>
+      {a.kind==="asset"?(
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:12,color:P.faint}}>{a.currency}</span>
+          <input type="number" value={a.value} onChange={e=>updateAsset(a.id,{value:Number(e.target.value)})}
+            className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600}}/>
+        </div>
+      ):(
+        /* Liability installment mode */
+        <div>
+          <div style={{display:"flex",gap:8,marginBottom:8}}>
+            <button onClick={()=>updateAsset(a.id,{installment:true})}
+              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,background:a.installment?P.gr:"transparent",color:a.installment?"#fff":P.sub,border:`1px solid ${a.installment?P.gr:P.line}`}}>
+              Installment
+            </button>
+            <button onClick={()=>updateAsset(a.id,{installment:false})}
+              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,background:!a.installment?P.gr:"transparent",color:!a.installment?"#fff":P.sub,border:`1px solid ${!a.installment?P.gr:P.line}`}}>
+              Fixed amount
+            </button>
+          </div>
+          {a.installment?(
+            <div style={{display:"flex",flexWrap:"wrap",gap:10,fontSize:13}}>
+              <label style={{color:P.sub,display:"flex",flexDirection:"column",gap:3}}>
+                <span style={{fontSize:11}}>Monthly payment ({a.currency})</span>
+                <input type="number" value={a.monthly||""} onChange={e=>updateAsset(a.id,{monthly:Number(e.target.value)})}
+                  className="bare tnum" style={{width:110,fontSize:14,fontWeight:600,padding:"4px 6px",background:P.sfA,borderRadius:6}}/>
+              </label>
+              <label style={{color:P.sub,display:"flex",flexDirection:"column",gap:3}}>
+                <span style={{fontSize:11}}>Months remaining (as of)</span>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <input type="number" value={a.monthsRemaining||""} onChange={e=>updateAsset(a.id,{monthsRemaining:Number(e.target.value)})}
+                    className="bare tnum" style={{width:56,fontSize:14,fontWeight:600,padding:"4px 6px",background:P.sfA,borderRadius:6}}/>
+                  <input type="month" value={(a.asOfDate||"").slice(0,7)} onChange={e=>updateAsset(a.id,{asOfDate:e.target.value+"-01"})}
+                    style={{fontSize:12,padding:"4px 6px",background:P.sfA,border:`1px solid ${P.line}`,borderRadius:6,color:P.ink}}/>
+                </div>
+              </label>
+              {(a.monthly&&a.monthsRemaining&&a.asOfDate)&&(()=>{
+                const bal=liabilityBalance(a);
+                const now=new Date();const ref=new Date(a.asOfDate);
+                const elapsed=Math.max(0,(now.getFullYear()-ref.getFullYear())*12+(now.getMonth()-ref.getMonth()));
+                const remaining=Math.max(0,a.monthsRemaining-elapsed);
+                return(
+                  <div style={{width:"100%",background:P.sfA,borderRadius:10,padding:10,marginTop:4}}>
+                    <div style={{fontSize:12,color:P.sub}}>Balance today: <strong className="tnum">{a.currency} {Math.round(bal).toLocaleString("en-US")}</strong></div>
+                    <div style={{fontSize:11,color:P.faint,marginTop:2}}>{remaining} months remaining · {elapsed} months paid</div>
+                    <div style={{marginTop:6,height:6,background:P.line,borderRadius:999,overflow:"hidden"}}>
+                      <div style={{width:`${Math.min(100,(elapsed/a.monthsRemaining)*100)}%`,height:"100%",background:P.gr}}/>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ):(
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:12,color:P.faint}}>{a.currency}</span>
+              <input type="number" value={a.value||""} onChange={e=>updateAsset(a.id,{value:Number(e.target.value)})}
+                className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600}}/>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return(
+    <div>
+      <div style={{borderRadius:16,padding:20,marginBottom:16,background:P.ink,color:"#fff"}}>
+        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Net worth</div>
+        <span className="serif tnum" style={{fontSize:38,fontWeight:600}}>{sar(netWorth)}</span>
+        <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:"#9DB0CC",fontSize:14}}>
+          <span>{usd!=null?`≈ $${usd.toLocaleString("en-US")}`:"USD —"}</span>
+          <span>{php!=null?`≈ ₱${Math.round(php).toLocaleString("en-US")}`:"PHP —"}</span>
+        </div>
+        {(usd==null||php==null)&&<div style={{fontSize:11,marginTop:6,color:"#E89B8C"}}>{ratesErr?"Couldn't load live rates — tap refresh in Currency tab.":"Loading live rates…"}</div>}
+        {delta!=null&&<div className="tnum" style={{fontSize:14,marginTop:6,color:delta>=0?"#6FC6DA":"#E89B8C"}}>{delta>=0?"▲":"▼"} {sar(Math.abs(delta))} since last snapshot</div>}
+      </div>
+
+      <div style={{borderRadius:16,padding:16,marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
+        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.sub}}>Composition</h3>
+        <div style={{display:"flex",height:12,width:"100%",overflow:"hidden",borderRadius:999,marginBottom:12,background:P.sfA}}>
+          {parts.slice(0,3).map(p=>gross>0&&p.value>0&&<div key={p.label} style={{width:`${(p.value/gross)*100}%`,height:"100%",background:p.color}}/>)}
+        </div>
+        {parts.map(p=>(
+          <div key={p.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0",fontSize:14}}>
+            <span style={{display:"flex",alignItems:"center",gap:8}}><span style={{width:10,height:10,borderRadius:999,background:p.color}}/>{p.label}</span>
+            <span className="tnum" style={{color:p.value<0?P.red:P.sub}}>{p.value<0?`− ${sar(-p.value)}`:sar(p.value)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{borderRadius:16,overflow:"hidden",marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
+        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,background:P.sfA,borderBottom:`1px solid ${P.line}`}}>Assets</div>
+        {assetItems.map(a=><AssetRow key={a.id} a={a}/>)}
+        <button onClick={()=>addAsset("asset")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}><I.Plus size={14}/>Add asset</button>
+        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,background:P.sfA,borderTop:`1px solid ${P.line}`,borderBottom:`1px solid ${P.line}`}}>Liabilities</div>
+        {liabItems.map(a=><AssetRow key={a.id} a={a}/>)}
+        <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.red,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
+      </div>
+
+      <div style={{borderRadius:16,padding:16,background:P.sf,border:`1px solid ${P.line}`}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <h3 style={{fontSize:14,fontWeight:600,margin:0,color:P.sub}}>Net worth over time</h3>
+          <div style={{display:"flex",gap:4}}>
+            {["month","year"].map(gv=>(
+              <button key={gv} onClick={()=>setGran(gv)} style={{borderRadius:999,padding:"3px 10px",fontSize:12,textTransform:"capitalize",background:gran===gv?P.ink:P.sfA,color:gran===gv?"#fff":P.sub,border:"none"}}>{gv}</button>
+            ))}
+          </div>
+        </div>
+        {pts.length>0?(
+          <div style={{width:"100%",height:200}}>
+            <ResponsiveContainer>
+              <LineChart data={pts} margin={{top:8,right:8,bottom:0,left:-12}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={P.sfA}/>
+                <XAxis dataKey="label" tick={{fontSize:11,fill:P.faint}}/>
+                <YAxis tick={{fontSize:11,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
+                <Tooltip formatter={v=>sar(v)}/>
+                <Line type="monotone" dataKey="net" stroke={P.gr} strokeWidth={2} dot={{r:3}}/>
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ):<p style={{fontSize:13,color:P.faint}}>No snapshots yet — capture today to start your timeline.</p>}
+        <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginTop:12}}>
+          <button onClick={captureSnapshot} style={{borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.gr,color:"#fff",border:"none"}}>Capture this month</button>
+          <span style={{fontSize:12,color:P.faint}}>Saves {sar(netWorth)} to timeline</span>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${P.sfA}`}}>
+          <div><div style={{color:P.faint,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{borderRadius:8,padding:"4px 8px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/></div>
+          <div><div style={{color:P.faint,fontSize:10}}>Net worth (SAR)</div><input type="number" value={pv} placeholder="0" onChange={e=>setPv(e.target.value)} className="tnum" style={{borderRadius:8,padding:"4px 8px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,width:120}}/></div>
+          <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} style={{borderRadius:8,padding:"6px 12px",fontSize:14,fontWeight:500,background:P.sfA,color:P.gr,border:`1px solid ${P.line}`}}>Add entry</button>
+        </div>
+        {sorted.length>0&&(
+          <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:6}}>
+            {sorted.map(s=>(
+              <span key={s.id} className="tnum" style={{display:"inline-flex",alignItems:"center",gap:4,borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,color:P.sub}}>
+                {fmtMo(s.month)} · {sar(s.net)}
+                <button onClick={()=>removeSnap(s.id)} style={{background:"transparent",border:"none",color:P.red}}><I.X size={11}/></button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── CURRENCY VIEW ── */
+function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert}){
+  const[amount,setAmount]=useState(100);
+  const[from,setFrom]=useState("USD");
+  const[to,setTo]=useState("SAR");
+  const result=convert(amount,from,to);
+  const one=convert(1,from,to);
+  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+  return(
+    <div>
+      <div style={{...card,padding:16,marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Live converter</span>
+          <button onClick={onRefresh} disabled={ratesLoading} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,background:P.sfA,color:P.gr,border:`1px solid ${P.line}`}}>
+            <I.Refresh size={13} style={ratesLoading?{animation:"spin .9s linear infinite"}:null}/>Refresh
+          </button>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
+          <input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))} className="tnum"
+            style={{borderRadius:10,padding:"8px 10px",fontSize:18,fontWeight:600,width:130,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          <select value={from} onChange={e=>setFrom(e.target.value)} style={{borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`}}>
+            {FX_CODES.map(c=><option key={c}>{c}</option>)}
+          </select>
+          <button onClick={()=>{setFrom(to);setTo(from);}} style={{borderRadius:999,padding:8,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}><I.Swap size={16}/></button>
+          <select value={to} onChange={e=>setTo(e.target.value)} style={{borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`}}>
+            {FX_CODES.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={{marginTop:14}}>
+          {result!=null
+            ?<div>
+              <div className="serif tnum" style={{fontSize:30,fontWeight:600,color:P.ink}}>{result.toLocaleString("en-US",{maximumFractionDigits:2})} <span style={{fontSize:16,color:P.sub}}>{to}</span></div>
+              <div style={{fontSize:12,color:P.faint}}>1 {from} = {one.toLocaleString("en-US",{maximumFractionDigits:4})} {to}</div>
+            </div>
+            :<div style={{fontSize:14,color:P.red}}>{ratesErr?"Rates unavailable — tap refresh.":"Loading rates…"}</div>
+          }
+        </div>
+      </div>
+      <div style={{...card,padding:16}}>
+        <div style={{fontSize:13,fontWeight:600,color:P.sub,marginBottom:10}}>Quick rates</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+          {[["USD","SAR"],["SAR","PHP"],["USD","PHP"],["AED","PHP"]].map(([f,t])=>{
+            const v=convert(1,f,t);
+            return(
+              <div key={f+t} style={{borderRadius:12,padding:12,background:P.sfA}}>
+                <div style={{fontSize:11,color:P.faint}}>1 {f} →</div>
+                <div className="tnum" style={{fontSize:18,fontWeight:600,color:P.ink}}>
+                  {v==null?"—":v.toLocaleString("en-US",{maximumFractionDigits:t==="PHP"?2:4})} <span style={{fontSize:12,color:P.sub}}>{t}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {ratesAt&&<div style={{fontSize:11,color:P.faint,marginTop:10}}>Updated {new Date(ratesAt).toLocaleString()}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── GOALS VIEW — contribution log ── */
+function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners}){
+  const[addModal,setAddModal]=useState(null); // goalId
+  const[addAmount,setAddAmount]=useState("");
+  const[addNote,setAddNote]=useState("");
+  const[expandedId,setExpandedId]=useState(null);
+
+  const GoalCard=g=>{
+    const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+    const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
+    const remain=Math.max(0,g.target-saved);
+    const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
+    return(
+      <div key={g.id} style={{borderRadius:16,padding:16,marginBottom:12,background:P.sf,border:`1px solid ${P.line}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <span style={{width:10,height:10,borderRadius:999,background:g.color,flexShrink:0}}/>
+          <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:15,fontWeight:600,flex:1,minWidth:0}}/>
+          <button onClick={()=>removeGoal(g.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
+        </div>
+
+        {/* progress bar */}
+        <div style={{height:10,borderRadius:999,background:P.sfA,overflow:"hidden",marginBottom:8}}>
+          <div style={{width:`${pctDone}%`,height:"100%",background:g.color,transition:"width .4s"}}/>
+        </div>
+
+        {/* stats */}
+        <div style={{display:"flex",flexWrap:"wrap",gap:12,fontSize:13}} className="tnum">
+          <div><div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>Saved</div><div style={{fontWeight:700,color:P.ink}}>{fmt(saved)}</div></div>
+          <div><div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>Target</div>
+            <input type="number" value={g.target} onChange={e=>updateGoal(g.id,{target:Number(e.target.value)})} className="bare tnum" style={{fontWeight:600,width:90,fontSize:13}}/></div>
+          <div><div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>Monthly</div>
+            <input type="number" value={g.monthly} onChange={e=>updateGoal(g.id,{monthly:Number(e.target.value)})} className="bare tnum" style={{fontWeight:600,width:80,fontSize:13}}/></div>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginTop:6}}>
+          {pctDone.toFixed(0)}% · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
+        </div>
+
+        {/* action buttons */}
+        <div style={{display:"flex",gap:8,marginTop:10}}>
+          <button onClick={()=>{setAddModal(g.id);setAddAmount("");setAddNote("");}}
+            style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 12px",fontSize:12,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
+            <I.Plus size={12}/>Add money
+          </button>
+          {(g.contributions||[]).length>0&&(
+            <button onClick={()=>setExpandedId(expandedId===g.id?null:g.id)}
+              style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,color:P.sub,background:P.sfA,border:`1px solid ${P.line}`}}>
+              {expandedId===g.id?"Hide":"View"} {g.contributions.length} contribution{g.contributions.length!==1?"s":""}
+            </button>
+          )}
+        </div>
+
+        {/* contributions list */}
+        {expandedId===g.id&&(g.contributions||[]).length>0&&(
+          <div style={{marginTop:10,borderRadius:10,overflow:"hidden",border:`1px solid ${P.line}`}}>
+            {[...(g.contributions||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
+              <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:`1px solid ${P.sfA}`,fontSize:13}}>
+                <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
+                <span className="tnum" style={{fontWeight:600,color:P.gr}}>+{fmt(c.amount)}</span>
+                {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
+                <button onClick={()=>removeContribution(g.id,c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      {["me","wife"].map(ok=>(
+        <section key={ok} style={{marginBottom:20}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.gr:P.br}}/>
+            <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br,margin:0}}>{owners[ok]}'s goals</h2>
+          </div>
+          {goals.filter(g=>g.owner===ok).map(GoalCard)}
+          <button onClick={()=>addGoal(ok)} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr}}>
+            <I.Plus size={14}/>Add {owners[ok]}'s goal
+          </button>
+        </section>
+      ))}
+
+      {/* Add money modal */}
+      {addModal&&(()=>{
+        const g=goals.find(x=>x.id===addModal);
+        if(!g)return null;
+        const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        return(
+          <div className="modal-bg" onClick={()=>setAddModal(null)}>
+            <div className="modal" onClick={e=>e.stopPropagation()}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Add money — {g.name}</h3>
+                <button onClick={()=>setAddModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+              </div>
+              <div style={{background:P.sfA,borderRadius:12,padding:12,marginBottom:16}}>
+                <div style={{fontSize:12,color:P.sub}}>Current saved</div>
+                <div className="serif tnum" style={{fontSize:24,fontWeight:600}}>{fmt(saved)}</div>
+                <div style={{fontSize:12,color:P.faint}}>Target: {fmt(g.target)} · {g.target>0?((saved/g.target)*100).toFixed(0):0}% there</div>
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount to add</div>
+                <input type="number" value={addAmount} onChange={e=>setAddAmount(e.target.value)} placeholder="0" autoFocus
+                  style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note (optional)</div>
+                <input value={addNote} onChange={e=>setAddNote(e.target.value)} placeholder="e.g. Monthly deposit"
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              </div>
+              {addAmount&&Number(addAmount)>0&&(
+                <div style={{fontSize:13,color:P.sub,marginBottom:12}} className="tnum">
+                  New total: {fmt(saved+Number(addAmount))} ({g.target>0?(((saved+Number(addAmount))/g.target)*100).toFixed(0):0}%)
+                </div>
+              )}
+              <button onClick={()=>{if(Number(addAmount)>0){addContribution(addModal,addAmount,addNote);setAddModal(null);}}}
+                style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.gr,color:"#fff",border:"none"}}>
+                Add {addAmount?fmt(Number(addAmount)):"money"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+/* ── OVERVIEW VIEW ── */
+function OverviewView({plan,fmt,pct,allocated,remaining}){
+  const pieData=plan.groups.map(g=>({name:g.name,value:plan.categories.filter(c=>c.groupId===g.id).reduce((s,c)=>s+(Number(c.amount)||0),0)})).filter(d=>d.value>0);
+  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+  return(
+    <div>
+      <div style={{...card,padding:16,marginBottom:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,color:P.sub,margin:"0 0 8px"}}>Where the {fmt(plan.income)} goes</h3>
+        <div style={{width:"100%",height:240}}>
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} innerRadius={48} paddingAngle={2}>
+                {pieData.map((_,i)=><Cell key={i} fill={SEG[i%SEG.length]}/>)}
+              </Pie>
+              <Tooltip formatter={v=>fmt(v)}/>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:10,marginTop:8}}>
+          {pieData.map((d,i)=>(
+            <span key={d.name} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:P.sub}}>
+              <span style={{width:9,height:9,borderRadius:999,background:SEG[i%SEG.length]}}/>{d.name} · {pct(d.value).toFixed(0)}%
+            </span>
+          ))}
+        </div>
+      </div>
+      <div style={{...card,padding:16}}>
+        {[["Income",plan.income,P.ink],["Allocated",allocated,P.ink],["Unallocated / Over",remaining,remaining<0?P.red:P.gr]].map(([l,v,c])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"5px 0",borderTop:l==="Unallocated / Over"?`1px solid ${P.sfA}`:"none",marginTop:l==="Unallocated / Over"?6:0}}>
+            <span style={{color:P.sub}}>{l}</span><span className="tnum" style={{fontWeight:600,color:c}}>{l==="Unallocated / Over"&&remaining<0?"−":""}{fmt(Math.abs(v))}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── SETTINGS MODAL ── */
+function SettingsModal({data,setData,onClose,pullKV,kvReady,lastSyncedAt,setOwnerName,owners}){
+  const[confirm,setConfirm]=useState(false);
+  const[msg,setMsg]=useState("");
+  const fileRef=useRef(null);
+  const flash=m=>{setMsg(m);setTimeout(()=>setMsg(""),2500);};
+  const download=()=>{
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);const a=document.createElement("a");
+    a.href=url;a.download=`allocation-backup-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    flash("Backup downloaded ✓");
+  };
+  const onFile=e=>{
+    const f=e.target.files&&e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=()=>{try{const d=JSON.parse(String(r.result));if(!Array.isArray(d.plans))throw 0;setData(migrate(d));flash("Backup loaded ✓");}catch{flash("Not a valid backup.");}};
+    r.readAsText(f);
+  };
+  const btn={background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
+  return(
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+          <h3 style={{margin:0,fontWeight:600}}>Settings</h3>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Who's who</div>
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          <input value={owners.me} onChange={e=>setOwnerName("me",e.target.value)} placeholder="Your name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          <input value={owners.wife} onChange={e=>setOwnerName("wife",e.target.value)} placeholder="Wife's name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Currency label</div>
+        <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Cloudflare KV Sync</div>
+        {kvReady
+          ?<div style={{marginBottom:16}}>
+            <div style={{fontSize:12,color:P.gr,marginBottom:8,padding:"8px 10px",background:P.grS,borderRadius:10}}>
+              ✅ Sync active — no login needed · {lastSyncedAt?`Last synced ${lastSyncedAt.toLocaleTimeString()}`:"Not yet synced this session"}
+            </div>
+            <button onClick={pullKV} style={{...btn,width:"100%"}}><I.Cloud size={14}/>Pull latest from KV</button>
+          </div>
+          :<div style={{marginBottom:16,fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
+            Add your Worker URL and Sync Token to <code>index.html</code> to enable sync.
+            See the setup guide for instructions.
+          </div>
+        }
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Manual backup</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <button onClick={download} style={btn}><I.Download size={14}/>Download</button>
+          <button onClick={()=>fileRef.current&&fileRef.current.click()} style={btn}><I.Upload size={14}/>Import</button>
+        </div>
+        <input ref={fileRef} type="file" accept=".json" onChange={onFile} style={{display:"none"}}/>
+        {msg&&<div style={{fontSize:12,color:P.gr,marginBottom:12}}>{msg}</div>}
+        <button onClick={()=>confirm?(setData(defaultData()),flash("Reset done")):setConfirm(true)}
+          style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
+            background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
+          <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to sample data"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+
+<script>
+window.__hideLoading=function(){
+  var el=document.getElementById("loading");
+  if(el){el.style.opacity="0";el.style.transition="opacity 0.3s";setTimeout(function(){el.remove();},300);}
+};
+setTimeout(window.__hideLoading,8000);
+</script>
+</body>
+</html>
