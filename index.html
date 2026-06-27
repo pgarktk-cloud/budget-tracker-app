@@ -88,6 +88,29 @@ const I={
   Receipt:Ic([<polyline key="a" points="6 2 3 6 3 22 21 22 21 6 18 2"/>,<rect key="b" x="6" y="2" width="12" height="6"/>,<line key="c" x1="8" y1="13" x2="16" y2="13"/>,<line key="d" x1="8" y1="17" x2="16" y2="17"/>]),
 };
 
+/* ── Goal-type icons (minimalist line icons) ── */
+const GI={
+  savings:Ic([<path key="a" d="M19 11a7.5 7.5 0 0 1-7.5 7.5A7.5 7.5 0 0 1 4 11v-1a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v1z"/>,<path key="b" d="M19 11c.9 0 1.8.2 2.6.5L23 9l-2-1.5"/>,<path key="c" d="M9 10V9"/>,<path key="d" d="M8 15h8"/>]),
+  emergency:Ic([<path key="a" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>,<path key="b" d="M12 8v4"/>,<path key="c" d="M12 16h.01"/>]),
+  vacation:Ic([<path key="a" d="M17.8 19.2 16 11l3.5-3.5a2.1 2.1 0 0 0-3-3L13 8 4.8 6.2a1 1 0 0 0-.9 1.7l5.6 3.9-2.3 2.3-2.5-.5a1 1 0 0 0-.9 1.6l2.6 2.6 2.6 2.6a1 1 0 0 0 1.6-.9l-.5-2.5 2.3-2.3 3.9 5.6a1 1 0 0 0 1.7-.9z"/>]),
+  education:Ic([<path key="a" d="M22 10 12 5 2 10l10 5 10-5z"/>,<path key="b" d="M6 12v5c0 1 2.5 3 6 3s6-2 6-3v-5"/>,<path key="c" d="M22 10v6"/>]),
+  home:Ic([<path key="a" d="M3 9.5 12 3l9 6.5"/>,<path key="b" d="M5 10v10h14V10"/>,<path key="c" d="M9 20v-6h6v6"/>]),
+  car:Ic([<path key="a" d="M5 13l1.4-4.2A2 2 0 0 1 8.3 7.5h7.4a2 2 0 0 1 1.9 1.3L19 13"/>,<path key="b" d="M4 13h16v4a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/>,<circle key="c" cx="7.5" cy="15.5" r=".6"/>,<circle key="d" cx="16.5" cy="15.5" r=".6"/>]),
+  wedding:Ic([<path key="a" d="M20.8 6.6a5 5 0 0 0-7.1 0L12 8.3l-1.7-1.7a5 5 0 0 0-7.1 7.1l1.7 1.7L12 22l7.1-6.6 1.7-1.7a5 5 0 0 0 0-7.1z"/>]),
+  tech:Ic([<rect key="a" x="4" y="5" width="16" height="10" rx="1"/>,<path key="b" d="M2 19h20l-1.5-3H3.5z"/>]),
+  health:Ic([<path key="a" d="M22 12h-4l-3 8L9 4l-3 8H2"/>]),
+  gift:Ic([<rect key="a" x="3" y="8" width="18" height="4" rx="1"/>,<path key="b" d="M5 12v9h14v-9"/>,<path key="c" d="M12 8v13"/>,<path key="d" d="M12 8S10.5 3 8 4.5 9 8 12 8z"/>,<path key="e" d="M12 8s1.5-5 4-3.5S15 8 12 8z"/>]),
+  retirement:Ic([<path key="a" d="M6 2h12"/>,<path key="b" d="M6 22h12"/>,<path key="c" d="M8 2c0 4 8 6 8 10s-8 6-8 10"/>,<path key="d" d="M16 2c0 4-8 6-8 10s8 6 8 10"/>]),
+  growth:Ic([<polyline key="a" points="23 6 13.5 15.5 8.5 10.5 1 18"/>,<polyline key="b" points="17 6 23 6 23 12"/>]),
+};
+const GOAL_TYPES=[
+  ["savings","Savings"],["emergency","Emergency fund"],["vacation","Vacation / travel"],
+  ["education","Education"],["home","Home"],["car","Car / vehicle"],
+  ["wedding","Wedding"],["tech","Tech / gadget"],["health","Health"],
+  ["gift","Gift"],["retirement","Retirement"],["growth","Investing"],
+];
+const goalIcon=t=>GI[t]||GI.savings;
+
 /* ── utils ── */
 const uid=()=>Math.random().toString(36).slice(2,9);
 const STORAGE_KEY="salaryPlanner:v3";
@@ -229,9 +252,9 @@ function defaultData(){
        ]},
     ],
     goals:[
-      {id:uid(),owner:"me",name:"Emergency Fund",target:60000,contributions:[{id:uid(),date:buyDate,amount:18500,note:"Opening balance"}],monthly:2000,color:P.gr},
-      {id:uid(),owner:"me",name:"Family Trip",target:25000,contributions:[{id:uid(),date:buyDate,amount:6000,note:""}],monthly:1000,color:P.br},
-      {id:uid(),owner:"wife",name:"New Laptop",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
+      {id:uid(),owner:"me",name:"Emergency Fund",type:"emergency",target:60000,contributions:[{id:uid(),date:buyDate,amount:18500,note:"Opening balance"}],monthly:2000,color:P.gr},
+      {id:uid(),owner:"me",name:"Family Trip",type:"vacation",target:25000,contributions:[{id:uid(),date:buyDate,amount:6000,note:""}],monthly:1000,color:P.br},
+      {id:uid(),owner:"wife",name:"New Laptop",type:"tech",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
     ],
     investments:[
       {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",
@@ -295,6 +318,7 @@ function migrate(d){
   (d.banks||[]).forEach(b=>{if(!b.owner)b.owner="me";});
   (d.goals||[]).forEach(g=>{
     if(!g.owner)g.owner="me";
+    if(!g.type)g.type="savings";
     // migrate old saved→contributions
     if(g.saved!==undefined&&!g.contributions){
       g.contributions=[{id:uid(),date:new Date().toISOString().slice(0,10),amount:g.saved,note:"Migrated balance"}];
@@ -424,6 +448,11 @@ function App(){
   /* which owner is active in Budget/Expenses tabs */
   const[budgetOwner,setBudgetOwner]=useState("me");
 
+  /* Currency converter selections — lifted here so they persist across tab switches */
+  const[fxAmount,setFxAmount]=useState(100);
+  const[fxFrom,setFxFrom]=useState("USD");
+  const[fxTo,setFxTo]=useState("SAR");
+
   /* active plan for each owner */
   const activePlanId=data.activePlanId||{me:data.plans?.[0]?.id,wife:null};
   const plan=data.plans.find(p=>p.id===activePlanId[budgetOwner])||
@@ -464,6 +493,13 @@ function App(){
   });
   const renamePlan=(id,name)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===id?{...p,name}:p)}));
   const switchPlan=id=>setData(d=>({...d,activePlanId:{...activePlanId,[budgetOwner]:id}}));
+
+  /* ── generic plan-by-id mutators (used by month-aware Budget tab) ──
+     These let the Budget tab edit whichever plan maps to the viewed month,
+     rather than only the active plan. */
+  const patchPlanById=(pid,patch)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,...patch}:p)}));
+  const setCatsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,categories:typeof updater==="function"?updater(p.categories||[]):updater}:p)}));
+  const setGrpsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,groups:typeof updater==="function"?updater(p.groups||[]):updater}:p)}));
 
   /* ── monthly budget plans ──
      monthlyPlans: [{ month:"2026-06", planId:"p1" }]
@@ -519,7 +555,7 @@ function App(){
   }));
 
   /* goals */
-  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length]}]}));
+  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length]}]}));
   const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch}:g)}));
   const removeGoal=id=>setData(d=>({...d,goals:d.goals.filter(g=>g.id!==id)}));
   const addContribution=(goalId,amount,note="")=>{
@@ -686,13 +722,13 @@ function App(){
           ))}
         </nav>
 
-        {tab==="budget"&&<BudgetView {...{plan,plans:data.plans,fmt,pct,cur,updateCat,addCat,removeCat,addSub,updateSub,removeSub,addGroup,renameGroup,removeGroup,allocated,remaining,budgetOwner,setBudgetOwner,owners:data.owners,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu}}/>}
+        {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners}}/>}
         {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,removeExpenseTx,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners}}/>}
         {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
         {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
-        {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
+        {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
         {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
-        {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert}}/>}
+        {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
         {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
         {tab==="overview"&&<OverviewView {...{plan,fmt,pct,allocated,remaining}}/>}
       </div>
@@ -701,56 +737,124 @@ function App(){
   );
 }
 
-/* ── BUDGET VIEW — percentage shown inline beside amount ── */
-function BudgetView({plan,plans,fmt,pct,cur,updateCat,addCat,removeCat,addSub,updateSub,removeSub,addGroup,renameGroup,removeGroup,allocated,remaining,budgetOwner,setBudgetOwner,owners,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu}){
-  /* filter to only this owner's plans for the plan switcher */
-  const ownerPlans=(plans||[]).filter(p=>p.owner===budgetOwner);
+/* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
+function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners}){
+  const nowMonth=new Date().toISOString().slice(0,7);
+  const[viewMonth,setViewMonth]=useState(nowMonth);
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
   const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
 
-  /* Effective amount for a category:
-     if it has subs, display the sum of subs (and keep manual input for override if subs empty)
-     The amount field is always editable; subs sum auto-fills it when subs exist. */
+  const addMonths=(ym,n)=>{const[y,m]=ym.split("-").map(Number);const d=new Date(y,m-1+n,1);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;};
+  const fmtMonth=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});};
+  const isFuture=viewMonth>nowMonth;
+  const isNow=viewMonth===nowMonth;
+  const isPast=viewMonth<nowMonth;
+
+  /* the plan that applies to the viewed month for this owner */
+  const monthPlan=planForMonth(viewMonth,budgetOwner);
+  const hasOwnPlan=!!(monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner);
+  /* Current month always edits the carry-forward base plan directly.
+     Other months are only editable once a custom copy exists. */
+  const editable=isNow||hasOwnPlan;
+  const pid=monthPlan.id;
+
+  /* keep a category's stored amount in sync with its sub-items' sum */
+  const syncAmt=c=>{const subs=c.subs||[];return subs.length>0?{...c,amount:subs.reduce((s,x)=>s+(Number(x.amount)||0),0)}:c;};
+
+  /* month-scoped mutators — all target the viewed month's plan id, atomically */
+  const updateCat=(id,patch)=>setCatsFor(pid,cats=>cats.map(c=>c.id===id?{...c,...patch}:c));
+  const addCat=gid=>setCatsFor(pid,cats=>[...cats,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[cats.length%SEG.length],subs:[]}]);
+  const removeCat=id=>setCatsFor(pid,cats=>cats.filter(c=>c.id!==id));
+  const updateSub=(catId,subId,patch)=>setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}):c));
+  const removeSub=(catId,subId)=>setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).filter(s=>s.id!==subId)}):c));
+  const addGroup=()=>setGrpsFor(pid,gs=>[...gs,{id:uid(),name:"New group"}]);
+  const renameGroup=(id,name)=>setGrpsFor(pid,gs=>gs.map(g=>g.id===id?{...g,name}:g));
+  const removeGroup=id=>{setCatsFor(pid,cats=>cats.filter(c=>c.groupId!==id));setGrpsFor(pid,gs=>gs.filter(g=>g.id!==id));};
+  const setIncome=v=>patchPlanById(pid,{income:Number(v)||0});
+
+  const handleAddSub=catId=>{
+    setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:[...(c.subs||[]),{id:uid(),name:"New item",amount:0}]}):c));
+    setExpandedSubs(s=>({...s,[catId]:true}));
+  };
+  const handleSubChange=(catId,subId,patch)=>updateSub(catId,subId,patch);
+  const handleRemoveSub=(catId,subId)=>removeSub(catId,subId);
+
   const effectiveAmt=c=>{
     const subs=c.subs||[];
     if(subs.length>0)return subs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
     return Number(c.amount)||0;
   };
 
-  /* When a sub changes, update the parent amount to the new subs sum */
-  const handleSubChange=(catId,subId,patch)=>{
-    updateSub(catId,subId,patch);
-    // re-compute total after update (optimistic — React batches this)
-    const cat=plan.categories.find(c=>c.id===catId);
-    if(!cat)return;
-    const newSubs=(cat.subs||[]).map(s=>s.id===subId?{...s,...patch}:s);
-    const sum=newSubs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
-    updateCat(catId,{amount:sum});
-  };
-  const handleAddSub=catId=>{
-    addSub(catId);
-    setExpandedSubs(s=>({...s,[catId]:true}));
-  };
-  const handleRemoveSub=(catId,subId)=>{
-    removeSub(catId,subId);
-    // re-sum after removal
-    const cat=plan.categories.find(c=>c.id===catId);
-    if(!cat)return;
-    const newSubs=(cat.subs||[]).filter(s=>s.id!==subId);
-    const sum=newSubs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
-    updateCat(catId,{amount:sum});
-  };
+  /* month-scoped totals */
+  const income=Number(monthPlan.income)||0;
+  const allocated=(monthPlan.categories||[]).reduce((s,c)=>s+effectiveAmt(c),0);
+  const remaining=income-allocated;
+  const pct=n=>income>0?((Number(n)||0)/income)*100:0;
+
+  const createCopy=()=>clonePlanForMonth(viewMonth,activePlanId[budgetOwner],budgetOwner);
 
   return(
     <div>
       {/* ── owner toggle ── */}
       <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
 
-      {/* ── plan switcher for this owner ── */}
-      <PlanSwitcher {...{ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,planMenu,setPlanMenu,fmt,cur}}/>
+      {/* ── month navigator ── */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:P.sf,borderRadius:16,padding:"10px 14px",border:`1px solid ${P.line}`}}>
+        <button onClick={()=>setViewMonth(m=>addMonths(m,-1))}
+          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>‹</button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <div style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmtMonth(viewMonth)}</div>
+          <div style={{fontSize:11,fontWeight:600,marginTop:1,color:isFuture?P.br:isNow?P.gr:P.faint}}>
+            {isFuture?"Planning ahead":isNow?"Current month":"Past month"}
+          </div>
+        </div>
+        <button onClick={()=>setViewMonth(m=>addMonths(m,1))}
+          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>›</button>
+        {viewMonth!==nowMonth&&(
+          <button onClick={()=>setViewMonth(nowMonth)}
+            style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,background:P.grS,color:P.grD,border:"none"}}>Today</button>
+        )}
+      </div>
 
+      {/* ── plan status banner ── */}
+      <div style={{borderRadius:14,padding:"12px 14px",marginBottom:12,
+        background:isNow?P.grS:hasOwnPlan?P.brS:P.sfA,
+        border:`1px solid ${isNow?P.grS:hasOwnPlan?P.brS:P.line}`,
+        display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:600,color:isNow?P.grD:hasOwnPlan?P.br:P.sub}}>
+            {isNow?"📋 Carry-forward plan":hasOwnPlan?`📋 Custom plan for ${fmtMonth(viewMonth)}`:"📋 Carry-forward (preview)"}
+          </div>
+          <div style={{fontSize:11,color:isNow?P.gr:hasOwnPlan?P.br:P.faint,marginTop:2}}>
+            {isNow
+              ?"This is your base budget. Edits here carry forward to every future month automatically."
+              :hasOwnPlan
+                ?"A custom copy for this month. Edits here only affect this month."
+                :`Showing your carry-forward budget. Create a copy to customize ${fmtMonth(viewMonth)} without touching other months.`}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,flexShrink:0}}>
+          {!isNow&&(hasOwnPlan
+            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)}
+                style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:"transparent",border:`1px solid ${P.line}`,color:P.red,fontWeight:500}}>Remove</button>
+            :<button onClick={createCopy}
+                style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:P.br,color:"#fff",border:"none",fontWeight:600,whiteSpace:"nowrap"}}>+ Create copy</button>
+          )}
+        </div>
+      </div>
+
+      {/* ── income + allocation summary ── */}
       <div style={{...card,padding:16,marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+            <span style={{fontSize:12,color:P.faint,textTransform:"uppercase",letterSpacing:".08em"}}>Income</span>
+            <span style={{fontSize:13,color:P.sub}}>{cur}</span>
+            <input type="number" value={income} disabled={!editable}
+              onChange={e=>setIncome(e.target.value)}
+              className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:editable?P.ink:P.faint}}/>
+          </div>
+        </div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Allocated {fmt(allocated)}</span>
           <span style={{fontSize:13,fontWeight:600,color:remaining<0?P.red:P.gr}}>
@@ -758,14 +862,29 @@ function BudgetView({plan,plans,fmt,pct,cur,updateCat,addCat,removeCat,addSub,up
           </span>
         </div>
         <div style={{marginTop:10,height:10,background:P.sfA,borderRadius:999,overflow:"hidden",display:"flex"}}>
-          {plan.categories.map(c=>(
+          {(monthPlan.categories||[]).map(c=>(
             <div key={c.id} style={{width:`${pct(effectiveAmt(c))}%`,background:c.color}} title={c.name}/>
           ))}
         </div>
       </div>
 
-      {plan.groups.map(g=>{
-        const items=plan.categories.filter(c=>c.groupId===g.id);
+      {/* ── locked preview hint for non-current months without a copy ── */}
+      {!editable&&(
+        <div style={{borderRadius:14,padding:"14px 16px",marginBottom:16,textAlign:"center",
+          background:P.sf,border:`1px dashed ${P.line}`}}>
+          <div style={{fontSize:13,color:P.sub,marginBottom:10}}>
+            You're previewing your carry-forward budget for {fmtMonth(viewMonth)}.<br/>
+            Create a copy to add categories or change amounts just for this month.
+          </div>
+          <button onClick={createCopy}
+            style={{display:"inline-flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 16px",fontSize:14,fontWeight:600,background:P.br,color:"#fff",border:"none"}}>
+            <I.Plus size={14}/>Create copy for {fmtMonth(viewMonth)}
+          </button>
+        </div>
+      )}
+
+      {editable&&(monthPlan.groups||[]).map(g=>{
+        const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
         const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
         return(
           <section key={g.id} style={{...card,overflow:"hidden",marginBottom:16}}>
@@ -857,9 +976,11 @@ function BudgetView({plan,plans,fmt,pct,cur,updateCat,addCat,removeCat,addSub,up
           </section>
         );
       })}
-      <button onClick={addGroup} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr}}>
-        <I.Plus size={14}/>Add group
-      </button>
+      {editable&&(
+        <button onClick={addGroup} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr}}>
+          <I.Plus size={14}/>Add group
+        </button>
+      )}
     </div>
   );
 }
@@ -1489,13 +1610,42 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
 }
 
 /* ── INVESTMENTS VIEW — trade log ── */
-function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,projection,setProjection,portHistory,addPortSnap}){
+function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection,setProjection,portHistory,addPortSnap}){
   const[loading,setLoading]=useState(false);
   const[err,setErr]=useState("");
   const[updatedAt,setUpdatedAt]=useState(null);
   const[tradeModal,setTradeModal]=useState(null); // invId
   const[tradeForm,setTradeForm]=useState({type:"buy",shares:"",price:"",date:new Date().toISOString().slice(0,10)});
   const[expandedId,setExpandedId]=useState(null);
+  const[fetchingName,setFetchingName]=useState({});
+
+  /* Look up a company / fund name for a ticker.
+     1) Cloudflare proxy → Yahoo (best for ETFs like VWRA, using the mapped symbol)
+     2) Finnhub search (good for US stocks)                                   */
+  const fetchName=async(id,ticker)=>{
+    const t=(ticker||"").trim().toUpperCase();
+    if(!t)return;
+    setFetchingName(s=>({...s,[id]:true}));
+    let name=null;
+    if(!PROXY_URL.startsWith("PASTE_")){
+      try{
+        const ys=toYahooSym(t);
+        const res=await fetch(`${PROXY_URL}/name?symbol=${encodeURIComponent(ys)}`);
+        if(res.ok){const j=await res.json();if(j&&j.name)name=j.name;}
+      }catch(e){}
+    }
+    if(!name&&!FINNHUB_KEY.startsWith("PASTE_")){
+      try{
+        const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`);
+        const j=await res.json();
+        const list=j.result||[];
+        const match=list.find(x=>x.symbol===t)||list.find(x=>x.symbol===t+".US")||list.find(x=>x.symbol===baseKey(t))||list[0];
+        if(match&&match.description)name=match.description;
+      }catch(e){}
+    }
+    if(name)updateInv(id,{name});
+    setFetchingName(s=>{const n={...s};delete n[id];return n;});
+  };
 
   const usd=n=>`$${(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
@@ -1559,7 +1709,12 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       <div style={{borderRadius:16,padding:20,marginBottom:16,background:P.ink,color:"#fff"}}>
         <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Portfolio value (USD)</div>
         <span className="serif tnum" style={{fontSize:38,fontWeight:600}}>{usd(totVal)}</span>
-        {sarRate&&<div className="tnum" style={{fontSize:14,color:"#9DB0CC",marginTop:4}}>≈ SAR {Math.round(totVal*sarRate).toLocaleString("en-US")}</div>}
+        {(sarRate||convert)&&(
+          <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:"#9DB0CC"}}>
+            {sarRate&&<span>≈ SAR {Math.round(totVal*sarRate).toLocaleString("en-US")}</span>}
+            {(()=>{const php=convert?convert(totVal,"USD","PHP"):null;return php!=null?<span>≈ ₱{Math.round(php).toLocaleString("en-US")}</span>:null;})()}
+          </div>
+        )}
         <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:20,fontSize:14}} className="tnum">
           <span style={{color:"#9DB0CC"}}>Cost {usd(totCost)}</span>
           <span style={{color:totGain>=0?"#6FC6DA":"#E89B8C",fontWeight:600}}>
@@ -1624,28 +1779,13 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <input value={r.ticker} placeholder="TICKER"
                   onChange={e=>updateInv(r.id,{ticker:e.target.value.toUpperCase()})}
-                  onBlur={async e=>{
+                  onBlur={e=>{
                     const t=(e.target.value||"").trim().toUpperCase();
-                    if(!t||r.name)return; // don't overwrite existing name
-                    // Try Finnhub search for company name
-                    if(!FINNHUB_KEY.startsWith("PASTE_")){
-                      try{
-                        const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`);
-                        const j=await res.json();
-                        const match=(j.result||[]).find(x=>x.symbol===t||x.symbol===t+".US");
-                        if(match&&match.description)return updateInv(r.id,{name:match.description});
-                      }catch(e){}
-                    }
-                    // Fallback: use Finnhub quote for name via symbol
-                    if(!PROXY_URL.startsWith("PASTE_")){
-                      try{
-                        const res=await fetch(`${PROXY_URL}/name?symbol=${encodeURIComponent(t)}`);
-                        if(res.ok){const j=await res.json();if(j.name)updateInv(r.id,{name:j.name});}
-                      }catch(e){}
-                    }
+                    if(!t||r.name)return; // don't overwrite an existing name
+                    fetchName(r.id,t);
                   }}
                   className="bare" style={{fontSize:14,fontWeight:700,width:80,letterSpacing:".03em"}}/>
-                <input value={r.name} placeholder={r.ticker?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.sub,flex:1,minWidth:0}}/>
+                <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.sub,flex:1,minWidth:0}}/>
                 <span className="tnum" style={{fontSize:14,fontWeight:600}}>{usd(r.value)}</span>
                 <button onClick={()=>removeInv(r.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
               </div>
@@ -1763,27 +1903,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   );
 }
 
-/* ── NET WORTH VIEW — installment liabilities ── */
-function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}){
-  const[gran,setGran]=useState("month");
-  const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
-  const[pv,setPv]=useState("");
-  const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
-  const usd=sarRate?Math.round(netWorth/sarRate):null;
-  const php=convert?convert(netWorth,"SAR","PHP"):null;
-  const parts=[{label:"Bank accounts",value:banksSar,color:SEG[0]},{label:"Investments",value:invSar,color:SEG[3]},{label:"Other assets",value:assetSar,color:SEG[5]},{label:"Liabilities",value:-liabSar,color:P.red}];
-  const gross=banksSar+invSar+assetSar;
-  const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
-  const sorted=[...history].sort((a,b)=>a.month.localeCompare(b.month));
-  let pts;
-  if(gran==="year"){const m={};sorted.forEach(s=>{m[s.month.slice(0,4)]=s;});pts=Object.entries(m).map(([y,s])=>({label:y,net:s.net}));}
-  else pts=sorted.map(s=>({label:fmtMo(s.month),net:s.net}));
-  const last=sorted[sorted.length-1];
-  const delta=last?netWorth-last.net:null;
-  const assetItems=assets.filter(a=>a.kind==="asset");
-  const liabItems=assets.filter(a=>a.kind==="liability");
-
-  const AssetRow=({a})=>(
+/* ── Asset / liability row (top-level so it doesn't remount on each keystroke) ── */
+function AssetRow({a,updateAsset,removeAsset}){
+  return(
     <div style={{padding:"12px 16px",borderBottom:`1px solid ${P.sfA}`}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
         <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0}}/>
@@ -1854,6 +1976,27 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
       )}
     </div>
   );
+}
+
+/* ── NET WORTH VIEW — installment liabilities ── */
+function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}){
+  const[gran,setGran]=useState("month");
+  const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
+  const[pv,setPv]=useState("");
+  const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
+  const usd=sarRate?Math.round(netWorth/sarRate):null;
+  const php=convert?convert(netWorth,"SAR","PHP"):null;
+  const parts=[{label:"Bank accounts",value:banksSar,color:SEG[0]},{label:"Investments",value:invSar,color:SEG[3]},{label:"Other assets",value:assetSar,color:SEG[5]},{label:"Liabilities",value:-liabSar,color:P.red}];
+  const gross=banksSar+invSar+assetSar;
+  const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
+  const sorted=[...history].sort((a,b)=>a.month.localeCompare(b.month));
+  let pts;
+  if(gran==="year"){const m={};sorted.forEach(s=>{m[s.month.slice(0,4)]=s;});pts=Object.entries(m).map(([y,s])=>({label:y,net:s.net}));}
+  else pts=sorted.map(s=>({label:fmtMo(s.month),net:s.net}));
+  const last=sorted[sorted.length-1];
+  const delta=last?netWorth-last.net:null;
+  const assetItems=assets.filter(a=>a.kind==="asset");
+  const liabItems=assets.filter(a=>a.kind==="liability");
 
   return(
     <div>
@@ -1883,10 +2026,10 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
 
       <div style={{borderRadius:16,overflow:"hidden",marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
         <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,background:P.sfA,borderBottom:`1px solid ${P.line}`}}>Assets</div>
-        {assetItems.map(a=><AssetRow key={a.id} a={a}/>)}
+        {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
         <button onClick={()=>addAsset("asset")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}><I.Plus size={14}/>Add asset</button>
         <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,background:P.sfA,borderTop:`1px solid ${P.line}`,borderBottom:`1px solid ${P.line}`}}>Liabilities</div>
-        {liabItems.map(a=><AssetRow key={a.id} a={a}/>)}
+        {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
         <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.red,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
       </div>
 
@@ -1937,10 +2080,9 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
 }
 
 /* ── CURRENCY VIEW ── */
-function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert}){
-  const[amount,setAmount]=useState(100);
-  const[from,setFrom]=useState("USD");
-  const[to,setTo]=useState("SAR");
+function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}){
+  const amount=fxAmount,from=fxFrom,to=fxTo;
+  const setAmount=setFxAmount,setFrom=setFxFrom,setTo=setFxTo;
   const result=convert(amount,from,to);
   const one=convert(1,from,to);
   const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
@@ -1995,90 +2137,129 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert}){
   );
 }
 
-/* ── GOALS VIEW — contribution log ── */
+
+/* ── GOAL SQUARE CARD (top-level so inputs keep focus) ── */
+function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}){
+  const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+  const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
+  const Icon=goalIcon(g.type);
+  const R=26,C=2*Math.PI*R;
+  return(
+    <div style={{borderRadius:16,padding:14,background:P.sf,border:`1px solid ${P.line}`,display:"flex",flexDirection:"column",gap:8}}>
+      {/* top row: type icon + delete */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <button onClick={()=>openTypePicker(g.id)} title="Change goal type"
+          style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,
+            background:g.color+"22",color:g.color,border:"none"}}>
+          <Icon size={18}/>
+        </button>
+        <button onClick={()=>removeGoal(g.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,padding:2}}><I.X size={15}/></button>
+      </div>
+
+      {/* name */}
+      <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare"
+        style={{fontSize:14,fontWeight:600,width:"100%",minWidth:0}}/>
+
+      {/* ring progress */}
+      <div style={{display:"flex",justifyContent:"center",padding:"2px 0"}}>
+        <svg width="72" height="72" viewBox="0 0 72 72">
+          <circle cx="36" cy="36" r={R} stroke={P.sfA} strokeWidth="7" fill="none"/>
+          <circle cx="36" cy="36" r={R} stroke={g.color} strokeWidth="7" fill="none" strokeLinecap="round"
+            strokeDasharray={C} strokeDashoffset={C*(1-pctDone/100)} transform="rotate(-90 36 36)"
+            style={{transition:"stroke-dashoffset .5s"}}/>
+          <text x="36" y="40" textAnchor="middle" fontSize="15" fontWeight="700" fill={P.ink} className="tnum">{pctDone.toFixed(0)}%</text>
+        </svg>
+      </div>
+
+      {/* saved / target */}
+      <div style={{textAlign:"center"}} className="tnum">
+        <div style={{fontSize:14,fontWeight:700,color:P.ink}}>{fmt(saved)}</div>
+        <div style={{fontSize:11,color:P.faint}}>of {fmt(g.target)}</div>
+      </div>
+
+      {/* actions */}
+      <div style={{display:"flex",gap:6,marginTop:"auto"}}>
+        <button onClick={()=>openAdd(g.id)}
+          style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,borderRadius:999,padding:"6px 0",fontSize:12,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
+          <I.Plus size={12}/>Add
+        </button>
+        <button onClick={()=>openDetails(g.id)} title="Details"
+          style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:"6px 10px",fontSize:12,fontWeight:600,color:P.sub,background:P.sfA,border:`1px solid ${P.line}`}}>
+          ⋯
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── GOALS VIEW — square cards with type icons ── */
 function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners}){
-  const[addModal,setAddModal]=useState(null); // goalId
+  const[addModal,setAddModal]=useState(null);     // goalId for "add money"
   const[addAmount,setAddAmount]=useState("");
   const[addNote,setAddNote]=useState("");
-  const[expandedId,setExpandedId]=useState(null);
+  const[detailModal,setDetailModal]=useState(null); // goalId for details
+  const[typePicker,setTypePicker]=useState(null);    // goalId for type picker
 
-  const GoalCard=g=>{
-    const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
-    const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
-    const remain=Math.max(0,g.target-saved);
-    const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
-    return(
-      <div key={g.id} style={{borderRadius:16,padding:16,marginBottom:12,background:P.sf,border:`1px solid ${P.line}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-          <span style={{width:10,height:10,borderRadius:999,background:g.color,flexShrink:0}}/>
-          <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:15,fontWeight:600,flex:1,minWidth:0}}/>
-          <button onClick={()=>removeGoal(g.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
-        </div>
-
-        {/* progress bar */}
-        <div style={{height:10,borderRadius:999,background:P.sfA,overflow:"hidden",marginBottom:8}}>
-          <div style={{width:`${pctDone}%`,height:"100%",background:g.color,transition:"width .4s"}}/>
-        </div>
-
-        {/* stats */}
-        <div style={{display:"flex",flexWrap:"wrap",gap:12,fontSize:13}} className="tnum">
-          <div><div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>Saved</div><div style={{fontWeight:700,color:P.ink}}>{fmt(saved)}</div></div>
-          <div><div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>Target</div>
-            <input type="number" value={g.target} onChange={e=>updateGoal(g.id,{target:Number(e.target.value)})} className="bare tnum" style={{fontWeight:600,width:90,fontSize:13}}/></div>
-          <div><div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>Monthly</div>
-            <input type="number" value={g.monthly} onChange={e=>updateGoal(g.id,{monthly:Number(e.target.value)})} className="bare tnum" style={{fontWeight:600,width:80,fontSize:13}}/></div>
-        </div>
-        <div style={{fontSize:12,color:P.faint,marginTop:6}}>
-          {pctDone.toFixed(0)}% · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
-        </div>
-
-        {/* action buttons */}
-        <div style={{display:"flex",gap:8,marginTop:10}}>
-          <button onClick={()=>{setAddModal(g.id);setAddAmount("");setAddNote("");}}
-            style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 12px",fontSize:12,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
-            <I.Plus size={12}/>Add money
-          </button>
-          {(g.contributions||[]).length>0&&(
-            <button onClick={()=>setExpandedId(expandedId===g.id?null:g.id)}
-              style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,color:P.sub,background:P.sfA,border:`1px solid ${P.line}`}}>
-              {expandedId===g.id?"Hide":"View"} {g.contributions.length} contribution{g.contributions.length!==1?"s":""}
-            </button>
-          )}
-        </div>
-
-        {/* contributions list */}
-        {expandedId===g.id&&(g.contributions||[]).length>0&&(
-          <div style={{marginTop:10,borderRadius:10,overflow:"hidden",border:`1px solid ${P.line}`}}>
-            {[...(g.contributions||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
-              <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:`1px solid ${P.sfA}`,fontSize:13}}>
-                <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
-                <span className="tnum" style={{fontWeight:600,color:P.gr}}>+{fmt(c.amount)}</span>
-                {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
-                <button onClick={()=>removeContribution(g.id,c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
+  const openAdd=id=>{setAddModal(id);setAddAmount("");setAddNote("");};
+  const openDetails=id=>setDetailModal(id);
+  const openTypePicker=id=>setTypePicker(id);
 
   return(
     <div>
-      {["me","wife"].map(ok=>(
-        <section key={ok} style={{marginBottom:20}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-            <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.gr:P.br}}/>
-            <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br,margin:0}}>{owners[ok]}'s goals</h2>
-          </div>
-          {goals.filter(g=>g.owner===ok).map(GoalCard)}
-          <button onClick={()=>addGoal(ok)} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr}}>
-            <I.Plus size={14}/>Add {owners[ok]}'s goal
-          </button>
-        </section>
-      ))}
+      {["me","wife"].map(ok=>{
+        const list=goals.filter(g=>g.owner===ok);
+        return(
+          <section key={ok} style={{marginBottom:22}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.gr:P.br}}/>
+              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br,margin:0}}>{owners[ok]}'s goals</h2>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:10}}>
+              {list.map(g=>(
+                <GoalSquare key={g.id} {...{g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
+              ))}
+              {/* add-goal square */}
+              <button onClick={()=>addGoal(ok)}
+                style={{borderRadius:16,padding:14,minHeight:150,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr,
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
+                <I.Plus size={20}/>Add goal
+              </button>
+            </div>
+          </section>
+        );
+      })}
 
-      {/* Add money modal */}
+      {/* ── Type picker modal ── */}
+      {typePicker&&(()=>{
+        const g=goals.find(x=>x.id===typePicker);
+        if(!g)return null;
+        return(
+          <div className="modal-bg" onClick={()=>setTypePicker(null)}>
+            <div className="modal" onClick={e=>e.stopPropagation()}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Goal type — {g.name}</h3>
+                <button onClick={()=>setTypePicker(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                {GOAL_TYPES.map(([key,label])=>{
+                  const Icon=goalIcon(key);
+                  const active=g.type===key;
+                  return(
+                    <button key={key} onClick={()=>{updateGoal(g.id,{type:key});setTypePicker(null);}}
+                      style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"12px 6px",borderRadius:12,
+                        background:active?g.color+"22":P.sfA,color:active?g.color:P.sub,
+                        border:`1px solid ${active?g.color:P.line}`,fontSize:11,fontWeight:600,textAlign:"center",lineHeight:1.2}}>
+                      <Icon size={22}/>{label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Add money modal ── */}
       {addModal&&(()=>{
         const g=goals.find(x=>x.id===addModal);
         if(!g)return null;
@@ -2113,6 +2294,62 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               <button onClick={()=>{if(Number(addAmount)>0){addContribution(addModal,addAmount,addNote);setAddModal(null);}}}
                 style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.gr,color:"#fff",border:"none"}}>
                 Add {addAmount?fmt(Number(addAmount)):"money"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Details modal: edit target/monthly + contributions ── */}
+      {detailModal&&(()=>{
+        const g=goals.find(x=>x.id===detailModal);
+        if(!g)return null;
+        const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const remain=Math.max(0,g.target-saved);
+        const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
+        const Icon=goalIcon(g.type);
+        return(
+          <div className="modal-bg" onClick={()=>setDetailModal(null)}>
+            <div className="modal" onClick={e=>e.stopPropagation()}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+                <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,background:g.color+"22",color:g.color}}><Icon size={18}/></span>
+                <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:16,fontWeight:600,flex:1,minWidth:0}}/>
+                <button onClick={()=>setDetailModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+              </div>
+
+              <div style={{display:"flex",gap:10,marginBottom:14}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Target</div>
+                  <input type="number" value={g.target} onChange={e=>updateGoal(g.id,{target:Number(e.target.value)})}
+                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Monthly</div>
+                  <input type="number" value={g.monthly} onChange={e=>updateGoal(g.id,{monthly:Number(e.target.value)})}
+                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                </div>
+              </div>
+              <div style={{fontSize:12,color:P.sub,marginBottom:14}} className="tnum">
+                Saved {fmt(saved)} · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
+              </div>
+
+              <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Contributions</div>
+              {(g.contributions||[]).length>0?(
+                <div style={{borderRadius:10,overflow:"hidden",border:`1px solid ${P.line}`,marginBottom:8}}>
+                  {[...(g.contributions||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
+                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:`1px solid ${P.sfA}`,fontSize:13}}>
+                      <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
+                      <span className="tnum" style={{fontWeight:600,color:P.gr}}>+{fmt(c.amount)}</span>
+                      {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
+                      <button onClick={()=>removeContribution(g.id,c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
+                    </div>
+                  ))}
+                </div>
+              ):<div style={{fontSize:12,color:P.faint,marginBottom:8}}>No contributions yet.</div>}
+
+              <button onClick={()=>{setDetailModal(null);openAdd(g.id);}}
+                style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,padding:"9px 0",fontSize:14,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
+                <I.Plus size={14}/>Add money
               </button>
             </div>
           </div>
