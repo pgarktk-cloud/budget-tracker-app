@@ -52,43 +52,43 @@ select{font:inherit;}
 :focus-visible{outline:2px solid var(--gr);outline-offset:1px;}
 
 /* ── Tab content fade ── */
-.tab-enter{animation:fadeUp .22s cubic-bezier(.22,1,.36,1) both;}
-.tab-enter-right{animation:slideInRight .22s cubic-bezier(.22,1,.36,1) both;}
-.tab-enter-left{animation:slideInLeft .22s cubic-bezier(.22,1,.36,1) both;}
+.tab-enter{animation:fadeUp .45s cubic-bezier(.22,1,.36,1) both;}
+.tab-enter-right{animation:slideInRight .45s cubic-bezier(.22,1,.36,1) both;}
+.tab-enter-left{animation:slideInLeft .45s cubic-bezier(.22,1,.36,1) both;}
 
 /* ── Cards / sections fade up on mount ── */
-.fade-up{animation:fadeUp .28s cubic-bezier(.22,1,.36,1) both;}
-.fade-up-1{animation:fadeUp .28s .05s cubic-bezier(.22,1,.36,1) both;}
-.fade-up-2{animation:fadeUp .28s .10s cubic-bezier(.22,1,.36,1) both;}
-.fade-up-3{animation:fadeUp .28s .15s cubic-bezier(.22,1,.36,1) both;}
-.fade-up-4{animation:fadeUp .28s .20s cubic-bezier(.22,1,.36,1) both;}
-.fade-up-5{animation:fadeUp .28s .25s cubic-bezier(.22,1,.36,1) both;}
+.fade-up{animation:fadeUp .5s cubic-bezier(.22,1,.36,1) both;}
+.fade-up-1{animation:fadeUp .5s .1s cubic-bezier(.22,1,.36,1) both;}
+.fade-up-2{animation:fadeUp .5s .2s cubic-bezier(.22,1,.36,1) both;}
+.fade-up-3{animation:fadeUp .5s .3s cubic-bezier(.22,1,.36,1) both;}
+.fade-up-4{animation:fadeUp .5s .4s cubic-bezier(.22,1,.36,1) both;}
+.fade-up-5{animation:fadeUp .5s .5s cubic-bezier(.22,1,.36,1) both;}
 
 /* ── List item appear ── */
-.list-item-enter{animation:fadeUp .18s cubic-bezier(.22,1,.36,1) both;}
+.list-item-enter{animation:fadeUp .38s cubic-bezier(.22,1,.36,1) both;}
 
 /* ── Number flash when value changes ── */
-.num-flash{animation:numFlash .35s ease both;}
+.num-flash{animation:numFlash .6s ease both;}
 
 /* ── Modal overlay + panel ── */
 .modal-bg{
   position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:16px;
   background:rgba(12,22,40,.45);
-  animation:overlayIn .18s ease both;
+  animation:overlayIn .3s ease both;
 }
 .modal{
   border-radius:18px;padding:20px;width:100%;max-width:400px;max-height:88vh;overflow-y:auto;background:var(--sf);
-  animation:scaleIn .22s cubic-bezier(.22,1,.36,1) both;
+  animation:scaleIn .4s cubic-bezier(.22,1,.36,1) both;
 }
 
 /* ── Button & interactive transitions ── */
-button{transition:opacity .12s,transform .1s,background .15s,color .15s,box-shadow .15s;}
+button{transition:opacity .18s,transform .15s,background .22s,color .22s,box-shadow .22s;}
 button:active{transform:scale(.96);}
-select{transition:background .15s;}
+select{transition:background .22s;}
 
 /* ── Progress bars ── */
-.bar-animated{transition:width .55s cubic-bezier(.22,1,.36,1);}
-.bar-color{transition:background .4s;}
+.bar-animated{transition:width .8s cubic-bezier(.22,1,.36,1);}
+.bar-color{transition:background .5s;}
 
 /* ── Reduced motion override ── */
 @media(prefers-reduced-motion:reduce){
