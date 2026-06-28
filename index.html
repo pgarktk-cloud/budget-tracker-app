@@ -452,8 +452,10 @@ function migrate(d){
    ─────────────────────────────────────────────────────────────────────────── */
 const SYNC_TOKEN="kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
 
+const KV_META_KEY="salaryPlanner:kvMeta";
 const KVSync={
-  lastPulledAt:null,
+  get lastPulledAt(){try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");return m.lastPulledAt||null;}catch(e){return null;}},
+  set lastPulledAt(v){try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");localStorage.setItem(KV_META_KEY,JSON.stringify({...m,lastPulledAt:v}));}catch(e){}},
   _ready(){return !PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");},
   _headers(){return{"Content-Type":"application/json","X-Sync-Token":SYNC_TOKEN};},
   async load(){
@@ -470,7 +472,7 @@ const KVSync={
     const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
     if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
     const j=await r.json();
-    if(j.savedAt)this.lastPulledAt=j.savedAt;
+    if(j.savedAt){this.lastPulledAt=j.savedAt;try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");localStorage.setItem(KV_META_KEY,JSON.stringify({...m,lastSavedAt:j.savedAt}));}catch(ex){}}
     return j;
   },
   async checkMeta(){
@@ -496,11 +498,40 @@ function App(){
   const skipSave=useRef(false);
   const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
 
-  /* load */
+  /* load — pull KV on first open so a fresh device gets real data before persist fires */
   useEffect(()=>{
-    try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)setData(migrate(JSON.parse(raw)));}catch(e){}
-    setLoaded(true);
-    if(typeof window.__hideLoading==="function")window.__hideLoading();
+    (async()=>{
+      let localData=null;
+      try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)localData=migrate(JSON.parse(raw));}catch(e){}
+      if(localData)setData(localData);
+      if(kvReady){
+        try{
+          setSyncing(true);setSyncMsg("Syncing\u2026");
+          const remote=await KVSync.load();
+          if(remote&&Array.isArray(remote.plans)){
+            if(!localData){
+              skipSave.current=true;
+              setData(migrate(remote));
+              setLastSyncedAt(new Date());
+              setSyncMsg("Loaded from cloud \u2713");
+            }else{
+              const remoteTs=KVSync.lastPulledAt?new Date(KVSync.lastPulledAt).getTime():0;
+              let localTs=0;
+              try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");localTs=m.lastSavedAt?new Date(m.lastSavedAt).getTime():0;}catch(ex){}
+              if(remoteTs>localTs){
+                skipSave.current=true;
+                setData(migrate(remote));
+                setLastSyncedAt(new Date());
+                setSyncMsg("Updated from cloud \u2713");
+              }else{setSyncMsg("Local data is current \u2713");}
+            }
+          }else if(!localData){setSyncMsg("No cloud data yet");}
+        }catch(e){setSyncMsg("Cloud unreachable \u2014 using local data");}
+        setSyncing(false);setTimeout(()=>setSyncMsg(""),3500);
+      }
+      setLoaded(true);
+      if(typeof window.__hideLoading==="function")window.__hideLoading();
+    })();
   },[]);
 
   /* persist */
