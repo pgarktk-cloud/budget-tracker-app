@@ -717,24 +717,57 @@ function App(){
   const skipSave=useRef(false);
   const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
 
-  /* load */
+  /* load — pull the latest cloud copy FIRST (when sync is configured), so
+     opening the app on a second device never autosaves a stale local copy
+     over data that was just saved from elsewhere. Local storage is only
+     used as the source of truth when sync isn't configured or the pull
+     fails (offline, etc.) — and even then we write whatever we end up
+     using back into localStorage so this device's cache stays current. */
   useEffect(()=>{
-    let initial="light";
-    try{
-      const raw=localStorage.getItem(STORAGE_KEY);
-      if(raw){
-        const parsed=migrate(JSON.parse(raw));
-        setData(parsed);
-        initial=parsed.theme||"light";
+    let cancelled=false;
+    (async()=>{
+      let initial="light";
+      let resolved=null;
+      let gotRemote=false;
+
+      if(kvReady){
+        try{
+          const remote=await KVSync.load();
+          if(remote&&Array.isArray(remote.plans)){resolved=migrate(remote);gotRemote=true;}
+        }catch(e){}
       }
-      const savedTheme=localStorage.getItem("allocation:theme");
-      if(savedTheme)initial=savedTheme;
-    }catch(e){}
-    applyTheme(initial);
-    applySegTheme(initial);
-    setThemeTick(t=>t+1);
-    setLoaded(true);
-    if(typeof window.__hideLoading==="function")window.__hideLoading();
+
+      if(!resolved){
+        try{
+          const raw=localStorage.getItem(STORAGE_KEY);
+          if(raw)resolved=migrate(JSON.parse(raw));
+        }catch(e){}
+      }
+
+      if(cancelled)return;
+
+      if(resolved){
+        // skip the very next autosave so loading remote data doesn't
+        // immediately re-trigger a save round-trip
+        skipSave.current=true;
+        setData(resolved);
+        initial=resolved.theme||"light";
+        try{localStorage.setItem(STORAGE_KEY,JSON.stringify(resolved));}catch(e){}
+      }
+      try{
+        const savedTheme=localStorage.getItem("allocation:theme");
+        if(savedTheme)initial=savedTheme;
+      }catch(e){}
+
+      if(gotRemote)setLastSyncedAt(new Date());
+
+      applyTheme(initial);
+      applySegTheme(initial);
+      setThemeTick(t=>t+1);
+      setLoaded(true);
+      if(typeof window.__hideLoading==="function")window.__hideLoading();
+    })();
+    return()=>{cancelled=true;};
   },[]);
 
   const toggleTheme=()=>{
