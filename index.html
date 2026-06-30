@@ -334,7 +334,16 @@ function periodKeyFor(dateStr,payday){
 
 /* {start,end} Date objects (inclusive) for the period identified by a key */
 function periodRange(periodKey,payday){
-  const[y,m,d]=periodKey.split("-").map(Number);
+  let[y,m,d]=(periodKey||"").split("-").map(Number);
+  if(!y||!m||!d){
+    // Malformed or stale key — e.g. a calendar-month key ("YYYY-MM") briefly
+    // passed in for one render right as pay-periods finish loading/turn on,
+    // before the owning view's re-anchoring effect has run. Falling back to
+    // the period containing today (instead of building an Invalid Date,
+    // which throws once it hits toLocaleDateString) is what was producing
+    // the stuck "Invalid Date" budget header.
+    [y,m,d]=periodKeyFor(todayISO(),payday).split("-").map(Number);
+  }
   const start=new Date(y,m-1,d);
   const nextY=m===12?y+1:y, nextM=m===12?1:m+1;
   const nextPayday=clampPayday(nextY,nextM,payday);
@@ -818,6 +827,52 @@ function App(){
     setSyncing(false);setTimeout(()=>setSyncMsg(""),3000);
   };
 
+  /* ── pull-to-refresh ──────────────────────────────────────────────────────
+     Standard mobile pattern: dragging down from the very top of the page
+     triggers a sync pull. pullDist drives the visible indicator; the touch
+     math lives in refs so the listeners don't need to be re-attached on
+     every move (only pullDist is state, purely for rendering). ─────────── */
+  const PULL_THRESHOLD=68,PULL_MAX=110;
+  const[pullDist,setPullDist]=useState(0);
+  const pullStartY=useRef(null);
+  const pullArmed=useRef(false);
+  const pullDistRef=useRef(0);
+  useEffect(()=>{
+    const atTop=()=>(window.scrollY||document.documentElement.scrollTop||0)<=0;
+    const onStart=e=>{
+      if(!atTop()){pullArmed.current=false;return;}
+      pullStartY.current=e.touches[0].clientY;
+      pullArmed.current=true;
+    };
+    const onMove=e=>{
+      if(!pullArmed.current||pullStartY.current==null)return;
+      if(!atTop()){pullArmed.current=false;pullDistRef.current=0;setPullDist(0);return;}
+      const dy=e.touches[0].clientY-pullStartY.current;
+      if(dy<=0){pullDistRef.current=0;setPullDist(0);return;}
+      e.preventDefault();
+      const val=Math.min(PULL_MAX,dy*0.45);
+      pullDistRef.current=val;
+      setPullDist(val);
+    };
+    const onEnd=()=>{
+      if(pullArmed.current&&pullDistRef.current>=PULL_THRESHOLD)pullKV();
+      pullArmed.current=false;
+      pullStartY.current=null;
+      pullDistRef.current=0;
+      setPullDist(0);
+    };
+    window.addEventListener("touchstart",onStart,{passive:true});
+    window.addEventListener("touchmove",onMove,{passive:false});
+    window.addEventListener("touchend",onEnd,{passive:true});
+    window.addEventListener("touchcancel",onEnd,{passive:true});
+    return()=>{
+      window.removeEventListener("touchstart",onStart);
+      window.removeEventListener("touchmove",onMove);
+      window.removeEventListener("touchend",onEnd);
+      window.removeEventListener("touchcancel",onEnd);
+    };
+  },[]);
+
   /* which owner is active in Budget/Expenses tabs */
   const[budgetOwner,setBudgetOwner]=useState("me");
 
@@ -1088,6 +1143,19 @@ function App(){
 
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
+      {/* pull-to-refresh indicator */}
+      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",
+        justifyContent:"center",pointerEvents:"none",
+        paddingTop:`calc(env(safe-area-inset-top) + ${Math.max(8,pullDist-30)}px)`,
+        opacity:pullDist>0||syncing?Math.min(1,pullDist/PULL_THRESHOLD)||(syncing?1:0):0,
+        transition:pullDist===0?"opacity .2s ease":"none"}}>
+        <div style={{width:32,height:32,borderRadius:999,background:P.sf,border:`1px solid ${P.line}`,
+          display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 14px rgba(12,22,40,.18)"}}>
+          <I.Refresh size={15} style={{color:pullDist>=PULL_THRESHOLD||syncing?P.gr:P.faint,
+            transform:syncing?"none":`rotate(${Math.min(pullDist,PULL_THRESHOLD)/PULL_THRESHOLD*360}deg)`,
+            ...(syncing?{animation:"spin .8s linear infinite"}:{})}}/>
+        </div>
+      </div>
       <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px 80px"}}>
 
         {/* header */}
@@ -1165,9 +1233,12 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
-  // when switching owners (and therefore possibly switching between
-  // calendar-month and pay-period bucketing), re-anchor to that owner's "now"
-  useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner]);
+  // when switching owners, OR when pay-period settings finish loading/change
+  // (e.g. the cloud sync pull resolves after this component already mounted
+  // with default settings), re-anchor to that owner's "now" so we're never
+  // holding a calendar-month key while in pay-period mode (or vice versa) —
+  // that mismatch is what produces "Invalid Date".
+  useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
   const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
@@ -1490,12 +1561,15 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
-  // when switching owners (and therefore possibly switching between
-  // calendar-month and pay-period bucketing), re-anchor to that owner's "now"
-  useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner]);
+  // when switching owners, OR when pay-period settings finish loading/change,
+  // re-anchor to that owner's "now" — see BudgetView for why this also
+  // depends on payPeriods, not just budgetOwner.
+  useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[showAdd,setShowAdd]=useState(false);
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
+  const[logGrouping,setLogGrouping]=useState("month"); // "month" | "category"
+  const[collapsedCats,setCollapsedCats]=useState({});
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
@@ -1639,6 +1713,60 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     byMonth[mo].push(tx);
   });
   const allMonths=Object.keys(byMonth).sort((a,b)=>b.localeCompare(a));
+
+  /* transaction log grouped by category name — names (not raw catId) are the
+     grouping key because each month/pay-period can carry its own cloned plan
+     with brand-new category ids, so the same conceptual category ("Groceries")
+     may have a different id per bucket. Falls back to the transaction's own
+     title for entries whose category can no longer be found (e.g. a category
+     that was later deleted from that bucket's plan). */
+  const byCategory={};
+  allFiltered.forEach(tx=>{
+    if(!tx.date)return;
+    const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
+    const moPlan=planForMonth(mo);
+    const cat=(moPlan.categories||[]).find(c=>c.id===tx.catId);
+    const name=cat?cat.name:"Uncategorized";
+    const color=cat?cat.color:P.faint;
+    if(!byCategory[name])byCategory[name]={name,color,txs:[],total:0};
+    byCategory[name].txs.push(tx);
+    byCategory[name].total+=tx.amount;
+  });
+  const categoryGroups=Object.values(byCategory).sort((a,b)=>b.total-a.total);
+
+  /* shared row renderer — used by both the month-grouped and
+     category-grouped transaction log so the two stay visually identical */
+  const renderTxRow=(tx,idx,total)=>{
+    const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
+    const moPlan=planForMonth(mo);
+    const env=(moPlan.categories||[]).find(c=>c.id===tx.catId);
+    return(
+      <div key={tx.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",
+        borderBottom:idx<total-1?`1px solid ${P.sfA}`:"none"}}>
+        <div style={{width:8,height:8,borderRadius:999,
+          background:env?.color||P.faint,flexShrink:0}}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:500,color:P.ink,
+            whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
+            {tx.name}
+            {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
+          </div>
+          <div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+            {tx.date}{env?` · ${env.name}`:""}{tx.note?` · ${tx.note}`:""}
+          </div>
+        </div>
+        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(tx.amount)}</span>
+        <button onClick={()=>openEdit(tx)}
+          style={{background:"transparent",border:"none",color:P.gr,opacity:.5}}>
+          <I.Edit size={13}/>
+        </button>
+        <button onClick={()=>removeExpenseTx(tx.id)}
+          style={{background:"transparent",border:"none",color:P.red,opacity:.4}}>
+          <I.X size={14}/>
+        </button>
+      </div>
+    );
+  };
 
   /* budget-vs-actual trend: trailing 3 buckets (excluding the viewed one)
      average spend per tracked envelope, to flag categories running hot or cold */
@@ -1896,22 +2024,60 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       )}
 
       {/* ── transaction log — all months collapsible ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:8}}>
         <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>All transactions</h2>
-        <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
-          style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
-            border:`1px solid ${P.line}`,color:P.sub}}>
-          <option value="all">All categories</option>
-          {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
-          {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
-        </select>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+            {[["month","Month"],["category","Category"]].map(([gv,label])=>(
+              <button key={gv} onClick={()=>setLogGrouping(gv)}
+                style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
+                  background:logGrouping===gv?P.ink:"transparent",color:logGrouping===gv?"#fff":P.sub}}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
+            style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
+              border:`1px solid ${P.line}`,color:P.sub}}>
+            <option value="all">All categories</option>
+            {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+            {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
+          </select>
+        </div>
       </div>
 
-      {allMonths.length===0
+      {allFiltered.length===0
         ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
             background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
             No transactions yet. Tap "Add transaction" to start tracking.
           </div>
+        :logGrouping==="category"
+        ?categoryGroups.map(catGroup=>{
+          const isOpen=collapsedCats[catGroup.name]===undefined?true:!collapsedCats[catGroup.name];
+          const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
+          return(
+            <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
+              border:`1px solid ${P.line}`,marginBottom:10}}>
+              <button
+                onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
+                style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+                  padding:"12px 16px",background:P.sfA,border:"none",cursor:"pointer",
+                  borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                    transition:"transform .2s",flexShrink:0}}/>
+                  <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
+                  <span style={{fontSize:14,fontWeight:700,color:P.ink}}>{catGroup.name}</span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
+                  <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(catGroup.total)}</span>
+                </div>
+              </button>
+              {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
+            </div>
+          );
+        })
         :allMonths.map(mo=>{
           const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
           const isCurrent=mo===nowMonth;
@@ -1921,15 +2087,6 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
           const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
           const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
           const moLabel=fmtMonth(mo);
-
-          // use correct envelopes for THIS month's plan
-          const moPlan=planForMonth(mo);
-          const moEnvs=[];
-          (moPlan.groups||[]).forEach(g=>{
-            (moPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
-              moEnvs.push({id:c.id,name:c.name,color:c.color});
-            });
-          });
 
           let headerBg=P.sfA;
           if(isCurrent)headerBg=P.grS;
@@ -1959,45 +2116,16 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 </div>
               </button>
 
-              {isOpen&&txs.map((tx,idx)=>{
-                const env=moEnvs.find(e=>e.id===tx.catId);
-                return(
-                  <div key={tx.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",
-                    borderBottom:idx<txs.length-1?`1px solid ${P.sfA}`:"none"}}>
-                    <div style={{width:8,height:8,borderRadius:999,
-                      background:env?.color||P.faint,flexShrink:0}}/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:14,fontWeight:500,color:P.ink,
-                        whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
-                        {tx.name}
-                        {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
-                      </div>
-                      <div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                        {tx.date}{env?` · ${env.name}`:""}{tx.note?` · ${tx.note}`:""}
-                      </div>
-                    </div>
-                    <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(tx.amount)}</span>
-                    <button onClick={()=>openEdit(tx)}
-                      style={{background:"transparent",border:"none",color:P.gr,opacity:.5}}>
-                      <I.Edit size={13}/>
-                    </button>
-                    <button onClick={()=>removeExpenseTx(tx.id)}
-                      style={{background:"transparent",border:"none",color:P.red,opacity:.4}}>
-                      <I.X size={14}/>
-                    </button>
-                  </div>
-                );
-              })}
+              {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
             </div>
           );
         })
       }
 
-      {/* ── add/edit transaction sheet ── */}
+      {/* ── add/edit transaction modal ── */}
       {showAdd&&(
-        <div className="sheet-bg" onClick={closeForm}>
-          <div className="sheet" onClick={e=>e.stopPropagation()}>
-            <div className="sheet-handle"/>
+        <div className="modal-bg" onClick={closeForm}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
               <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
                 {editTx?"Edit transaction":isFuture?"Plan transaction":"Add transaction"}
@@ -2005,6 +2133,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               <button onClick={closeForm}
                 style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
             </div>
+
             <div style={{fontSize:12,color:isFuture?P.br:P.faint,marginBottom:14}}>
               {editTx?`Editing entry for ${fmtMonth(form.date?bucketKeyFor(form.date,payPeriods,budgetOwner):viewMonth)}`:isFuture?`Planning ahead for ${fmtMonth(viewMonth)}`:`Recording for ${fmtMonth(viewMonth)}`}
             </div>
@@ -2175,9 +2304,8 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
   const[amount,setAmount]=useState(String(transferModal.suggested||transferModal.budget||""));
   const[date,setDate]=useState(isNow?new Date().toISOString().slice(0,10):(usesPayPeriod?viewMonth:viewMonth+"-01"));
   return(
-    <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" onClick={e=>e.stopPropagation()}>
-        <div className="sheet-handle"/>
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
           <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Transfer — {transferModal.name}</h3>
           <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
