@@ -11,6 +11,24 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Allocation"/>
 <link rel="apple-touch-icon" href="icon-180.png"/>
+<script>
+(function(){
+  try{
+    var t=localStorage.getItem("allocation:theme");
+    if(t==="dark"){
+      var root=document.documentElement;
+      root.setAttribute("data-theme","dark");
+      var vars={
+        "--bg":"#0F1722","--ink":"#EAF0FA","--sub":"#9FB0C8","--faint":"#647289",
+        "--line":"#26344A","--sf":"#16202F","--sfA":"#1C2839","--gr":"#5B8FD9",
+        "--grD":"#9FC1ED","--grS":"#1E2F4A","--br":"#4FA9C7","--brS":"#1A323B","--red":"#E07A68",
+        "--deep":"#0A1119","--deepHi":"#7E93B5"
+      };
+      for(var k in vars)root.style.setProperty(k,vars[k]);
+    }
+  }catch(e){}
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
@@ -22,15 +40,16 @@
   --line:#D2DBE7;--sf:#FFFFFF;--sfA:#F0F4F9;
   --gr:#2C5FA8;--grD:#1B3E73;--grS:#E2EAF6;
   --br:#2E8BB0;--brS:#E0EEF4;--red:#C2533F;
+  --deep:#15243B;--deepHi:#9DB0CC;
 }
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;background:var(--bg);}
+html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;}
 .serif{font-family:"Iowan Old Style",Georgia,serif;}
 .tnum{font-variant-numeric:tabular-nums;}
 input.bare{background:transparent;border:none;outline:none;padding:1px 2px;border-radius:4px;transition:background .12s,box-shadow .12s;font:inherit;color:inherit;}
-input.bare:hover{background:rgba(0,0,0,.04);}
-input.bare:focus{background:rgba(44,95,168,.08);box-shadow:0 0 0 1px rgba(44,95,168,.35);}
+input.bare:hover{background:rgba(127,143,168,.12);}
+input.bare:focus{background:rgba(91,143,217,.12);box-shadow:0 0 0 1px rgba(91,143,217,.4);}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
 input[type=number]{-moz-appearance:textfield;}
 button{cursor:pointer;font:inherit;}
@@ -46,7 +65,26 @@ select{font:inherit;}
 @keyframes numFlash{0%{opacity:1}30%{opacity:.35}100%{opacity:1}}
 @keyframes slideInRight{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
 @keyframes slideInLeft{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:translateX(0)}}
-@keyframes barGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes sheetDown{from{opacity:0;transform:translateY(-24px)}to{opacity:1;transform:translateY(0)}}
+@keyframes sheetBgIn{from{opacity:0}to{opacity:1}}
+
+/* ── Top sheet (mobile-first modal alternative) — anchored near the top of
+   the viewport so it's visible immediately on open, no scrolling needed,
+   and stays clear of the on-screen keyboard which eats the bottom half. ── */
+.sheet-bg{
+  position:fixed;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;
+  background:rgba(12,22,40,.45);
+  animation:sheetBgIn .25s ease both;
+  overflow-y:auto;
+  padding:calc(env(safe-area-inset-top) + 16px) 12px 16px;
+}
+.sheet{
+  border-radius:18px;padding:18px;
+  width:100%;max-width:480px;max-height:calc(100vh - env(safe-area-inset-top) - 32px);overflow-y:auto;background:var(--sf);
+  animation:sheetDown .28s cubic-bezier(.22,1,.36,1) both;
+}
+.sheet-handle{display:none;}
+
 
 .spin{animation:spin .9s linear infinite;}
 :focus-visible{outline:2px solid var(--gr);outline-offset:1px;}
@@ -96,7 +134,7 @@ select{transition:background .22s;}
 }
 
 #root{padding-top:env(safe-area-inset-top);}
-#loading{position:fixed;inset:0;background:#E8EDF4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;}
+#loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;transition:background .25s;}
 .loader{width:32px;height:32px;border:3px solid #D2DBE7;border-top-color:#2C5FA8;border-radius:50%;animation:spin .8s linear infinite;}
 </style>
 </head>
@@ -151,9 +189,40 @@ function FadeList({items,renderItem,keyFn}){
   ));
 }
 
-/* ── palette ── */
-const P={bg:"#E8EDF4",ink:"#15243B",sub:"#56657E",faint:"#8A98AD",line:"#D2DBE7",sf:"#FFFFFF",sfA:"#F0F4F9",gr:"#2C5FA8",grD:"#1B3E73",grS:"#E2EAF6",br:"#2E8BB0",brS:"#E0EEF4",red:"#C2533F"};
-const SEG=["#2C5FA8","#6FA0D6","#1B3E73","#2E8BB0","#4C6E9C","#8FB4DD","#173B5E","#5BA7C2","#3D5A86","#7E97C4","#2A6F8E","#9DB8D9","#244C7A","#4F8FB0","#6678A8","#87A9CE"];
+/* ── palette ──
+   P's properties are mutated in place (not reassigned) when switching themes,
+   so every component that reads P.xxx at render time picks up the new value
+   without needing prop-drilling or context. */
+const PALETTE_LIGHT={bg:"#E8EDF4",ink:"#15243B",sub:"#56657E",faint:"#8A98AD",line:"#D2DBE7",sf:"#FFFFFF",sfA:"#F0F4F9",gr:"#2C5FA8",grD:"#1B3E73",grS:"#E2EAF6",br:"#2E8BB0",brS:"#E0EEF4",red:"#C2533F",deep:"#15243B",deepHi:"#9DB0CC",redS:"#FDF0EE",amberS:"#FEF4E8",amber:"#B5651D"};
+const PALETTE_DARK={bg:"#0F1722",ink:"#EAF0FA",sub:"#9FB0C8",faint:"#647289",line:"#26344A",sf:"#16202F",sfA:"#1C2839",gr:"#5B8FD9",grD:"#9FC1ED",grS:"#1E2F4A",br:"#4FA9C7",brS:"#1A323B",red:"#E07A68",deep:"#0A1119",deepHi:"#7E93B5",redS:"#3A1E1C",amberS:"#3A2E18",amber:"#E0A85C"};
+const P={...PALETTE_LIGHT};
+function applyTheme(mode){
+  const src=mode==="dark"?PALETTE_DARK:PALETTE_LIGHT;
+  Object.keys(src).forEach(k=>{P[k]=src[k];});
+  const root=document.documentElement;
+  root.style.setProperty("--bg",src.bg);
+  root.style.setProperty("--ink",src.ink);
+  root.style.setProperty("--sub",src.sub);
+  root.style.setProperty("--faint",src.faint);
+  root.style.setProperty("--line",src.line);
+  root.style.setProperty("--sf",src.sf);
+  root.style.setProperty("--sfA",src.sfA);
+  root.style.setProperty("--gr",src.gr);
+  root.style.setProperty("--grD",src.grD);
+  root.style.setProperty("--grS",src.grS);
+  root.style.setProperty("--br",src.br);
+  root.style.setProperty("--brS",src.brS);
+  root.style.setProperty("--red",src.red);
+  root.style.setProperty("--deep",src.deep);
+  root.style.setProperty("--deepHi",src.deepHi);
+  root.setAttribute("data-theme",mode);
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta)meta.setAttribute("content",src.bg);
+}
+const SEG_LIGHT=["#2C5FA8","#6FA0D6","#1B3E73","#2E8BB0","#4C6E9C","#8FB4DD","#173B5E","#5BA7C2","#3D5A86","#7E97C4","#2A6F8E","#9DB8D9","#244C7A","#4F8FB0","#6678A8","#87A9CE"];
+const SEG_DARK=["#6FA0D6","#8FB4DD","#5BA7C2","#9DB8D9","#4FA9C7","#7E97C4","#87A9CE","#6678A8","#4C6E9C","#2C5FA8","#9FC1ED","#5B8FD9","#3D5A86","#2A6F8E","#1B3E73","#173B5E"];
+let SEG=[...SEG_LIGHT];
+function applySegTheme(mode){const src=mode==="dark"?SEG_DARK:SEG_LIGHT;SEG.length=0;SEG.push(...src);}
 
 /* ── icons ── */
 const Ic=(paths,vb="0 0 24 24")=>(p)=>React.createElement("svg",{width:p.size||16,height:p.size||16,viewBox:vb,fill:"none",stroke:"currentColor",strokeWidth:p.sw||2,strokeLinecap:"round",strokeLinejoin:"round",style:p.style,className:p.className},paths);
@@ -178,6 +247,12 @@ const I={
   Download:Ic([<path key="a" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>,<polyline key="b" points="7 10 12 15 17 10"/>,<line key="c" x1="12" y1="15" x2="12" y2="3"/>]),
   Upload:Ic([<path key="a" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>,<polyline key="b" points="17 8 12 3 7 8"/>,<line key="c" x1="12" y1="3" x2="12" y2="15"/>]),
   Reset:Ic([<polyline key="a" points="1 4 1 10 7 10"/>,<path key="b" d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>]),
+  Sun:Ic([<circle key="a" cx="12" cy="12" r="4"/>,<path key="b" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>]),
+  Moon:Ic([<path key="a" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>]),
+  Edit:Ic([<path key="a" d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>,<path key="b" d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>]),
+  TrendUp:Ic([<polyline key="a" points="1 17 7 11 11 15 23 3"/>,<polyline key="b" points="17 3 23 3 23 9"/>]),
+  EyeOff:Ic([<path key="a" d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>,<line key="b" x1="1" y1="1" x2="23" y2="23"/>]),
+  Send:Ic([<line key="a" x1="22" y1="2" x2="11" y2="13"/>,<polygon key="b" points="22 2 15 22 11 13 2 9 22 2"/>]),
   ArrowUp:Ic([<line key="a" x1="12" y1="19" x2="12" y2="5"/>,<polyline key="b" points="5 12 12 5 19 12"/>]),
   ArrowDown:Ic([<line key="a" x1="12" y1="5" x2="12" y2="19"/>,<polyline key="b" points="19 12 12 19 5 12"/>]),
   Calendar:Ic([<rect key="a" x="3" y="4" width="18" height="18" rx="2"/>,<line key="b" x1="16" y1="2" x2="16" y2="6"/>,<line key="c" x1="8" y1="2" x2="8" y2="6"/>,<line key="d" x1="3" y1="10" x2="21" y2="10"/>]),
@@ -215,6 +290,136 @@ const monthLabel=()=>new Date().toLocaleDateString("en-US",{month:"long",year:"n
 const FX_CODES=["USD","SAR","PHP","AED","EUR","GBP","JPY","INR","AUD","CAD","SGD"];
 const BANK_CCY=["SAR","PHP","USD","AED","EUR","GBP"];
 const COUNTRIES=[["SA","Saudi Arabia"],["PH","Philippines"],["Other","Other"]];
+
+/* ── Pay-period utilities ──────────────────────────────────────────────────
+   Pay-periods are an opt-in alternative to calendar-month budgeting, for
+   people whose salary lands on a fixed day rather than the 1st. A period is
+   identified by a "period key" — the ISO date (YYYY-MM-DD) of its START day
+   — so it sorts and compares like any other date string. When pay-periods
+   are off for an owner, the rest of the app keeps using plain "YYYY-MM"
+   calendar-month keys exactly as before; these utilities are only called
+   when `payPeriod.enabled` is true for that owner.
+
+   "payday" = day of month (1-31) salary arrives; the period covering a given
+   date runs from that day through the day before the same day next month.
+   A payday beyond a short month (e.g. 31 in February) clamps to the last
+   actual day of that month, the conventional way to handle this. ───────── */
+
+/* Last valid calendar day of a given year/month (month is 1-12) */
+function daysInCalMonth(y,m){return new Date(y,m,0).getDate();}
+
+/* Resolve a payday (1-31) against a specific year/month, clamping to the
+   month's last real day so "31" in February becomes that February's 28/29. */
+function clampPayday(y,m,payday){return Math.min(Math.max(1,Number(payday)||1),daysInCalMonth(y,m));}
+
+/* Build a Date for the period START that contains `dateStr`, given a payday.
+   Returns a plain Date at local midnight. */
+function periodStartFor(dateStr,payday){
+  const d=new Date(dateStr+"T00:00:00");
+  const y=d.getFullYear(),m=d.getMonth()+1,day=d.getDate();
+  const thisMonthPayday=clampPayday(y,m,payday);
+  if(day>=thisMonthPayday){
+    return new Date(y,m-1,thisMonthPayday);
+  }
+  // falls before this month's payday → belongs to the period that started last month
+  const py=m===1?y-1:y, pm=m===1?12:m-1;
+  return new Date(py,pm-1,clampPayday(py,pm,payday));
+}
+
+/* The period KEY (YYYY-MM-DD of the period's start) containing a given date */
+function periodKeyFor(dateStr,payday){
+  const start=periodStartFor(dateStr,payday);
+  return`${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,"0")}-${String(start.getDate()).padStart(2,"0")}`;
+}
+
+/* {start,end} Date objects (inclusive) for the period identified by a key */
+function periodRange(periodKey,payday){
+  const[y,m,d]=periodKey.split("-").map(Number);
+  const start=new Date(y,m-1,d);
+  const nextY=m===12?y+1:y, nextM=m===12?1:m+1;
+  const nextPayday=clampPayday(nextY,nextM,payday);
+  const end=new Date(nextY,nextM-1,nextPayday-1);
+  return{start,end};
+}
+
+/* Number of days in a period (inclusive of both ends) */
+function periodLength(periodKey,payday){
+  const{start,end}=periodRange(periodKey,payday);
+  return Math.round((end-start)/86400000)+1;
+}
+
+/* Step a period key forward/back n periods */
+function shiftPeriod(periodKey,payday,n){
+  let key=periodKey;
+  if(n>0){for(let i=0;i<n;i++){const{end}=periodRange(key,payday);const next=new Date(end);next.setDate(next.getDate()+1);key=periodKeyFor(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}-${String(next.getDate()).padStart(2,"0")}`,payday);}}
+  else if(n<0){for(let i=0;i<-n;i++){const{start}=periodRange(key,payday);const prevDay=new Date(start);prevDay.setDate(prevDay.getDate()-1);key=periodKeyFor(`${prevDay.getFullYear()}-${String(prevDay.getMonth()+1).padStart(2,"0")}-${String(prevDay.getDate()).padStart(2,"0")}`,payday);}}
+  return key;
+}
+
+/* Human label for a period: "Jun 28 – Jul 27, 2026" */
+function periodLabel(periodKey,payday){
+  const{start,end}=periodRange(periodKey,payday);
+  const sameYear=start.getFullYear()===end.getFullYear();
+  const startStr=start.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  if(sameYear){
+    const endStr=end.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    return`${startStr} – ${endStr}, ${end.getFullYear()}`;
+  }
+  // crosses a year boundary: show both years explicitly, e.g. "Dec 28, 2025 – Jan 27, 2026"
+  const startWithYear=start.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  const endWithYear=end.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  return`${startWithYear} – ${endWithYear}`;
+}
+
+/* Today's date as YYYY-MM-DD, local time */
+function todayISO(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+
+/* ── Unified period helpers — these are what views actually call.
+   They check the owner's payPeriod settings and transparently fall back to
+   plain calendar-month bucketing ("YYYY-MM") when pay-periods are off,
+   so existing calendar-month logic and stored data are untouched. ───────── */
+function ownerUsesPayPeriod(payPeriods,owner){
+  const cfg=(payPeriods||{})[owner];
+  return!!(cfg&&cfg.enabled&&cfg.payday);
+}
+function bucketKeyFor(dateStr,payPeriods,owner){
+  const cfg=(payPeriods||{})[owner];
+  if(cfg&&cfg.enabled&&cfg.payday)return periodKeyFor(dateStr,cfg.payday);
+  return(dateStr||"").slice(0,7);
+}
+function bucketLabel(bucketKey,payPeriods,owner){
+  const cfg=(payPeriods||{})[owner];
+  if(cfg&&cfg.enabled&&cfg.payday)return periodLabel(bucketKey,cfg.payday);
+  const[y,mo]=bucketKey.split("-");
+  return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+}
+function bucketShift(bucketKey,payPeriods,owner,n){
+  const cfg=(payPeriods||{})[owner];
+  if(cfg&&cfg.enabled&&cfg.payday)return shiftPeriod(bucketKey,cfg.payday,n);
+  const[y,m]=bucketKey.split("-").map(Number);
+  const d=new Date(y,m-1+n,1);
+  return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+function bucketNow(payPeriods,owner){
+  return bucketKeyFor(todayISO(),payPeriods,owner);
+}
+/* Days elapsed / total in the CURRENT bucket, for burn-rate projections.
+   For calendar months this is identical to the old daysInMonth/dayOfMonth
+   logic; for pay-periods it uses the period's actual start/end. */
+function bucketProgress(bucketKey,payPeriods,owner){
+  const cfg=(payPeriods||{})[owner];
+  if(cfg&&cfg.enabled&&cfg.payday){
+    const{start,end}=periodRange(bucketKey,cfg.payday);
+    const total=periodLength(bucketKey,cfg.payday);
+    const now=new Date();now.setHours(0,0,0,0);
+    const elapsed=Math.max(1,Math.min(total,Math.round((now-start)/86400000)+1));
+    return{elapsed,total};
+  }
+  const[y,m]=bucketKey.split("-").map(Number);
+  const total=daysInCalMonth(y,m);
+  const elapsed=new Date().getDate();
+  return{elapsed,total};
+}
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -325,6 +530,7 @@ function liabilityBalance(liab){
 /* ── Default data ── */
 function defaultData(){
   const groups=[{id:"g1",name:"Invest & Grow"},{id:"g2",name:"Savings"},{id:"g3",name:"Essentials"},{id:"g4",name:"Personal"},{id:"g5",name:"Commitments"}];
+  const UNTRACKED=new Set(["Investment (GoTrade)","Long Term Savings","Savings (Seabank)","Misc. Savings"]);
   const seed=[
     ["Investment (GoTrade)",3300,"g1"],["Long Term Savings",2750,"g1"],
     ["Savings (Seabank)",4796,"g2"],["Misc. Savings",350,"g2"],
@@ -333,19 +539,20 @@ function defaultData(){
     ["Charlene",750,"g4"],["Braces",150,"g4"],
     ["Toyota Raize",1100,"g5"],["Tuition Fee Wife",1000,"g5"],
   ];
-  const categories=seed.map(([name,amount,groupId],i)=>({id:uid(),name,amount,groupId,color:SEG[i%SEG.length],subs:[]}));
+  const categories=seed.map(([name,amount,groupId],i)=>({id:uid(),name,amount,groupId,color:SEG[i%SEG.length],subs:[],trackExpenses:!UNTRACKED.has(name)}));
   const buyDate=new Date().toISOString().slice(0,10);
   return{
-    currency:"SAR",owners:{me:"Me",wife:"My wife"},
+    currency:"SAR",owners:{me:"Me",wife:"My wife"},theme:"light",
+    payPeriods:{me:{enabled:false,payday:28},wife:{enabled:false,payday:1}},
     activePlanId:{me:"p1",wife:"pw1"},
     plans:[
       {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:22000,groups,categories},
       {id:"pw1",owner:"wife",name:"Monthly Salary",month:monthLabel(),income:0,
        groups:[{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"}],
        categories:[
-         {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[]},
-         {id:uid(),name:"Bills",amount:0,groupId:"wg2",color:SEG[3],subs:[]},
-         {id:uid(),name:"Shopping",amount:0,groupId:"wg3",color:SEG[5],subs:[]},
+         {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[],trackExpenses:false},
+         {id:uid(),name:"Bills",amount:0,groupId:"wg2",color:SEG[3],subs:[],trackExpenses:true},
+         {id:uid(),name:"Shopping",amount:0,groupId:"wg3",color:SEG[5],subs:[],trackExpenses:true},
        ]},
     ],
     goals:[
@@ -408,8 +615,12 @@ function migrate(d){
     const wifePlan=(d.plans||[]).find(p=>p.owner==="wife");
     if(wifePlan)d.activePlanId.wife=wifePlan.id;
   }
-  // ensure expenses have owner
-  (d.expenses||[]).forEach(e=>{if(!e.owner)e.owner="me";});
+  // ensure expenses have owner + split name/note (old data had a single "name" field
+  // used as the transaction title; keep that as-is for `name`, add empty `note`)
+  (d.expenses||[]).forEach(e=>{
+    if(!e.owner)e.owner="me";
+    if(e.note===undefined)e.note="";
+  });
   // ensure monthlyPlans have owner
   (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";});
   (d.banks||[]).forEach(b=>{if(!b.owner)b.owner="me";});
@@ -426,6 +637,9 @@ function migrate(d){
   (d.plans||[]).forEach(plan=>{
     (plan.categories||[]).forEach(c=>{
       if(!c.subs)c.subs=[];
+      // default every category to tracked unless explicitly marked otherwise,
+      // so existing budgets behave exactly as before this feature shipped
+      if(c.trackExpenses===undefined)c.trackExpenses=true;
     });
   });
   (d.investments||[]).forEach(inv=>{
@@ -443,6 +657,12 @@ function migrate(d){
   if(!d.portHistory)d.portHistory=[];
   if(!d.expenses)d.expenses=[];
   if(!d.monthlyPlans)d.monthlyPlans=[];
+  if(!d.theme)d.theme="light";
+  if(!d.payPeriods)d.payPeriods={me:{enabled:false,payday:28},wife:{enabled:false,payday:1}};
+  if(!d.payPeriods.me)d.payPeriods.me={enabled:false,payday:28};
+  if(!d.payPeriods.wife)d.payPeriods.wife={enabled:false,payday:1};
+  if(!d.quickTransferLast)d.quickTransferLast={};
+  if(!d.netWorthAutoHistory)d.netWorthAutoHistory=[];
   return d;
 }
 
@@ -452,10 +672,8 @@ function migrate(d){
    ─────────────────────────────────────────────────────────────────────────── */
 const SYNC_TOKEN="kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
 
-const KV_META_KEY="salaryPlanner:kvMeta";
 const KVSync={
-  get lastPulledAt(){try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");return m.lastPulledAt||null;}catch(e){return null;}},
-  set lastPulledAt(v){try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");localStorage.setItem(KV_META_KEY,JSON.stringify({...m,lastPulledAt:v}));}catch(e){}},
+  lastPulledAt:null,
   _ready(){return !PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");},
   _headers(){return{"Content-Type":"application/json","X-Sync-Token":SYNC_TOKEN};},
   async load(){
@@ -472,7 +690,7 @@ const KVSync={
     const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
     if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
     const j=await r.json();
-    if(j.savedAt){this.lastPulledAt=j.savedAt;try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");localStorage.setItem(KV_META_KEY,JSON.stringify({...m,lastSavedAt:j.savedAt}));}catch(ex){}}
+    if(j.savedAt)this.lastPulledAt=j.savedAt;
     return j;
   },
   async checkMeta(){
@@ -495,44 +713,38 @@ function App(){
   const[syncMsg,setSyncMsg]=useState("");
   const[syncing,setSyncing]=useState(false);
   const[lastSyncedAt,setLastSyncedAt]=useState(null);
+  const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
   const skipSave=useRef(false);
   const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
 
-  /* load — pull KV on first open so a fresh device gets real data before persist fires */
+  /* load */
   useEffect(()=>{
-    (async()=>{
-      let localData=null;
-      try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)localData=migrate(JSON.parse(raw));}catch(e){}
-      if(localData)setData(localData);
-      if(kvReady){
-        try{
-          setSyncing(true);setSyncMsg("Syncing\u2026");
-          const remote=await KVSync.load();
-          if(remote&&Array.isArray(remote.plans)){
-            if(!localData){
-              skipSave.current=true;
-              setData(migrate(remote));
-              setLastSyncedAt(new Date());
-              setSyncMsg("Loaded from cloud \u2713");
-            }else{
-              const remoteTs=KVSync.lastPulledAt?new Date(KVSync.lastPulledAt).getTime():0;
-              let localTs=0;
-              try{const m=JSON.parse(localStorage.getItem(KV_META_KEY)||"{}");localTs=m.lastSavedAt?new Date(m.lastSavedAt).getTime():0;}catch(ex){}
-              if(remoteTs>localTs){
-                skipSave.current=true;
-                setData(migrate(remote));
-                setLastSyncedAt(new Date());
-                setSyncMsg("Updated from cloud \u2713");
-              }else{setSyncMsg("Local data is current \u2713");}
-            }
-          }else if(!localData){setSyncMsg("No cloud data yet");}
-        }catch(e){setSyncMsg("Cloud unreachable \u2014 using local data");}
-        setSyncing(false);setTimeout(()=>setSyncMsg(""),3500);
+    let initial="light";
+    try{
+      const raw=localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        const parsed=migrate(JSON.parse(raw));
+        setData(parsed);
+        initial=parsed.theme||"light";
       }
-      setLoaded(true);
-      if(typeof window.__hideLoading==="function")window.__hideLoading();
-    })();
+      const savedTheme=localStorage.getItem("allocation:theme");
+      if(savedTheme)initial=savedTheme;
+    }catch(e){}
+    applyTheme(initial);
+    applySegTheme(initial);
+    setThemeTick(t=>t+1);
+    setLoaded(true);
+    if(typeof window.__hideLoading==="function")window.__hideLoading();
   },[]);
+
+  const toggleTheme=()=>{
+    const next=(data.theme||"light")==="dark"?"light":"dark";
+    applyTheme(next);
+    applySegTheme(next);
+    try{localStorage.setItem("allocation:theme",next);}catch(e){}
+    setThemeTick(t=>t+1);
+    setData(d=>({...d,theme:next}));
+  };
 
   /* persist */
   useEffect(()=>{
@@ -593,7 +805,7 @@ function App(){
   const setCats=cats=>patchPlan({categories:cats});
   const setGrps=gs=>patchPlan({groups:gs});
   const updateCat=(id,patch)=>setCats(plan.categories.map(c=>c.id===id?{...c,...patch}:c));
-  const addCat=gid=>setCats([...plan.categories,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[plan.categories.length%SEG.length],subs:[]}]);
+  const addCat=gid=>setCats([...plan.categories,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[plan.categories.length%SEG.length],subs:[],trackExpenses:true}]);
   const removeCat=id=>setCats(plan.categories.filter(c=>c.id!==id));
   const addSub=catId=>setCats(plan.categories.map(c=>c.id===catId?{...c,subs:[...(c.subs||[]),{id:uid(),name:"New item",amount:0}]}:c));
   const updateSub=(catId,subId,patch)=>setCats(plan.categories.map(c=>c.id===catId?{...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}:c));
@@ -647,16 +859,21 @@ function App(){
     monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId}]
   }));
 
-  const clonePlanForMonth=(mo,sourcePlanId,owner=budgetOwner)=>{
+  const clonePlanForMonth=(mo,sourcePlanId,owner=budgetOwner,label)=>{
     const source=data.plans.find(p=>p.id===sourcePlanId)||data.plans[0];
     const newId=uid();
+    // `label` lets the caller supply a bucket-aware display name (calendar
+    // month OR pay-period range); falls back to the old calendar-month-only
+    // parsing if no label is given, for any caller that hasn't been updated.
+    const derivedLabel=label||(()=>{
+      const parts=mo.split("-");
+      return new Date(Number(parts[0]),Number(parts[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+    })();
     const cloned={
       ...source,
       id:newId,
-      name:new Date(Number(mo.split("-")[0]),Number(mo.split("-")[1])-1,1)
-        .toLocaleDateString("en-US",{month:"long",year:"numeric"}),
-      month:new Date(Number(mo.split("-")[0]),Number(mo.split("-")[1])-1,1)
-        .toLocaleDateString("en-US",{month:"long",year:"numeric"}),
+      name:derivedLabel,
+      month:derivedLabel,
       // deep-clone groups and categories so edits don't affect source
       groups:source.groups.map(g=>({...g,id:uid()})),
       categories:source.categories.map((c,i)=>{
@@ -713,10 +930,24 @@ function App(){
     });
   };
 
-  /* expense tracker — transactions per budget category */
+  /* expense tracker — transactions per budget category.
+     Schema: {id,catId,name,note,amount,date,owner,isTransfer}
+     `name` is the recurring/short title (e.g. "Amazon Now"), `note` is the
+     free-form detail (e.g. "bought a charger + cable"). isTransfer marks
+     quick-transfer logs against untracked categories. */
   const expenses=data.expenses||[];
-  const addExpenseTx=(catId,name,amount,date,owner=budgetOwner)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,amount:Number(amount),date,owner}]}));
+  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer}]}));
+  const updateExpenseTx=(id,patch)=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount}:e)}));
   const removeExpenseTx=id=>setData(d=>({...d,expenses:(d.expenses||[]).filter(e=>e.id!==id)}));
+
+  /* quick-transfer: logs a transaction against an untracked category (e.g. Savings)
+     and remembers the actual amount transferred, since it doesn't always match
+     the budgeted figure exactly. Keyed by category id. */
+  const quickTransferLast=data.quickTransferLast||{};
+  const quickTransfer=(catId,catName,amount,date,owner=budgetOwner)=>{
+    addExpenseTx(catId,catName,"Quick transfer",amount,date,owner,true);
+    setData(d=>({...d,quickTransferLast:{...(d.quickTransferLast||{}),[catId]:Number(amount)}}));
+  };
 
   /* FX */
   const[rates,setRates]=useState(null);
@@ -775,6 +1006,30 @@ function App(){
     return{...d,history:[...rest,{id:uid(),month,net:Math.round(net),banks:0,investments:0,assets:0,liabilities:0}].sort((a,b)=>a.month.localeCompare(b.month))};});
   const removeSnap=id=>setData(d=>({...d,history:(d.history||[]).filter(h=>h.id!==id)}));
 
+  /* net worth auto-pull — silently keeps this month's snapshot in sync with
+     live bank/investment/asset balances, so the timeline stays accurate
+     without needing a manual "Capture this month" tap every time. Only
+     updates the CURRENT month's entry, debounced, and only once balances
+     have settled (loaded + non-zero so we don't overwrite real history with
+     a startup 0 before data finishes loading). */
+  const netWorthReady=loaded&&!!rates&&(banks.length>0||invs.length>0||assets.length>0);
+  useEffect(()=>{
+    if(!netWorthReady)return;
+    const t=setTimeout(()=>{
+      const month=new Date().toISOString().slice(0,7);
+      setData(d=>{
+        const existing=(d.history||[]).find(h=>h.month===month);
+        const rounded=Math.round(netWorth);
+        if(existing&&existing.net===rounded&&existing.banks===Math.round(banksSar)&&existing.investments===Math.round(invSar)&&existing.assets===Math.round(assetSar)&&existing.liabilities===Math.round(liabSar)){
+          return d; // no change, skip write to avoid loops
+        }
+        const rest=(d.history||[]).filter(h=>h.month!==month);
+        return{...d,history:[...rest,{id:existing?.id||uid(),month,net:rounded,banks:Math.round(banksSar),investments:Math.round(invSar),assets:Math.round(assetSar),liabilities:Math.round(liabSar),auto:true}].sort((a,b)=>a.month.localeCompare(b.month))};
+      });
+    },1200);
+    return()=>clearTimeout(t);
+  },[netWorth,banksSar,invSar,assetSar,liabSar,netWorthReady]);
+
   /* household */
   const hh=data.household||{splitMine:50,expenses:[]};
   const setSplit=v=>setData(d=>({...d,household:{...(d.household||{splitMine:50,expenses:[]}),splitMine:v}}));
@@ -783,6 +1038,7 @@ function App(){
   const removeExpense=id=>setData(d=>{const h=d.household;return{...d,household:{...h,expenses:h.expenses.filter(e=>e.id!==id)}};});
 
   const setOwnerName=(key,name)=>setData(d=>({...d,owners:{...d.owners,[key]:name}}));
+  const setPayPeriod=(owner,patch)=>setData(d=>({...d,payPeriods:{...(d.payPeriods||{}),[owner]:{...((d.payPeriods||{})[owner]||{enabled:false,payday:1}),...patch}}}));
 
   /* derived */
   const allocated=useMemo(()=>plan.categories.reduce((s,c)=>s+(Number(c.amount)||0),0),[plan]);
@@ -810,6 +1066,10 @@ function App(){
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
+              <button onClick={toggleTheme} title={data.theme==="dark"?"Switch to light mode":"Switch to dark mode"}
+                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
+                {data.theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
+              </button>
               <button onClick={pullKV} title={kvReady?"Pull latest from Cloudflare KV":"Configure Worker URL and sync token to enable sync"}
                 style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
                   background:kvReady?P.grS:P.sf,color:kvReady?P.grD:P.sub,border:`1px solid ${kvReady?P.grS:P.line}`}}>
@@ -843,7 +1103,7 @@ function App(){
           {TABS.map(([id,label,Icon])=>(
             <button key={id} onClick={()=>setTab(id)}
               style={tab===id
-                ?{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.ink,color:"#fff",border:"none"}
+                ?{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.deep,color:"#fff",border:"none"}
                 :{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.sf,color:P.sub,border:`1px solid ${P.line}`}}>
               <Icon size={14}/>{label}
             </button>
@@ -851,8 +1111,8 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
-          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,removeExpenseTx,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
@@ -862,21 +1122,25 @@ function App(){
           {tab==="overview"&&<OverviewView {...{plan,fmt,pct,allocated,remaining}}/>}
         </TabPane>
       </div>
-      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),pullKV,kvReady,lastSyncedAt,setOwnerName,owners:data.owners}}/>}
+      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),pullKV,kvReady,lastSyncedAt,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod}}/>}
     </div>
   );
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners}){
-  const nowMonth=new Date().toISOString().slice(0,7);
+function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods}){
+  const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
+  const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
+  // when switching owners (and therefore possibly switching between
+  // calendar-month and pay-period bucketing), re-anchor to that owner's "now"
+  useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner]);
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
   const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
 
-  const addMonths=(ym,n)=>{const[y,m]=ym.split("-").map(Number);const d=new Date(y,m-1+n,1);return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;};
-  const fmtMonth=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});};
+  const addMonths=(ym,n)=>bucketShift(ym,payPeriods,budgetOwner,n);
+  const fmtMonth=m=>bucketLabel(m,payPeriods,budgetOwner);
   const isFuture=viewMonth>nowMonth;
   const isNow=viewMonth===nowMonth;
   const isPast=viewMonth<nowMonth;
@@ -894,7 +1158,7 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
 
   /* month-scoped mutators — all target the viewed month's plan id, atomically */
   const updateCat=(id,patch)=>setCatsFor(pid,cats=>cats.map(c=>c.id===id?{...c,...patch}:c));
-  const addCat=gid=>setCatsFor(pid,cats=>[...cats,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[cats.length%SEG.length],subs:[]}]);
+  const addCat=gid=>setCatsFor(pid,cats=>[...cats,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[cats.length%SEG.length],subs:[],trackExpenses:true}]);
   const removeCat=id=>setCatsFor(pid,cats=>cats.filter(c=>c.id!==id));
   const updateSub=(catId,subId,patch)=>setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}):c));
   const removeSub=(catId,subId)=>setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).filter(s=>s.id!==subId)}):c));
@@ -922,7 +1186,7 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
   const remaining=income-allocated;
   const pct=n=>income>0?((Number(n)||0)/income)*100:0;
 
-  const createCopy=()=>clonePlanForMonth(viewMonth,activePlanId[budgetOwner],budgetOwner);
+  const createCopy=()=>clonePlanForMonth(viewMonth,activePlanId[budgetOwner],budgetOwner,fmtMonth(viewMonth));
 
   return(
     <div>
@@ -936,7 +1200,7 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
         <div style={{flex:1,textAlign:"center"}}>
           <div style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmtMonth(viewMonth)}</div>
           <div style={{fontSize:11,fontWeight:600,marginTop:1,color:isFuture?P.br:isNow?P.gr:P.faint}}>
-            {isFuture?"Planning ahead":isNow?"Current month":"Past month"}
+            {isFuture?"Planning ahead":isNow?(usesPayPeriod?"Current pay period":"Current month"):(usesPayPeriod?"Past pay period":"Past month")}
           </div>
         </div>
         <button onClick={()=>setViewMonth(m=>addMonths(m,1))}
@@ -1037,7 +1301,9 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                   {/* Category row */}
                   <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px"}}>
                     <span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>
-                    <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare" style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400}}/>
+                    <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare"
+                      style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400,
+                        color:c.trackExpenses===false?P.faint:P.ink,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
                     <span className="tnum" style={{fontSize:12,color:P.faint,width:44,textAlign:"right"}}>{pct(effAmt).toFixed(1)}%</span>
                     <div style={{display:"flex",alignItems:"center",gap:4}}>
                       <span style={{fontSize:11,color:P.faint}}>{cur}</span>
@@ -1049,6 +1315,12 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                           className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600}}/>
                       }
                     </div>
+                    {/* tracking toggle */}
+                    <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
+                      title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
+                      style={{background:"transparent",border:"none",color:c.trackExpenses===false?P.br:P.faint,padding:2,display:"flex",alignItems:"center",opacity:c.trackExpenses===false?1:.5}}>
+                      {c.trackExpenses===false?<I.EyeOff size={14}/>:<I.Receipt size={14}/>}
+                    </button>
                     {/* sub-toggle button */}
                     <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
                       style={{background:"transparent",border:"none",color:subsOpen?P.gr:P.faint,padding:2,display:"flex",alignItems:"center"}}>
@@ -1059,7 +1331,7 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
 
                   {/* Sub-items panel */}
                   {subsOpen&&(
-                    <div style={{background:"#F7FAFD",borderTop:`1px solid ${P.line}`}}>
+                    <div style={{background:P.sfA,borderTop:`1px solid ${P.line}`}}>
                       {subs.map(sub=>(
                         <div key={sub.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 16px 7px 36px",borderBottom:`1px solid ${P.line}`}}>
                           {/* indent indicator */}
@@ -1181,24 +1453,23 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,removeExpenseTx,fmt,cur,budgetOwner,setBudgetOwner,owners}){
-  const nowMonth=new Date().toISOString().slice(0,7);
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods}){
+  const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
+  const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
+  // when switching owners (and therefore possibly switching between
+  // calendar-month and pay-period bucketing), re-anchor to that owner's "now"
+  useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner]);
   const[showAdd,setShowAdd]=useState(false);
+  const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
+  const[transferModal,setTransferModal]=useState(null); // {catId,name,budget} for quick transfer
 
-  const addMonths=(ym,n)=>{
-    const[y,m]=ym.split("-").map(Number);
-    const d=new Date(y,m-1+n,1);
-    return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-  };
-  const fmtMonth=m=>{
-    const[y,mo]=m.split("-");
-    return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
-  };
+  const addMonths=(ym,n)=>bucketShift(ym,payPeriods,budgetOwner,n);
+  const fmtMonth=m=>bucketLabel(m,payPeriods,budgetOwner);
   const isFuture=viewMonth>nowMonth;
   const isNow=viewMonth===nowMonth;
 
@@ -1206,23 +1477,38 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const monthPlan=planForMonth(viewMonth,budgetOwner);
   const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner);
 
-  /* envelopes from the MONTH'S plan (not necessarily the active plan) */
-  const envelopes=useMemo(()=>{
-    const env=[];
+  /* envelopes from the MONTH'S plan (not necessarily the active plan) —
+     split into tracked (shown with full progress bars + add transaction)
+     and untracked (one-time transfers like Savings, shown as quick-transfer cards) */
+  const{envelopes,untrackedEnvelopes}=useMemo(()=>{
+    const env=[],untracked=[];
     (monthPlan.groups||[]).forEach(g=>{
       (monthPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
         const effAmt=(c.subs||[]).length>0
           ?(c.subs||[]).reduce((s,sub)=>s+(Number(sub.amount)||0),0)
           :Number(c.amount)||0;
-        if(effAmt>0)env.push({id:c.id,name:c.name,group:g.name,budget:effAmt,color:c.color});
+        if(effAmt<=0)return;
+        const item={id:c.id,name:c.name,group:g.name,budget:effAmt,color:c.color};
+        if(c.trackExpenses===false)untracked.push(item);
+        else env.push(item);
       });
     });
-    return env;
+    return{envelopes:env,untrackedEnvelopes:untracked};
+  },[monthPlan]);
+
+  /* all categories (tracked + untracked) for the transaction form's dropdown,
+     grouped by their group id so the <optgroup> mapping below is a simple filter */
+  const allCatOptions=useMemo(()=>{
+    const out=[];
+    (monthPlan.groups||[]).forEach(g=>{
+      (monthPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>out.push({id:c.id,name:c.name,groupId:g.id,group:g.name,tracked:c.trackExpenses!==false}));
+    });
+    return out;
   },[monthPlan]);
 
   const viewMonthExpenses=useMemo(()=>
-    expenses.filter(e=>e.date&&e.date.startsWith(viewMonth)&&(e.owner||'me')===budgetOwner)
-  ,[expenses,viewMonth,budgetOwner]);
+    expenses.filter(e=>e.date&&(e.owner||'me')===budgetOwner&&bucketKeyFor(e.date,payPeriods,budgetOwner)===viewMonth)
+  ,[expenses,viewMonth,budgetOwner,payPeriods]);
 
   const spentMap=useMemo(()=>{
     const m={};
@@ -1230,9 +1516,18 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     return m;
   },[viewMonthExpenses]);
 
+  /* funded map — how much has been transferred into each untracked category this month */
+  const fundedMap=spentMap; // same underlying transaction log, just interpreted differently per category
+
   const totalBudget=envelopes.reduce((s,e)=>s+e.budget,0);
-  const totalSpent=Object.values(spentMap).reduce((s,v)=>s+v,0);
+  const totalSpent=envelopes.reduce((s,e)=>s+(spentMap[e.id]||0),0);
   const totalLeft=totalBudget-totalSpent;
+
+  /* salary remaining — income minus EVERY logged transaction (tracked + untracked),
+     since untracked transfers (Savings, Investment) still consume real salary. */
+  const totalIncome=Number(monthPlan.income)||0;
+  const totalLoggedAllCats=viewMonthExpenses.reduce((s,e)=>s+e.amount,0);
+  const totalUnallocatedOrUntransferred=totalIncome-totalLoggedAllCats;
 
   const statusColor=(spent,budget)=>{
     if(budget===0)return P.sub;
@@ -1244,37 +1539,115 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const statusBg=(spent,budget)=>{
     if(budget===0)return P.sfA;
     const r=spent/budget;
-    if(r>=1)return"#FDF0EE";
-    if(r>=0.8)return"#FEF4E8";
+    if(r>=1)return P.redS;
+    if(r>=0.8)return P.amberS;
     return P.sfA;
   };
 
-  const[form,setForm]=useState({catId:"",name:"",amount:"",date:viewMonth+"-01"});
-  useEffect(()=>{setForm(f=>({...f,date:viewMonth+"-01"}));},[viewMonth]);
+  /* default transaction date for the currently viewed bucket — the bucket's
+     own start date when using pay-periods (viewMonth IS that date already),
+     or the 1st of the calendar month otherwise */
+  const defaultDateForBucket=usesPayPeriod?viewMonth:viewMonth+"-01";
+
+  const blankForm={catId:"",name:"",note:"",amount:"",date:defaultDateForBucket};
+  const[form,setForm]=useState(blankForm);
+  useEffect(()=>{if(!editTx)setForm(f=>({...f,date:defaultDateForBucket}));},[viewMonth]);
+
+  /* recurring-name memory: previously used transaction names, most recent first,
+     scoped to this owner so suggestions stay relevant */
+  const recentNames=useMemo(()=>{
+    const seen=new Map();
+    [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.name&&!e.isTransfer)
+      .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .forEach(e=>{if(!seen.has(e.name))seen.set(e.name,e.catId);});
+    return[...seen.keys()].slice(0,40);
+  },[expenses,budgetOwner]);
+  /* names filtered to the currently selected category, falling back to all names */
+  const nameSuggestions=useMemo(()=>{
+    if(!form.catId)return recentNames.slice(0,8);
+    const scoped=[...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer)
+      .sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+    const seen=new Set();const out=[];
+    scoped.forEach(e=>{if(!seen.has(e.name)){seen.add(e.name);out.push(e.name);}});
+    return out.slice(0,8);
+  },[expenses,budgetOwner,form.catId,recentNames]);
+
+  const openAdd=(presetCatId)=>{
+    setEditTx(null);
+    setForm({...blankForm,catId:presetCatId||"",date:defaultDateForBucket});
+    setShowAdd(true);
+  };
+  const openEdit=(tx)=>{
+    setEditTx(tx.id);
+    setForm({catId:tx.catId,name:tx.name||"",note:tx.note||"",amount:String(tx.amount),date:tx.date});
+    // jump the month/period navigator to the transaction's own bucket so the
+    // category dropdown reflects whichever plan was active for that bucket
+    const txBucket=tx.date?bucketKeyFor(tx.date,payPeriods,budgetOwner):"";
+    if(txBucket&&txBucket!==viewMonth)setViewMonth(txBucket);
+    setShowAdd(true);
+  };
+  const closeForm=()=>{setShowAdd(false);setEditTx(null);};
 
   const submitTx=()=>{
     if(!form.catId||!form.name||!form.amount)return;
-    addExpenseTx(form.catId,form.name,Number(form.amount),form.date);
-    setForm(f=>({...f,name:"",amount:"",date:viewMonth+"-01"}));
-    setShowAdd(false);
+    if(editTx)updateExpenseTx(editTx,{catId:form.catId,name:form.name,note:form.note,amount:Number(form.amount),date:form.date});
+    else addExpenseTx(form.catId,form.name,form.note,Number(form.amount),form.date,budgetOwner);
+    closeForm();
   };
 
-  /* transaction log grouped by month */
+  /* transaction log grouped by bucket (calendar month or pay period) */
   const ownerExpenses=expenses.filter(e=>(e.owner||'me')===budgetOwner);
   const allFiltered=filterCat==="all"?[...ownerExpenses]:ownerExpenses.filter(e=>e.catId===filterCat);
   const byMonth={};
   allFiltered.forEach(tx=>{
-    const mo=(tx.date||"").slice(0,7);
-    if(!mo)return;
+    if(!tx.date)return;
+    const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
     if(!byMonth[mo])byMonth[mo]=[];
     byMonth[mo].push(tx);
   });
   const allMonths=Object.keys(byMonth).sort((a,b)=>b.localeCompare(a));
 
+  /* budget-vs-actual trend: trailing 3 buckets (excluding the viewed one)
+     average spend per tracked envelope, to flag categories running hot or cold */
+  const trendByCat=useMemo(()=>{
+    const out={};
+    const priorMonths=[addMonths(viewMonth,-1),addMonths(viewMonth,-2),addMonths(viewMonth,-3)];
+    envelopes.forEach(env=>{
+      const vals=priorMonths.map(mo=>
+        expenses.filter(e=>(e.owner||'me')===budgetOwner&&e.catId===env.id&&e.date&&bucketKeyFor(e.date,payPeriods,budgetOwner)===mo)
+          .reduce((s,e)=>s+e.amount,0)
+      );
+      const have=vals.filter(v=>v>0);
+      out[env.id]={avg:have.length?have.reduce((a,b)=>a+b,0)/have.length:null,vals:vals.reverse()};
+    });
+    return out;
+  },[envelopes,expenses,budgetOwner,viewMonth,payPeriods]);
+
+  /* burn-rate depletion projection for the viewed bucket (only meaningful for
+     the current bucket, where "days elapsed" has real significance) */
+  const{elapsed:dayOfMonth,total:daysInMonth}=isNow
+    ?bucketProgress(viewMonth,payPeriods,budgetOwner)
+    :{elapsed:isFuture?0:9999,total:bucketProgress(viewMonth,payPeriods,budgetOwner).total};
+  const burnFor=(env)=>{
+    const spent=spentMap[env.id]||0;
+    if(dayOfMonth<=0||env.budget<=0)return null;
+    const dailyRate=spent/dayOfMonth;
+    if(dailyRate<=0)return{onPace:true,depleteDay:null,dailyRate:0};
+    const depleteDay=Math.ceil(env.budget/dailyRate);
+    const onPace=depleteDay>=daysInMonth;
+    let depleteDate=null;
+    if(!onPace){
+      const{start}=usesPayPeriod?periodRange(viewMonth,(payPeriods||{})[budgetOwner]?.payday||1):{start:(()=>{const[y,mo]=viewMonth.split("-").map(Number);return new Date(y,mo-1,1);})()};
+      depleteDate=new Date(start);
+      depleteDate.setDate(depleteDate.getDate()+Math.min(depleteDay,daysInMonth)-1);
+    }
+    return{onPace,depleteDay,depleteDate,dailyRate};
+  };
+
   /* handle clone/assign */
   const handleCreatePlan=()=>{
     const sourceId=cloneSource||(ownerPlans[0]?.id||plans[0]?.id||"");
-    if(sourceId)clonePlanForMonth(viewMonth,sourceId,budgetOwner);
+    if(sourceId)clonePlanForMonth(viewMonth,sourceId,budgetOwner,fmtMonth(viewMonth));
     setShowPlanPicker(false);
     setCloneSource("");
   };
@@ -1299,7 +1672,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
           <div style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmtMonth(viewMonth)}</div>
           <div style={{fontSize:11,fontWeight:600,marginTop:1,
             color:isFuture?P.br:isNow?P.gr:P.faint}}>
-            {isFuture?"Planning ahead":isNow?"Current month":"Past month"}
+            {isFuture?"Planning ahead":isNow?(usesPayPeriod?"Current pay period":"Current month"):(usesPayPeriod?"Past pay period":"Past month")}
           </div>
         </div>
         <button onClick={()=>setViewMonth(m=>addMonths(m,1))}
@@ -1343,24 +1716,39 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         </div>
       </div>
 
+      {/* ── remaining-to-allocate / untransferred salary ── */}
+      <div className="fade-up" style={{borderRadius:14,padding:"12px 14px",marginBottom:12,
+        background:totalUnallocatedOrUntransferred<0?P.redS:P.brS,border:`1px solid ${totalUnallocatedOrUntransferred<0?P.red:P.brS}`,
+        display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:600,color:totalUnallocatedOrUntransferred<0?P.red:P.br,textTransform:"uppercase",letterSpacing:".06em"}}>
+            {totalUnallocatedOrUntransferred<0?"Over-transferred":"Salary not yet spent or transferred"}
+          </div>
+          <div style={{fontSize:11,color:P.faint,marginTop:1}}>Income minus every logged transaction, tracked or not</div>
+        </div>
+        <span className="tnum" key={totalUnallocatedOrUntransferred} style={{fontSize:18,fontWeight:700,color:totalUnallocatedOrUntransferred<0?P.red:P.br}}>
+          {fmt(Math.abs(totalUnallocatedOrUntransferred))}
+        </span>
+      </div>
+
       {/* ── hero summary ── */}
       <div className="fade-up-1" style={{borderRadius:16,padding:16,marginBottom:16,
-        background:isFuture?`linear-gradient(135deg,${P.br} 0%,${P.grD} 100%)`:P.ink,color:"#fff"}}>
-        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>
+        background:isFuture?`linear-gradient(135deg,${P.br} 0%,${P.grD} 100%)`:P.deep,color:"#fff"}}>
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
           {fmtMonth(viewMonth)} {isFuture?"plan":"spending"}
         </div>
         <div style={{display:"flex",flexWrap:"wrap",gap:20,alignItems:"baseline"}}>
           <div>
-            <div style={{fontSize:11,color:"#9DB0CC"}}>{isFuture?"Planned":"Spent"}</div>
+            <div style={{fontSize:11,color:P.deepHi}}>{isFuture?"Planned":"Spent"}</div>
             <div key={totalSpent} className="serif tnum num-flash" style={{fontSize:28,fontWeight:600,
               color:totalSpent>totalBudget?"#F87171":"#fff"}}>{fmt(totalSpent)}</div>
           </div>
           <div>
-            <div style={{fontSize:11,color:"#9DB0CC"}}>Budget</div>
-            <div className="tnum" style={{fontSize:20,fontWeight:600,color:"#9DB0CC"}}>{fmt(totalBudget)}</div>
+            <div style={{fontSize:11,color:P.deepHi}}>Budget</div>
+            <div className="tnum" style={{fontSize:20,fontWeight:600,color:P.deepHi}}>{fmt(totalBudget)}</div>
           </div>
           <div style={{marginLeft:"auto",textAlign:"right"}}>
-            <div style={{fontSize:11,color:"#9DB0CC"}}>{totalLeft>=0?(isFuture?"Available":"Remaining"):"Over budget"}</div>
+            <div style={{fontSize:11,color:P.deepHi}}>{totalLeft>=0?(isFuture?"Available":"Remaining"):"Over budget"}</div>
             <div key={totalLeft} className="tnum num-flash" style={{fontSize:20,fontWeight:600,
               color:totalLeft>=0?"#4ADE80":"#F87171"}}>{fmt(Math.abs(totalLeft))}</div>
           </div>
@@ -1374,7 +1762,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       {/* ── envelopes ── */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
         <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Envelopes</h2>
-        <button onClick={()=>setShowAdd(true)}
+        <button onClick={()=>openAdd()}
           style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",
             fontSize:14,fontWeight:500,background:isFuture?P.br:P.gr,color:"#fff",border:"none"}}>
           <I.Plus size={14}/>{isFuture?"Plan transaction":"Add transaction"}
@@ -1385,7 +1773,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         {envelopes.length===0
           ?<div style={{borderRadius:14,padding:16,textAlign:"center",fontSize:13,color:P.faint,
               background:P.sf,border:`1px solid ${P.line}`}}>
-              No budget categories found. Add categories in the Budget tab first.
+              No tracked categories found. Add categories in the Budget tab, or check that they aren't marked "Untracked".
             </div>
           :envelopes.map(env=>{
             const spent=spentMap[env.id]||0;
@@ -1393,15 +1781,29 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             const ratio=env.budget>0?spent/env.budget:0;
             const color=statusColor(spent,env.budget);
             const bg=statusBg(spent,env.budget);
+            const trend=trendByCat[env.id];
+            const burn=isNow?burnFor(env):null;
+            const expectedRatio=isNow&&daysInMonth>0?dayOfMonth/daysInMonth:null;
             return(
               <div key={env.id} style={{borderRadius:14,padding:"12px 16px",background:P.sf,border:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
                   <span style={{flex:1,fontSize:14,fontWeight:600,color:P.ink}}>{env.name}</span>
+                  {trend&&trend.avg!=null&&(
+                    <span title={`3-month avg: ${fmt(trend.avg)}`}
+                      style={{fontSize:10,fontWeight:600,color:spent>trend.avg*1.15?P.red:spent<trend.avg*0.85?P.gr:P.faint,
+                        display:"flex",alignItems:"center",gap:2}}>
+                      {spent>trend.avg*1.15?<I.ArrowUp size={10}/>:spent<trend.avg*0.85?<I.ArrowDown size={10}/>:null}
+                      avg {fmt(trend.avg)}
+                    </span>
+                  )}
                   <span style={{fontSize:11,color:P.faint}}>{env.group}</span>
                 </div>
-                <div style={{height:6,background:P.sfA,borderRadius:999,overflow:"hidden",marginBottom:6}}>
+                <div style={{height:6,background:P.sfA,borderRadius:999,overflow:"hidden",marginBottom:6,position:"relative"}}>
                   <div className="bar-animated bar-color" style={{width:`${Math.min(100,ratio*100)}%`,height:"100%",background:color}}/>
+                  {expectedRatio!=null&&expectedRatio<1&&(
+                    <div style={{position:"absolute",top:0,bottom:0,left:`${Math.min(100,expectedRatio*100)}%`,width:1,background:"rgba(0,0,0,.25)"}} title="Even pace for today"/>
+                  )}
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:12}} className="tnum">
                   <span style={{color:P.sub}}>
@@ -1411,11 +1813,54 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                     {left>=0?`${fmt(left)} left`:`${fmt(-left)} over`}
                   </span>
                 </div>
+                {burn&&!burn.onPace&&burn.depleteDate&&(
+                  <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,fontSize:11,fontWeight:600,color:P.amber,background:P.amberS,borderRadius:8,padding:"5px 8px"}}>
+                    <I.TrendUp size={12}/>
+                    At this pace, depletes around {burn.depleteDate.toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                  </div>
+                )}
+                <button onClick={()=>openAdd(env.id)}
+                  style={{marginTop:8,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.gr,background:"transparent",border:"none",padding:0}}>
+                  <I.Plus size={12}/>Add to {env.name}
+                </button>
               </div>
             );
           })
         }
       </div>
+
+      {/* ── untracked categories — quick transfer ── */}
+      {untrackedEnvelopes.length>0&&(
+        <>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+            <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Untracked transfers</h2>
+            <span style={{fontSize:11,color:P.faint}}>one-time allocations, not itemized</span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            {untrackedEnvelopes.map(env=>{
+              const funded=fundedMap[env.id]||0;
+              const isFunded=funded>=env.budget&&funded>0;
+              const lastAmt=quickTransferLast?.[env.id];
+              return(
+                <div key={env.id} style={{borderRadius:14,padding:"12px 16px",background:P.sf,border:`1px solid ${isFunded?P.grS:P.line}`,display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:600,color:P.ink}}>{env.name}</div>
+                    <div className="tnum" style={{fontSize:11,color:isFunded?P.gr:P.faint,marginTop:1}}>
+                      {isFunded?`✓ Transferred ${fmt(funded)}`:`Budgeted ${fmt(env.budget)} · not yet transferred`}
+                    </div>
+                  </div>
+                  <button onClick={()=>setTransferModal({catId:env.id,name:env.name,budget:env.budget,suggested:lastAmt||env.budget})}
+                    style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"6px 12px",fontSize:12,fontWeight:600,
+                      background:isFunded?P.sfA:P.br,color:isFunded?P.sub:"#fff",border:isFunded?`1px solid ${P.line}`:"none",flexShrink:0}}>
+                    <I.Send size={11}/>{isFunded?"Add more":"Transfer"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* ── transaction log — all months collapsible ── */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
@@ -1425,6 +1870,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             border:`1px solid ${P.line}`,color:P.sub}}>
           <option value="all">All categories</option>
           {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+          {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
         </select>
       </div>
 
@@ -1489,10 +1935,19 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                       background:env?.color||P.faint,flexShrink:0}}/>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:14,fontWeight:500,color:P.ink,
-                        whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{tx.name}</div>
-                      <div style={{fontSize:11,color:P.faint}}>{tx.date}{env?` · ${env.name}`:""}</div>
+                        whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
+                        {tx.name}
+                        {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
+                      </div>
+                      <div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                        {tx.date}{env?` · ${env.name}`:""}{tx.note?` · ${tx.note}`:""}
+                      </div>
                     </div>
                     <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(tx.amount)}</span>
+                    <button onClick={()=>openEdit(tx)}
+                      style={{background:"transparent",border:"none",color:P.gr,opacity:.5}}>
+                      <I.Edit size={13}/>
+                    </button>
                     <button onClick={()=>removeExpenseTx(tx.id)}
                       style={{background:"transparent",border:"none",color:P.red,opacity:.4}}>
                       <I.X size={14}/>
@@ -1505,19 +1960,20 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         })
       }
 
-      {/* ── add transaction modal ── */}
+      {/* ── add/edit transaction sheet ── */}
       {showAdd&&(
-        <div className="modal-bg" onClick={()=>setShowAdd(false)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="sheet-bg" onClick={closeForm}>
+          <div className="sheet" onClick={e=>e.stopPropagation()}>
+            <div className="sheet-handle"/>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
               <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
-                {isFuture?"Plan transaction":"Add transaction"}
+                {editTx?"Edit transaction":isFuture?"Plan transaction":"Add transaction"}
               </h3>
-              <button onClick={()=>setShowAdd(false)}
+              <button onClick={closeForm}
                 style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
             </div>
             <div style={{fontSize:12,color:isFuture?P.br:P.faint,marginBottom:14}}>
-              {isFuture?`Planning ahead for ${fmtMonth(viewMonth)}`:`Recording for ${fmtMonth(viewMonth)}`}
+              {editTx?`Editing entry for ${fmtMonth(form.date?bucketKeyFor(form.date,payPeriods,budgetOwner):viewMonth)}`:isFuture?`Planning ahead for ${fmtMonth(viewMonth)}`:`Recording for ${fmtMonth(viewMonth)}`}
             </div>
 
             <div style={{marginBottom:12}}>
@@ -1528,8 +1984,8 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 <option value="">Select a category…</option>
                 {(monthPlan.groups||[]).map(g=>(
                   <optgroup key={g.id} label={g.name}>
-                    {(monthPlan.categories||[]).filter(c=>c.groupId===g.id).map(c=>(
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                    {allCatOptions.filter(c=>c.groupId===g.id).map(c=>(
+                      <option key={c.id} value={c.id}>{c.name}{!c.tracked?" (untracked)":""}</option>
                     ))}
                   </optgroup>
                 ))}
@@ -1537,9 +1993,30 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </div>
 
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Description</div>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Title</div>
               <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
-                placeholder="e.g. Electricity bill"
+                placeholder="e.g. Amazon Now" list="tx-name-suggestions"
+                style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                  background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              <datalist id="tx-name-suggestions">
+                {nameSuggestions.map(n=><option key={n} value={n}/>)}
+              </datalist>
+              {nameSuggestions.length>0&&!form.name&&(
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
+                  {nameSuggestions.slice(0,5).map(n=>(
+                    <button key={n} onClick={()=>setForm(f=>({...f,name:n}))}
+                      style={{fontSize:11,borderRadius:999,padding:"3px 9px",background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note <span style={{color:P.faint,fontWeight:400}}>(optional)</span></div>
+              <input value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))}
+                placeholder="e.g. bought a charger + cable"
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                   background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
             </div>
@@ -1564,12 +2041,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             {form.catId&&form.amount&&(()=>{
               const env=envelopes.find(e=>e.id===form.catId);
               if(!env)return null;
-              const already=spentMap[form.catId]||0;
+              const editingTx=editTx?expenses.find(e=>e.id===editTx):null;
+              const excludeAmt=(editingTx&&editingTx.catId===form.catId)?editingTx.amount:0;
+              const already=(spentMap[form.catId]||0)-excludeAmt;
               const after=already+Number(form.amount);
               const left=env.budget-after;
               return(
                 <div style={{borderRadius:10,padding:10,marginBottom:12,
-                  background:left<0?"#FDF0EE":left/env.budget<.2?"#FEF4E8":P.sfA,
+                  background:left<0?P.redS:left/env.budget<.2?P.amberS:P.sfA,
                   fontSize:13}} className="tnum">
                   <span style={{color:P.sub}}>{env.name}: </span>
                   <span style={{fontWeight:600,color:statusColor(after,env.budget)}}>
@@ -1579,15 +2058,31 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               );
             })()}
 
-            <button onClick={submitTx}
-              style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
-                background:isFuture?P.br:P.gr,color:"#fff",border:"none",
-                opacity:(!form.catId||!form.name||!form.amount)?.5:1}}>
-              {isFuture?"Save planned transaction":"Record transaction"}
-            </button>
+            <div style={{display:"flex",gap:8}}>
+              {editTx&&(
+                <button onClick={()=>{removeExpenseTx(editTx);closeForm();}}
+                  style={{borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:600,
+                    background:"transparent",color:P.red,border:`1px solid ${P.line}`}}>
+                  Delete
+                </button>
+              )}
+              <button onClick={submitTx}
+                style={{flex:1,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                  background:isFuture?P.br:P.gr,color:"#fff",border:"none",
+                  opacity:(!form.catId||!form.name||!form.amount)?.5:1}}>
+                {editTx?"Save changes":isFuture?"Save planned transaction":"Record transaction"}
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* ── quick transfer sheet ── */}
+      {transferModal&&<QuickTransferSheet
+        transferModal={transferModal}
+        onClose={()=>setTransferModal(null)}
+        onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner);setTransferModal(null);}}
+        fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/>}
 
       {/* ── create monthly plan modal ── */}
       {showPlanPicker&&(
@@ -1636,6 +2131,66 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── QUICK TRANSFER SHEET — logs a transaction against an untracked category
+   (e.g. Savings, Investment) and remembers the actual amount transferred,
+   since it doesn't always match the budgeted figure exactly. ── */
+function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,isNow,usesPayPeriod}){
+  const[amount,setAmount]=useState(String(transferModal.suggested||transferModal.budget||""));
+  const[date,setDate]=useState(isNow?new Date().toISOString().slice(0,10):(usesPayPeriod?viewMonth:viewMonth+"-01"));
+  return(
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" onClick={e=>e.stopPropagation()}>
+        <div className="sheet-handle"/>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Transfer — {transferModal.name}</h3>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginBottom:16}}>
+          Logs a one-time transfer to {transferModal.name}. This counts against your salary but won't appear in detailed expense tracking.
+        </div>
+
+        <div style={{display:"flex",gap:6,marginBottom:14}}>
+          <button onClick={()=>setAmount(String(transferModal.budget))}
+            style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:13,fontWeight:600,
+              background:Number(amount)===transferModal.budget?P.brS:P.sfA,
+              color:Number(amount)===transferModal.budget?P.br:P.sub,
+              border:`1px solid ${Number(amount)===transferModal.budget?P.br:P.line}`}}>
+            Budgeted {fmt(transferModal.budget)}
+          </button>
+          {transferModal.suggested&&transferModal.suggested!==transferModal.budget&&(
+            <button onClick={()=>setAmount(String(transferModal.suggested))}
+              style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:13,fontWeight:600,
+                background:Number(amount)===transferModal.suggested?P.grS:P.sfA,
+                color:Number(amount)===transferModal.suggested?P.grD:P.sub,
+                border:`1px solid ${Number(amount)===transferModal.suggested?P.gr:P.line}`}}>
+              Last time {fmt(transferModal.suggested)}
+            </button>
+          )}
+        </div>
+
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({cur})</div>
+            <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus
+              style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Date</div>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          </div>
+        </div>
+
+        <button onClick={()=>{if(Number(amount)>0)onConfirm(Number(amount),date);}}
+          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+            background:P.br,color:"#fff",border:"none",opacity:Number(amount)>0?1:.5}}>
+          <I.Send size={14}/>Confirm transfer
+        </button>
+      </div>
     </div>
   );
 }
@@ -1710,10 +2265,10 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
   );
   return(
     <div>
-      <div style={{background:P.ink,color:"#fff",borderRadius:16,padding:16,marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Cash across all accounts</div>
+      <div style={{background:P.deep,color:"#fff",borderRadius:16,padding:16,marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Cash across all accounts</div>
         <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
-        <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:"#9DB0CC",fontSize:14}}>
+        <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:P.deepHi,fontSize:14}}>
           <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
           <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
         </div>
@@ -1835,17 +2390,17 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   return(
     <div>
       {/* hero */}
-      <div className="fade-up" style={{borderRadius:16,padding:20,marginBottom:16,background:P.ink,color:"#fff"}}>
-        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Portfolio value (USD)</div>
+      <div className="fade-up" style={{borderRadius:16,padding:20,marginBottom:16,background:P.deep,color:"#fff"}}>
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Portfolio value (USD)</div>
         <span key={Math.round(totVal)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{usd(totVal)}</span>
         {(sarRate||convert)&&(
-          <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:"#9DB0CC"}}>
+          <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:P.deepHi}}>
             {sarRate&&<span>≈ SAR {Math.round(totVal*sarRate).toLocaleString("en-US")}</span>}
             {(()=>{const php=convert?convert(totVal,"USD","PHP"):null;return php!=null?<span>≈ ₱{Math.round(php).toLocaleString("en-US")}</span>:null;})()}
           </div>
         )}
         <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:20,fontSize:14}} className="tnum">
-          <span style={{color:"#9DB0CC"}}>Cost {usd(totCost)}</span>
+          <span style={{color:P.deepHi}}>Cost {usd(totCost)}</span>
           <span style={{color:totGain>=0?"#6FC6DA":"#E89B8C",fontWeight:600}}>
             {totGain>=0?"▲":"▼"} {usd(Math.abs(totGain))} ({totGainPct.toFixed(1)}%)
           </span>
@@ -1896,7 +2451,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
           {loading?"Fetching…":"Refresh prices"}
         </button>
       </div>
-      {err&&<div style={{fontSize:12,color:P.red,marginBottom:8,padding:"8px 12px",background:"#FDF0EE",borderRadius:8}}>{err}</div>}
+      {err&&<div style={{fontSize:12,color:P.red,marginBottom:8,padding:"8px 12px",background:P.redS,borderRadius:8}}>{err}</div>}
       {updatedAt&&!err&&<div style={{fontSize:11,color:P.faint,marginBottom:8}}>Prices updated {new Date(updatedAt).toLocaleTimeString()}</div>}
 
       {/* holdings list */}
@@ -2129,10 +2684,10 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
 
   return(
     <div>
-      <div className="fade-up" style={{borderRadius:16,padding:20,marginBottom:16,background:P.ink,color:"#fff"}}>
-        <div style={{fontSize:12,fontWeight:500,color:"#9DB0CC",marginBottom:4}}>Net worth</div>
+      <div className="fade-up" style={{borderRadius:16,padding:20,marginBottom:16,background:P.deep,color:"#fff"}}>
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Net worth</div>
         <span key={Math.round(netWorth)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{sar(netWorth)}</span>
-        <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:"#9DB0CC",fontSize:14}}>
+        <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:P.deepHi,fontSize:14}}>
           <span>{usd!=null?`≈ $${usd.toLocaleString("en-US")}`:"USD —"}</span>
           <span>{php!=null?`≈ ₱${Math.round(php).toLocaleString("en-US")}`:"PHP —"}</span>
         </div>
@@ -2183,10 +2738,12 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
               </LineChart>
             </ResponsiveContainer>
           </div>
-        ):<p style={{fontSize:13,color:P.faint}}>No snapshots yet — capture today to start your timeline.</p>}
+        ):<p style={{fontSize:13,color:P.faint}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginTop:12}}>
-          <button onClick={captureSnapshot} style={{borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.gr,color:"#fff",border:"none"}}>Capture this month</button>
-          <span style={{fontSize:12,color:P.faint}}>Saves {sar(netWorth)} to timeline</span>
+          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.gr,fontWeight:500}}>
+            <I.Check size={13}/>This month syncs automatically
+          </div>
+          <button onClick={captureSnapshot} style={{borderRadius:999,padding:"6px 12px",fontSize:12,fontWeight:500,background:P.sfA,color:P.sub,border:`1px solid ${P.line}`}}>Force refresh now</button>
         </div>
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${P.sfA}`}}>
           <div><div style={{color:P.faint,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{borderRadius:8,padding:"4px 8px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/></div>
@@ -2526,7 +3083,7 @@ function OverviewView({plan,fmt,pct,allocated,remaining}){
 }
 
 /* ── SETTINGS MODAL ── */
-function SettingsModal({data,setData,onClose,pullKV,kvReady,lastSyncedAt,setOwnerName,owners}){
+function SettingsModal({data,setData,onClose,pullKV,kvReady,lastSyncedAt,setOwnerName,owners,toggleTheme,setPayPeriod}){
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
@@ -2552,10 +3109,50 @@ function SettingsModal({data,setData,onClose,pullKV,kvReady,lastSyncedAt,setOwne
           <h3 style={{margin:0,fontWeight:600}}>Settings</h3>
           <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
         </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Appearance</div>
+        <button onClick={toggleTheme}
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:14,fontWeight:500,marginBottom:16,
+            background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
+          <span style={{display:"flex",alignItems:"center",gap:8}}>
+            {data.theme==="dark"?<I.Moon size={15}/>:<I.Sun size={15}/>}
+            {data.theme==="dark"?"Dark mode":"Light mode"}
+          </span>
+          <span style={{fontSize:12,color:P.gr,fontWeight:600}}>Switch to {data.theme==="dark"?"light":"dark"}</span>
+        </button>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Who's who</div>
         <div style={{display:"flex",gap:8,marginBottom:16}}>
           <input value={owners.me} onChange={e=>setOwnerName("me",e.target.value)} placeholder="Your name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
           <input value={owners.wife} onChange={e=>setOwnerName("wife",e.target.value)} placeholder="Wife's name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Pay periods</div>
+        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+          Budget and track expenses by paycheck instead of calendar month. Off by default — when off, that person's Budget and Expenses tabs work exactly as before.
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+          {["me","wife"].map(ok=>{
+            const cfg=(data.payPeriods||{})[ok]||{enabled:false,payday:1};
+            return(
+              <div key={ok} style={{borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:cfg.enabled?8:0}}>
+                  <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{owners[ok]}</span>
+                  <button onClick={()=>setPayPeriod(ok,{enabled:!cfg.enabled})}
+                    style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
+                      background:cfg.enabled?P.gr:P.sf,color:cfg.enabled?"#fff":P.sub,border:`1px solid ${cfg.enabled?P.gr:P.line}`}}>
+                    {cfg.enabled?"On":"Off"}
+                  </button>
+                </div>
+                {cfg.enabled&&(
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:12,color:P.sub}}>Payday</span>
+                    <input type="number" min="1" max="31" value={cfg.payday}
+                      onChange={e=>setPayPeriod(ok,{payday:Math.min(31,Math.max(1,Number(e.target.value)||1))})}
+                      className="tnum" style={{width:56,borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
+                    <span style={{fontSize:11,color:P.faint}}>of each month{cfg.payday>28?" (clamped to last day in short months)":""}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Currency label</div>
         <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
