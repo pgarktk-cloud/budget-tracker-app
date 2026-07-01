@@ -1584,6 +1584,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
   const[untrackedOpen,setUntrackedOpen]=useState(false);
+  const[logExpanded,setLogExpanded]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
   const[transferModal,setTransferModal]=useState(null); // {catId,name,budget} for quick transfer
 
@@ -2038,104 +2039,113 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         </>
       )}
 
-      {/* ── transaction log — all months collapsible ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:8}}>
+      {/* ── transaction log — collapsed by default, expand to browse ── */}
+      <button onClick={()=>setLogExpanded(o=>!o)}
+        style={{display:"flex",alignItems:"center",gap:6,marginBottom:logExpanded?8:20,width:"100%",
+          background:"transparent",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
+        <I.Chevron size={13} style={{color:P.faint,transform:logExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
         <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>All transactions</h2>
-        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-          <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
-            {[["month","Month"],["category","Category"]].map(([gv,label])=>(
-              <button key={gv} onClick={()=>setLogGrouping(gv)}
-                style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
-                  background:logGrouping===gv?P.ink:"transparent",color:logGrouping===gv?"#fff":P.sub}}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
-            style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
-              border:`1px solid ${P.line}`,color:P.sub}}>
-            <option value="all">All categories</option>
-            {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
-            {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
-          </select>
-        </div>
-      </div>
+        <span style={{fontSize:11,color:P.faint}}>{logExpanded?`${allFiltered.length} entries`:`${allFiltered.length} hidden`}</span>
+      </button>
 
-      {allFiltered.length===0
-        ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
-            background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
-            No transactions yet. Tap "Add transaction" to start tracking.
-          </div>
-        :logGrouping==="category"
-        ?categoryGroups.map(catGroup=>{
-          const isOpen=collapsedCats[catGroup.name]===undefined?true:!collapsedCats[catGroup.name];
-          const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
-          return(
-            <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
-              border:`1px solid ${P.line}`,marginBottom:10}}>
-              <button
-                onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
-                style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                  padding:"12px 16px",background:P.sfA,border:"none",cursor:"pointer",
-                  borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
-                    transition:"transform .2s",flexShrink:0}}/>
-                  <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
-                  <span style={{fontSize:14,fontWeight:700,color:P.ink}}>{catGroup.name}</span>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
-                  <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(catGroup.total)}</span>
-                </div>
-              </button>
-              {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
+      {logExpanded&&(
+        <>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8,flexWrap:"wrap",gap:8}}>
+            <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+              {[["month","Month"],["category","Category"]].map(([gv,label])=>(
+                <button key={gv} onClick={()=>setLogGrouping(gv)}
+                  style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
+                    background:logGrouping===gv?P.ink:"transparent",color:logGrouping===gv?"#fff":P.sub}}>
+                  {label}
+                </button>
+              ))}
             </div>
-          );
-        })
-        :allMonths.map(mo=>{
-          const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
-          const isCurrent=mo===nowMonth;
-          const isViewing=mo===viewMonth;
-          const isFutureMo=mo>nowMonth;
-          const defaultOpen=isCurrent||isFutureMo||isViewing;
-          const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
-          const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
-          const moLabel=fmtMonth(mo);
+            <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
+              style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
+                border:`1px solid ${P.line}`,color:P.sub}}>
+              <option value="all">All categories</option>
+              {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+              {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
+            </select>
+          </div>
 
-          let headerBg=P.sfA;
-          if(isCurrent)headerBg=P.grS;
-          else if(isFutureMo)headerBg=P.brS;
-          const labelColor=isCurrent?P.grD:isFutureMo?P.br:P.ink;
-
-          return(
-            <div key={mo} style={{borderRadius:16,overflow:"hidden",background:P.sf,
-              border:`2px solid ${isViewing?P.gr:P.line}`,marginBottom:10,transition:"border-color .2s"}}>
-              <button
-                onClick={()=>setCollapsedMonths(c=>({...c,[mo]:isOpen}))}
-                style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                  padding:"12px 16px",background:headerBg,border:"none",cursor:"pointer",
-                  borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
-                    transition:"transform .2s",flexShrink:0}}/>
-                  <span style={{fontSize:14,fontWeight:700,color:labelColor}}>{moLabel}</span>
-                  {isCurrent&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
-                    background:P.gr,color:"#fff",fontWeight:700}}>NOW</span>}
-                  {isFutureMo&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
-                    background:P.br,color:"#fff",fontWeight:700}}>PLANNED</span>}
+          {allFiltered.length===0
+            ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
+                background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
+                No transactions yet. Tap "Add transaction" to start tracking.
+              </div>
+            :logGrouping==="category"
+            ?categoryGroups.map(catGroup=>{
+              const isOpen=collapsedCats[catGroup.name]===undefined?true:!collapsedCats[catGroup.name];
+              const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
+              return(
+                <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
+                  border:`1px solid ${P.line}`,marginBottom:10}}>
+                  <button
+                    onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
+                    style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+                      padding:"12px 16px",background:P.sfA,border:"none",cursor:"pointer",
+                      borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                        transition:"transform .2s",flexShrink:0}}/>
+                      <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
+                      <span style={{fontSize:14,fontWeight:700,color:P.ink}}>{catGroup.name}</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
+                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(catGroup.total)}</span>
+                    </div>
+                  </button>
+                  {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
-                  <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(monthTotal)}</span>
-                </div>
-              </button>
+              );
+            })
+            :allMonths.map(mo=>{
+              const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
+              const isCurrent=mo===nowMonth;
+              const isViewing=mo===viewMonth;
+              const isFutureMo=mo>nowMonth;
+              const defaultOpen=isCurrent||isFutureMo||isViewing;
+              const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
+              const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
+              const moLabel=fmtMonth(mo);
 
-              {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
-            </div>
-          );
-        })
-      }
+              let headerBg=P.sfA;
+              if(isCurrent)headerBg=P.grS;
+              else if(isFutureMo)headerBg=P.brS;
+              const labelColor=isCurrent?P.grD:isFutureMo?P.br:P.ink;
+
+              return(
+                <div key={mo} style={{borderRadius:16,overflow:"hidden",background:P.sf,
+                  border:`2px solid ${isViewing?P.gr:P.line}`,marginBottom:10,transition:"border-color .2s"}}>
+                  <button
+                    onClick={()=>setCollapsedMonths(c=>({...c,[mo]:isOpen}))}
+                    style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+                      padding:"12px 16px",background:headerBg,border:"none",cursor:"pointer",
+                      borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                        transition:"transform .2s",flexShrink:0}}/>
+                      <span style={{fontSize:14,fontWeight:700,color:labelColor}}>{moLabel}</span>
+                      {isCurrent&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
+                        background:P.gr,color:"#fff",fontWeight:700}}>NOW</span>}
+                      {isFutureMo&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
+                        background:P.br,color:"#fff",fontWeight:700}}>PLANNED</span>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
+                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(monthTotal)}</span>
+                    </div>
+                  </button>
+
+                  {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
+                </div>
+              );
+            })
+          }
+        </>
+      )}
 
       {/* ── add/edit transaction modal ── */}
       {showAdd&&(
