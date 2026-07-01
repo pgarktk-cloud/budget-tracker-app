@@ -143,6 +143,17 @@ select{transition:background .22s;}
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const{useState,useEffect,useMemo,useRef,useCallback}=React;
+/* Renders children directly onto document.body instead of in the normal DOM
+   tree. Needed for any fixed-position overlay (modals/sheets): tab panes are
+   wrapped in an entrance-animation div whose transform never fully clears
+   (fill-mode "both" keeps translateX(0) applied after the animation ends),
+   which silently turns that div into the containing block for *all*
+   position:fixed descendants — so "fixed" modals inside it end up anchored
+   to the scrollable page instead of the viewport. Portaling to <body> sidesteps
+   that entirely. */
+function Portal({children}){
+  return ReactDOM.createPortal(children,document.body);
+}
 const _RC=(typeof Recharts!=='undefined')?Recharts:window.Recharts||{};
 const{PieChart,Pie,Cell,ResponsiveContainer,LineChart,Line,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
 
@@ -2128,6 +2139,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
       {/* ── add/edit transaction modal ── */}
       {showAdd&&(
+        <Portal>
         <div className="sheet-bg" onClick={closeForm}>
           <div className="sheet" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
@@ -2245,17 +2257,19 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* ── quick transfer sheet ── */}
-      {transferModal&&<QuickTransferSheet
+      {transferModal&&<Portal><QuickTransferSheet
         transferModal={transferModal}
         onClose={()=>setTransferModal(null)}
         onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner);setTransferModal(null);}}
-        fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/>}
+        fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/></Portal>}
 
       {/* ── create monthly plan modal ── */}
       {showPlanPicker&&(
+        <Portal>
         <div className="modal-bg" onClick={()=>setShowPlanPicker(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -2300,6 +2314,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </button>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );
@@ -2713,6 +2728,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 
       {/* Add trade modal */}
       {tradeModal&&(
+        <Portal>
         <div className="modal-bg" onClick={()=>setTradeModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -2751,6 +2767,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
             </button>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );
@@ -3089,6 +3106,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         const g=goals.find(x=>x.id===typePicker);
         if(!g)return null;
         return(
+          <Portal>
           <div className="modal-bg" onClick={()=>setTypePicker(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -3111,6 +3129,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </div>
             </div>
           </div>
+          </Portal>
         );
       })()}
 
@@ -3120,6 +3139,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         if(!g)return null;
         const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
         return(
+          <Portal>
           <div className="modal-bg" onClick={()=>setAddModal(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -3152,6 +3172,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </button>
             </div>
           </div>
+          </Portal>
         );
       })()}
 
@@ -3164,6 +3185,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
         const Icon=goalIcon(g.type);
         return(
+          <Portal>
           <div className="modal-bg" onClick={()=>setDetailModal(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
@@ -3208,6 +3230,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </button>
             </div>
           </div>
+          </Portal>
         );
       })()}
     </div>
