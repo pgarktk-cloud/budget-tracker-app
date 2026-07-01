@@ -1189,7 +1189,7 @@ function App(){
               <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
             </div>
             <div style={{textAlign:"right"}}>
-              <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>{plan.month} · Income</div>
+              <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>Income</div>
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
                 <input type="number" value={plan.income} onChange={e=>patchPlan({income:Number(e.target.value)})}
@@ -1568,10 +1568,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const[showAdd,setShowAdd]=useState(false);
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
-  const[logGrouping,setLogGrouping]=useState("month"); // "month" | "category"
+  const[logGrouping,setLogGrouping]=useState("category"); // "month" | "category"
   const[collapsedCats,setCollapsedCats]=useState({});
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
+  const[untrackedOpen,setUntrackedOpen]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
   const[transferModal,setTransferModal]=useState(null); // {catId,name,budget} for quick transfer
 
@@ -1654,7 +1655,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   /* default transaction date for the currently viewed bucket — the bucket's
      own start date when using pay-periods (viewMonth IS that date already),
      or the 1st of the calendar month otherwise */
-  const defaultDateForBucket=usesPayPeriod?viewMonth:viewMonth+"-01";
+  const defaultDateForBucket=isNow?todayISO():(usesPayPeriod?viewMonth:viewMonth+"-01");
 
   const blankForm={catId:"",name:"",note:"",amount:"",date:defaultDateForBucket};
   const[form,setForm]=useState(blankForm);
@@ -1993,11 +1994,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       {/* ── untracked categories — quick transfer ── */}
       {untrackedEnvelopes.length>0&&(
         <>
-          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+          <button onClick={()=>setUntrackedOpen(o=>!o)}
+            style={{display:"flex",alignItems:"center",gap:6,marginBottom:untrackedOpen?10:20,width:"100%",
+              background:"transparent",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
+            <I.Chevron size={13} style={{color:P.faint,transform:untrackedOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
             <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Untracked transfers</h2>
-            <span style={{fontSize:11,color:P.faint}}>one-time allocations, not itemized</span>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            <span style={{fontSize:11,color:P.faint}}>{untrackedOpen?"one-time allocations, not itemized":`${untrackedEnvelopes.length} hidden`}</span>
+          </button>
+          {untrackedOpen&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
             {untrackedEnvelopes.map(env=>{
               const funded=fundedMap[env.id]||0;
               const isFunded=funded>=env.budget&&funded>0;
@@ -2019,7 +2023,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 </div>
               );
             })}
-          </div>
+          </div>}
         </>
       )}
 
@@ -2124,8 +2128,8 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
       {/* ── add/edit transaction modal ── */}
       {showAdd&&(
-        <div className="modal-bg" onClick={closeForm}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="sheet-bg" onClick={closeForm}>
+          <div className="sheet" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
               <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
                 {editTx?"Edit transaction":isFuture?"Plan transaction":"Add transaction"}
@@ -2144,13 +2148,17 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                   background:P.sfA,border:`1px solid ${form.catId?P.line:P.red}`,color:P.ink}}>
                 <option value="">Select a category…</option>
-                {(monthPlan.groups||[]).map(g=>(
-                  <optgroup key={g.id} label={g.name}>
-                    {allCatOptions.filter(c=>c.groupId===g.id).map(c=>(
-                      <option key={c.id} value={c.id}>{c.name}{!c.tracked?" (untracked)":""}</option>
-                    ))}
-                  </optgroup>
-                ))}
+                {(monthPlan.groups||[]).map(g=>{
+                  const opts=allCatOptions.filter(c=>c.groupId===g.id&&c.tracked);
+                  if(opts.length===0)return null;
+                  return(
+                    <optgroup key={g.id} label={g.name}>
+                      {opts.map(c=>(
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </select>
             </div>
 
