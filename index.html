@@ -177,7 +177,7 @@ function useFlash(val,ref){
 }
 
 /* Tab direction tracker so we can slide left or right */
-const TAB_ORDER=["budget","expenses","household","banks","investments","networth","goals","targets","currency","overview"];
+const TAB_ORDER=["budget","expenses","household","banks","investments","networth","goals","targets","currency"];
 function TabPane({tab,children}){
   const prevTab=useRef(tab);
   const dir=useRef("right");
@@ -639,6 +639,7 @@ function defaultData(){
     ],
     history:[],
     targets:[],
+    investTarget:{me:{thresholdPct:20,groupNames:["Invest & Grow"]},wife:{thresholdPct:20,groupNames:[]}},
     household:{splitMine:50,expenses:[
       {id:uid(),name:"Rent",amount:2000,color:SEG[0]},
       {id:uid(),name:"Transport",amount:500,color:SEG[3]},
@@ -723,6 +724,13 @@ function migrate(d){
   if(!d.quickTransferLast)d.quickTransferLast={};
   if(!d.netWorthAutoHistory)d.netWorthAutoHistory=[];
   if(!d.targets)d.targets=[];
+  if(!d.investTarget)d.investTarget={};
+  // migrate old single shared shape {thresholdPct,groupNames} to per-owner {me:{...},wife:{...}}
+  if(d.investTarget.thresholdPct!==undefined||d.investTarget.groupNames!==undefined){
+    d.investTarget={me:{thresholdPct:d.investTarget.thresholdPct||20,groupNames:d.investTarget.groupNames||[]},wife:{thresholdPct:20,groupNames:[]}};
+  }
+  if(!d.investTarget.me)d.investTarget.me={thresholdPct:20,groupNames:[]};
+  if(!d.investTarget.wife)d.investTarget.wife={thresholdPct:20,groupNames:[]};
   (d.targets||[]).forEach(t=>{
     if(!t.categoryAlloc){
       // migrate old flat categoryIds (everything treated as "cash") into the
@@ -1504,14 +1512,16 @@ function App(){
   const allocated=useMemo(()=>plan.categories.reduce((s,c)=>s+(Number(c.amount)||0),0),[plan]);
   const remaining=(Number(plan.income)||0)-allocated;
   const fmt=n=>`${cur} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
+  const fmt2=n=>`${cur} ${(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
   const pct=n=>plan.income>0?((Number(n)||0)/plan.income)*100:0;
+  const setInvestTarget=patch=>setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));
 
   const TABS=[
     ["budget","Budget",I.Wallet],["expenses","Expenses",I.Receipt],["household","Household",I.Users],
     ["banks","Banks",I.Bank],["investments","Investments",I.Trending],
     ["networth","Net Worth",I.Gem],["goals","Goals",I.Target],
     ["targets","Forecast",I.TrendUp],
-    ["currency","Currency",I.Swap],["overview","Overview",I.PieI],
+    ["currency","Currency",I.Swap],
   ];
 
   return(
@@ -1607,8 +1617,8 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
-          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
@@ -1616,7 +1626,6 @@ function App(){
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
-          {tab==="overview"&&<OverviewView {...{plan,fmt,pct,allocated,remaining}}/>}
         </TabPane>
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
@@ -1638,7 +1647,7 @@ function App(){
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods}){
+function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -1650,6 +1659,7 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
   useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
+  const[showInvestSettings,setShowInvestSettings]=useState(false);
   const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
 
   const addMonths=(ym,n)=>bucketShift(ym,payPeriods,budgetOwner,n);
@@ -1699,7 +1709,14 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
   const remaining=income-allocated;
   const pct=n=>income>0?((Number(n)||0)/income)*100:0;
 
-  const createCopy=()=>clonePlanForMonth(viewMonth,activePlanId[budgetOwner],budgetOwner,fmtMonth(viewMonth));
+  /* Default: copy whatever is currently being previewed for this month
+     (fixes the old bug where this silently pulled from the base plan
+     instead of the shown carry-forward/custom plan). */
+  const createCopy=()=>clonePlanForMonth(viewMonth,pid,budgetOwner,fmtMonth(viewMonth));
+  const[showCopyPicker,setShowCopyPicker]=useState(false);
+  const[copySourceId,setCopySourceId]=useState("");
+  const ownerPlanOptions=(plans||[]).filter(p=>p.owner===budgetOwner);
+  const createCopyFrom=()=>{if(copySourceId){clonePlanForMonth(viewMonth,copySourceId,budgetOwner,fmtMonth(viewMonth));setShowCopyPicker(false);}};
 
   return(
     <div>
@@ -1741,15 +1758,34 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                 :`Showing your carry-forward budget. Create a copy to customize ${fmtMonth(viewMonth)} without touching other months.`}
           </div>
         </div>
-        <div style={{display:"flex",gap:6,flexShrink:0}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
           {!isNow&&(hasOwnPlan
             ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)}
                 style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:"transparent",border:`1px solid ${P.line}`,color:P.red,fontWeight:500}}>Remove</button>
-            :<button onClick={createCopy}
-                style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:P.br,color:"#fff",border:"none",fontWeight:600,whiteSpace:"nowrap"}}>+ Create copy</button>
+            :<>
+              <button onClick={createCopy}
+                  style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:P.br,color:"#fff",border:"none",fontWeight:600,whiteSpace:"nowrap"}}>+ Create copy</button>
+              <button onClick={()=>setShowCopyPicker(v=>!v)}
+                  style={{fontSize:10,background:"transparent",border:"none",color:P.faint,padding:0,textDecoration:"underline",whiteSpace:"nowrap"}}>copy from a different month</button>
+            </>
           )}
         </div>
       </div>
+
+      {/* ── optional: pick a specific source plan to copy from ── */}
+      {!isNow&&!hasOwnPlan&&showCopyPicker&&(
+        <div style={{...card,padding:12,marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <select value={copySourceId} onChange={e=>setCopySourceId(e.target.value)}
+            style={{fontSize:12,borderRadius:8,padding:"5px 8px",background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,flex:1,minWidth:160}}>
+            <option value="">Select a plan to copy…</option>
+            {ownerPlanOptions.map(p=>(
+              <option key={p.id} value={p.id}>{p.name||p.month} ({cur} {(p.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})})</option>
+            ))}
+          </select>
+          <button onClick={createCopyFrom} disabled={!copySourceId}
+            style={{fontSize:11,borderRadius:8,padding:"5px 12px",background:copySourceId?P.br:P.sfA,color:copySourceId?"#fff":P.faint,border:"none",fontWeight:600}}>Copy</button>
+        </div>
+      )}
 
       {/* ── income + allocation summary ── */}
       <div style={{...card,padding:16,marginBottom:16}}>
@@ -1768,12 +1804,100 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
             {remaining<0?"Over by ":"Left "}{fmt(Math.abs(remaining))}
           </span>
         </div>
-        <div style={{marginTop:10,height:10,background:P.sfA,borderRadius:999,overflow:"hidden",display:"flex"}}>
-          {(monthPlan.categories||[]).map(c=>(
-            <div key={c.id} className="bar-animated bar-color" style={{width:`${pct(effectiveAmt(c))}%`,background:c.color}} title={c.name}/>
-          ))}
-        </div>
       </div>
+
+      {/* ── allocation breakdown: donut + list (replaces the old linear bar; also folds in what used to be the separate Overview tab) ── */}
+      {(()=>{
+        const groupData=(monthPlan.groups||[]).map((g,i)=>({
+          name:g.name,
+          value:(monthPlan.categories||[]).filter(c=>c.groupId===g.id).reduce((s,c)=>s+effectiveAmt(c),0),
+          color:SEG[i%SEG.length],
+        })).filter(d=>d.value>0);
+        return(
+          <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
+            <div style={{...card,padding:16,flex:"1 1 200px",minWidth:200}}>
+              <div style={{width:"100%",height:190}}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={groupData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={78} innerRadius={44} paddingAngle={2}>
+                      {groupData.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                    </Pie>
+                    <Tooltip formatter={v=>fmt(v)}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div style={{...card,padding:16,flex:"1 1 200px",minWidth:200,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+              <div style={{fontSize:11,fontWeight:600,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Where {fmt(income)} goes</div>
+              {groupData.map(d=>(
+                <div key={d.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,padding:"4px 0"}}>
+                  <span style={{width:9,height:9,borderRadius:999,background:d.color,flexShrink:0}}/>
+                  <span style={{flex:1,color:P.sub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+                  <span className="tnum" style={{color:P.faint,fontSize:12}}>{pct(d.value).toFixed(2)}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Invest & Grow target badge ── */}
+      {(()=>{
+        const investGroupNames=investTarget?.groupNames||[];
+        const investAmt=(monthPlan.categories||[]).filter(c=>{
+          const g=(monthPlan.groups||[]).find(gr=>gr.id===c.groupId);
+          return g&&investGroupNames.includes(g.name);
+        }).reduce((s,c)=>s+effectiveAmt(c),0);
+        const investPct=pct(investAmt);
+        const thresholdPct=Number(investTarget?.thresholdPct)||0;
+        const meetsTarget=thresholdPct>0&&investPct>=thresholdPct;
+        const gapSar=Math.max(0,(thresholdPct/100)*income-investAmt);
+        return(
+          <div style={{...card,padding:"12px 14px",marginBottom:16,
+            background:thresholdPct===0?P.sfA:meetsTarget?P.grS:P.brS,
+            border:`1px solid ${thresholdPct===0?P.line:meetsTarget?P.grS:P.brS}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+              <div style={{fontSize:13,fontWeight:600,color:thresholdPct===0?P.sub:meetsTarget?P.grD:P.br}}>
+                {thresholdPct>0&&(meetsTarget?"✓ ":"⚠ ")}
+                Invest &amp; Grow — {investPct.toFixed(2)}% of income
+                {thresholdPct>0&&(meetsTarget
+                  ?` · meeting your ${thresholdPct}% target`
+                  :` · ${fmt(gapSar)} short of ${thresholdPct}% target`)}
+              </div>
+              <button onClick={()=>setShowInvestSettings(v=>!v)} title="Edit target"
+                style={{background:"transparent",border:"none",color:thresholdPct===0?P.faint:meetsTarget?P.grD:P.br,padding:2,display:"flex"}}>
+                <I.Settings size={14}/>
+              </button>
+            </div>
+            {showInvestSettings&&(
+              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${P.line}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                  <span style={{fontSize:12,color:P.sub}}>Target</span>
+                  <input type="number" value={thresholdPct}
+                    onChange={e=>setInvestTarget({thresholdPct:Number(e.target.value)||0})}
+                    className="bare tnum" style={{width:50,fontSize:13,fontWeight:600,textAlign:"right",background:P.sf,borderRadius:6,padding:"2px 4px"}}/>
+                  <span style={{fontSize:12,color:P.sub}}>% of income</span>
+                </div>
+                <div style={{fontSize:11,color:P.faint,marginBottom:6}}>Groups counted toward this target:</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
+                  {(monthPlan.groups||[]).map(g=>{
+                    const checked=investGroupNames.includes(g.name);
+                    return(
+                      <label key={g.id} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:P.sub,cursor:"pointer"}}>
+                        <input type="checkbox" checked={checked} onChange={()=>{
+                          const next=checked?investGroupNames.filter(n=>n!==g.name):[...investGroupNames,g.name];
+                          setInvestTarget({groupNames:next});
+                        }}/>
+                        {g.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── locked preview hint for non-current months without a copy ── */}
       {!editable&&(
@@ -1817,12 +1941,12 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                     <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare"
                       style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400,
                         color:c.trackExpenses===false?P.faint:P.ink,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
-                    <span className="tnum" style={{fontSize:12,color:P.faint,width:44,textAlign:"right"}}>{pct(effAmt).toFixed(1)}%</span>
+                    <span className="tnum" style={{fontSize:12,color:P.faint,width:44,textAlign:"right"}}>{pct(effAmt).toFixed(2)}%</span>
                     <div style={{display:"flex",alignItems:"center",gap:4}}>
                       <span style={{fontSize:11,color:P.faint}}>{cur}</span>
                       {hasSubs
                         /* when subs exist, show computed total (read-only style) */
-                        ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.gr}}>{effAmt.toLocaleString("en-US")}</span>
+                        ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.gr}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
                         /* no subs — manual input as before */
                         :<input type="text" inputMode="decimal" value={c.amount} onChange={e=>updateCat(c.id,{amount:e.target.value})}
                           onBlur={e=>updateCat(c.id,{amount:evalMathExpr(e.target.value,0)})}
@@ -1866,7 +1990,7 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                       {/* sub total when multiple subs */}
                       {subs.length>1&&(
                         <div style={{display:"flex",justifyContent:"flex-end",padding:"5px 16px 5px 36px",fontSize:12,color:P.sub}} className="tnum">
-                          Subtotal: {cur} {effAmt.toLocaleString("en-US")}
+                          Subtotal: {cur} {effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
                         </div>
                       )}
                       <button onClick={()=>handleAddSub(c.id)}
@@ -2344,7 +2468,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
           </div>
           <div style={{fontSize:11,color:hasOwnPlan?P.gr:P.faint,marginTop:2}}>
             {hasOwnPlan
-              ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US")} · Custom budget for ${fmtMonth(viewMonth)}`
+              ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · Custom budget for ${fmtMonth(viewMonth)}`
               :`Showing allocations from "${monthPlan.name}". Create a custom plan for ${fmtMonth(viewMonth)} to set a different income or allocation.`
             }
           </div>
@@ -2884,7 +3008,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                   <div>
                     <div style={{fontWeight:600}}>{p.name}</div>
                     <div style={{fontSize:11,color:P.faint,marginTop:2}}>
-                      {cur} {(p.income||0).toLocaleString("en-US")} · {(p.categories||[]).length} categories
+                      {cur} {(p.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · {(p.categories||[]).length} categories
                     </div>
                   </div>
                   {cloneSource===p.id&&<I.Check size={16} style={{color:P.gr,flexShrink:0}}/>}
@@ -3927,42 +4051,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
 }
 
 /* ── OVERVIEW VIEW ── */
-function OverviewView({plan,fmt,pct,allocated,remaining}){
-  const pieData=plan.groups.map(g=>({name:g.name,value:plan.categories.filter(c=>c.groupId===g.id).reduce((s,c)=>s+(Number(c.amount)||0),0)})).filter(d=>d.value>0);
-  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
-  return(
-    <div>
-      <div style={{...card,padding:16,marginBottom:16}}>
-        <h3 style={{fontSize:14,fontWeight:600,color:P.sub,margin:"0 0 8px"}}>Where the {fmt(plan.income)} goes</h3>
-        <div style={{width:"100%",height:240}}>
-          <ResponsiveContainer>
-            <PieChart>
-              <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} innerRadius={48} paddingAngle={2}>
-                {pieData.map((_,i)=><Cell key={i} fill={SEG[i%SEG.length]}/>)}
-              </Pie>
-              <Tooltip formatter={v=>fmt(v)}/>
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:10,marginTop:8}}>
-          {pieData.map((d,i)=>(
-            <span key={d.name} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:P.sub}}>
-              <span style={{width:9,height:9,borderRadius:999,background:SEG[i%SEG.length]}}/>{d.name} · {pct(d.value).toFixed(0)}%
-            </span>
-          ))}
-        </div>
-      </div>
-      <div style={{...card,padding:16}}>
-        {[["Income",plan.income,P.ink],["Allocated",allocated,P.ink],["Unallocated / Over",remaining,remaining<0?P.red:P.gr]].map(([l,v,c])=>(
-          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"5px 0",borderTop:l==="Unallocated / Over"?`1px solid ${P.sfA}`:"none",marginTop:l==="Unallocated / Over"?6:0}}>
-            <span style={{color:P.sub}}>{l}</span><span className="tnum" style={{fontWeight:600,color:c}}>{l==="Unallocated / Over"&&remaining<0?"−":""}{fmt(Math.abs(v))}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ── TARGETS / FORECAST VIEW ──────────────────────────────────────────────
    Trend-based capital forecasting. Unlike Goals (manual-contribution pots),
    a Target's progress is derived live: pick which budget categories count as
