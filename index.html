@@ -177,7 +177,7 @@ function useFlash(val,ref){
 }
 
 /* Tab direction tracker so we can slide left or right */
-const TAB_ORDER=["budget","expenses","household","banks","investments","networth","goals","currency","overview"];
+const TAB_ORDER=["budget","expenses","household","banks","investments","networth","goals","targets","currency","overview"];
 function TabPane({tab,children}){
   const prevTab=useRef(tab);
   const dir=useRef("right");
@@ -533,6 +533,27 @@ function projectSeries(start,monthly,years,annualPct){
   return out;
 }
 
+/* ── Target forecast: simulate invested + cash pools growing at separate
+   conservative rates, with monthly contributions landing in the cash pool
+   (since new savings aren't invested the moment they land). Returns a
+   month-by-month series plus the first month the total crosses the target,
+   or null if it doesn't within 30 years. ── */
+function computeTargetForecast(startInvest,startCash,monthly,investRatePct,cashRatePct,targetAmount){
+  const rInv=(Number(investRatePct)||0)/100/12,rCash=(Number(cashRatePct)||0)/100/12;
+  let inv=Number(startInvest)||0,cash=Number(startCash)||0;
+  const MAX_MONTHS=360;
+  const series=[];let hitMonth=null;
+  for(let m=0;m<=MAX_MONTHS;m++){
+    const total=inv+cash;
+    if(hitMonth===null&&targetAmount>0&&total>=targetAmount)hitMonth=m;
+    if(m%3===0||m===MAX_MONTHS||m===hitMonth)series.push({m,total:Math.round(total)});
+    if(hitMonth!==null&&m>=hitMonth)break;
+    inv=inv*(1+rInv);
+    cash=cash*(1+rCash)+(Number(monthly)||0);
+  }
+  return{series,hitMonth};
+}
+
 /* ── Compute holding stats from trade log ── */
 function holdingStats(trades=[]){
   let shares=0,cost=0;
@@ -615,6 +636,7 @@ function defaultData(){
        installment:true,monthly:1100,monthsRemaining:24,asOfDate:new Date().toISOString().slice(0,10)},
     ],
     history:[],
+    targets:[],
     household:{splitMine:50,expenses:[
       {id:uid(),name:"Rent",amount:2000,color:SEG[0]},
       {id:uid(),name:"Transport",amount:500,color:SEG[3]},
@@ -698,6 +720,14 @@ function migrate(d){
   if(!d.payPeriods.wife)d.payPeriods.wife={enabled:false,payday:1};
   if(!d.quickTransferLast)d.quickTransferLast={};
   if(!d.netWorthAutoHistory)d.netWorthAutoHistory=[];
+  if(!d.targets)d.targets=[];
+  (d.targets||[]).forEach(t=>{
+    if(!t.categoryIds)t.categoryIds=[];
+    if(t.investRate===undefined)t.investRate=4;   // conservative default, user-editable
+    if(t.cashRate===undefined)t.cashRate=1;        // conservative default, user-editable
+    if(!t.currency)t.currency="SAR";
+    if(!t.color)t.color=P.gr;
+  });
   return d;
 }
 
@@ -1326,6 +1356,19 @@ function App(){
   const addTrade=(invId,trade)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}]}:x)}));
   const removeTrade=(invId,tid)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).filter(t=>t.id!==tid)}:x)}));
   const setProjection=patch=>setData(d=>({...d,projection:{...(d.projection||{monthly:1500,years:20,rate:8}),...patch}}));
+
+  /* runway/capital targets — trend-based forecasting toward a custom goal.
+     Distinct from `goals` (manual-contribution pots): a target's progress is
+     derived live from (a) the budget categories you tag as counting toward it
+     and (b) your current invested/cash balances, projected forward at two
+     separately-editable conservative rates. */
+  const targets=data.targets||[];
+  const addTarget=()=>setData(d=>({...d,targets:[...(d.targets||[]),{
+    id:uid(),name:"New target",targetAmount:100000,targetDate:"",
+    categoryIds:[],investRate:4,cashRate:1,currency:"SAR",color:SEG[(d.targets||[]).length%SEG.length],
+  }]}));
+  const updateTarget=(id,patch)=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,...patch}:t)}));
+  const removeTarget=id=>setData(d=>({...d,targets:(d.targets||[]).filter(t=>t.id!==id)}));
   const livePrice=data.livePrice||{};
   const setLivePrice=prices=>setData(d=>({...d,livePrice:{...(d.livePrice||{}),...prices}}));
 
@@ -1459,6 +1502,7 @@ function App(){
     ["budget","Budget",I.Wallet],["expenses","Expenses",I.Receipt],["household","Household",I.Users],
     ["banks","Banks",I.Bank],["investments","Investments",I.Trending],
     ["networth","Net Worth",I.Gem],["goals","Goals",I.Target],
+    ["targets","Forecast",I.TrendUp],
     ["currency","Currency",I.Swap],["overview","Overview",I.PieI],
   ];
 
@@ -1563,6 +1607,7 @@ function App(){
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
+          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
           {tab==="overview"&&<OverviewView {...{plan,fmt,pct,allocated,remaining}}/>}
         </TabPane>
       </div>
@@ -3906,6 +3951,186 @@ function OverviewView({plan,fmt,pct,allocated,remaining}){
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ── TARGETS / FORECAST VIEW ──────────────────────────────────────────────
+   Trend-based capital forecasting. Unlike Goals (manual-contribution pots),
+   a Target's progress is derived live: pick which budget categories count as
+   "savings rate" toward it, and it projects your current invested + cash
+   balances forward at two separately-editable conservative growth rates. ── */
+function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,owners,invSar,banksSar,fmt}){
+  const[openId,setOpenId]=useState(null);
+  const[catPickerId,setCatPickerId]=useState(null);
+
+  // every category across every plan (both owners), for the picker —
+  // categories are already uid-unique per plan so no collision risk
+  const allCats=useMemo(()=>{
+    const out=[];
+    (plans||[]).forEach(p=>(p.categories||[]).forEach(c=>{
+      out.push({id:c.id,name:c.name,owner:p.owner,amount:Number(c.amount)||0});
+    }));
+    return out;
+  },[plans]);
+
+  const open=targets.find(t=>t.id===openId);
+  const catPickerTarget=targets.find(t=>t.id===catPickerId);
+
+  return(
+    <div>
+      <div style={{fontSize:12,color:P.faint,marginBottom:14,lineHeight:1.5}}>
+        Pick which budget categories count as your savings rate toward each target.
+        Your current invested balance grows at the invest rate, your cash balance
+        grows at the cash rate, and new monthly savings land in the cash pool.
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
+        {targets.map(t=>{
+          const monthly=allCats.filter(c=>(t.categoryIds||[]).includes(c.id)).reduce((s,c)=>s+c.amount,0);
+          const{hitMonth}=computeTargetForecast(invSar,banksSar,monthly,t.investRate,t.cashRate,t.targetAmount);
+          const current=invSar+banksSar;
+          const pct=t.targetAmount>0?Math.min(100,(current/t.targetAmount)*100):0;
+          return(
+            <button key={t.id} onClick={()=>setOpenId(t.id)}
+              style={{textAlign:"left",borderRadius:16,padding:14,minHeight:150,background:P.sf,border:`1px solid ${P.line}`,
+                display:"flex",flexDirection:"column",gap:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{width:8,height:8,borderRadius:999,background:t.color||P.gr}}/>
+                <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{t.name}</span>
+              </div>
+              <div style={{fontSize:11,color:P.faint}}>Target</div>
+              <div className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmt(t.targetAmount)}</div>
+              <div style={{height:6,borderRadius:99,background:P.sfA,overflow:"hidden",marginTop:2}}>
+                <div style={{height:"100%",width:`${pct}%`,background:t.color||P.gr,borderRadius:99}}/>
+              </div>
+              <div style={{fontSize:11,color:P.sub,marginTop:"auto"}}>
+                {monthly<=0?"No categories selected"
+                  :hitMonth===null?"30+ yrs at current pace"
+                  :hitMonth===0?"Target already reached"
+                  :`~${hitMonth} mo (${(hitMonth/12).toFixed(1)} yrs) to go`}
+              </div>
+            </button>
+          );
+        })}
+        <button onClick={addTarget}
+          style={{borderRadius:16,padding:14,minHeight:150,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr,
+            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
+          <I.Plus size={20}/>Add target
+        </button>
+      </div>
+
+      {/* ── Detail / edit modal ── */}
+      {open&&(()=>{
+        const monthly=allCats.filter(c=>(open.categoryIds||[]).includes(c.id)).reduce((s,c)=>s+c.amount,0);
+        const{series,hitMonth}=computeTargetForecast(invSar,banksSar,monthly,open.investRate,open.cashRate,open.targetAmount);
+        const selectedCats=allCats.filter(c=>(open.categoryIds||[]).includes(c.id));
+        return(
+        <Portal>
+        <div className="modal-bg" onClick={()=>setOpenId(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <input value={open.name} onChange={e=>updateTarget(open.id,{name:e.target.value})}
+                className="bare" style={{fontSize:17,fontWeight:700,flex:1}}/>
+              <button onClick={()=>setOpenId(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+            </div>
+
+            <div style={{display:"flex",gap:12,marginBottom:12,fontSize:13}}>
+              <label style={{flex:1,color:P.sub}}>Target amount (SAR)
+                <input type="number" value={open.targetAmount} onChange={e=>updateTarget(open.id,{targetAmount:Number(e.target.value)})}
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2}}/>
+              </label>
+              <label style={{flex:1,color:P.sub}}>Target date
+                <input type="date" value={open.targetDate||""} onChange={e=>updateTarget(open.id,{targetDate:e.target.value})}
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:13,marginTop:2}}/>
+              </label>
+            </div>
+
+            <div style={{display:"flex",gap:12,marginBottom:14,fontSize:13}}>
+              <label style={{flex:1,color:P.sub}}>Invest rate %/yr
+                <input type="number" step="0.5" value={open.investRate} onChange={e=>updateTarget(open.id,{investRate:Number(e.target.value)})}
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2}}/>
+              </label>
+              <label style={{flex:1,color:P.sub}}>Cash rate %/yr
+                <input type="number" step="0.25" value={open.cashRate} onChange={e=>updateTarget(open.id,{cashRate:Number(e.target.value)})}
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2}}/>
+              </label>
+            </div>
+
+            <div style={{marginBottom:14}}>
+              <button onClick={()=>setCatPickerId(open.id)}
+                style={{width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:10,background:P.sfA,border:`1px solid ${P.line}`,fontSize:13}}>
+                <div style={{color:P.sub,marginBottom:2}}>Savings-rate categories ({selectedCats.length} selected)</div>
+                <div className="tnum" style={{fontWeight:600,color:P.ink}}>{fmt(monthly)}/mo</div>
+              </button>
+            </div>
+
+            <div style={{borderRadius:14,padding:12,background:P.sfA,marginBottom:14}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:6}}>
+                {monthly<=0?"Select at least one category to project a timeline."
+                  :hitMonth===null?"Target isn't reached within 30 years at this pace — raise the monthly rate or the growth rates."
+                  :`Projected: ~${hitMonth} months (${(hitMonth/12).toFixed(1)} years) from today.`}
+              </div>
+              <div style={{width:"100%",height:150}}>
+                <ResponsiveContainer>
+                  <LineChart data={series} margin={{top:8,right:8,bottom:0,left:-16}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={P.line}/>
+                    <XAxis dataKey="m" tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`${Math.round(v/12)}y`}/>
+                    <YAxis tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
+                    <Tooltip formatter={v=>fmt(v)} labelFormatter={v=>`Month ${v}`}/>
+                    <Line type="monotone" dataKey="total" stroke={open.color||P.gr} strokeWidth={2} dot={false}/>
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <button onClick={()=>{removeTarget(open.id);setOpenId(null);}}
+              style={{width:"100%",padding:"10px",borderRadius:10,background:"transparent",border:`1px solid ${P.line}`,color:P.red,fontSize:13,fontWeight:500}}>
+              <I.Trash size={13} style={{marginRight:6,verticalAlign:-2}}/>Delete target
+            </button>
+          </div>
+        </div>
+        </Portal>
+        );
+      })()}
+
+      {/* ── Category picker modal ── */}
+      {catPickerTarget&&(
+        <Portal>
+        <div className="modal-bg" onClick={()=>setCatPickerId(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <h3 style={{margin:0,fontSize:15,fontWeight:600}}>Savings-rate categories</h3>
+              <button onClick={()=>setCatPickerId(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+            </div>
+            <div style={{maxHeight:320,overflowY:"auto",display:"flex",flexDirection:"column",gap:2}}>
+              {["me","wife"].map(ok=>{
+                const cats=allCats.filter(c=>c.owner===ok);
+                if(!cats.length)return null;
+                return(
+                  <div key={ok} style={{marginBottom:6}}>
+                    <div style={{fontSize:11,fontWeight:600,color:P.faint,textTransform:"uppercase",margin:"6px 2px"}}>{owners?.[ok]||ok}</div>
+                    {cats.map(c=>{
+                      const checked=(catPickerTarget.categoryIds||[]).includes(c.id);
+                      return(
+                        <label key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 6px",fontSize:13,borderRadius:8,cursor:"pointer"}}>
+                          <input type="checkbox" checked={checked} onChange={e=>{
+                            const ids=new Set(catPickerTarget.categoryIds||[]);
+                            e.target.checked?ids.add(c.id):ids.delete(c.id);
+                            updateTarget(catPickerTarget.id,{categoryIds:[...ids]});
+                          }}/>
+                          <span style={{flex:1,color:P.ink}}>{c.name}</span>
+                          <span className="tnum" style={{color:P.faint}}>{fmt(c.amount)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        </Portal>
+      )}
     </div>
   );
 }
