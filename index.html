@@ -906,6 +906,7 @@ function App(){
               setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
             }
           }
+        }
         // remote fetch failed or unconfigured → keep local, stay dirty, don't touch meta
       }else if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
