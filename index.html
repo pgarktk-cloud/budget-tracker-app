@@ -654,6 +654,7 @@ function migrate(d){
   (d.expenses||[]).forEach(e=>{
     if(!e.owner)e.owner="me";
     if(e.note===undefined)e.note="";
+    if(!e.updatedAt)e.updatedAt=e.date?`${e.date}T00:00:00.000Z`:new Date().toISOString();
   });
   // ensure monthlyPlans have owner
   (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";});
@@ -745,6 +746,33 @@ const PRE_CLOUD_BACKUP_KEY="salaryPlanner:v3:preCloudRestore";
 const PROFILE_KEY="allocation:preferredProfile";
 
 const fingerprint=d=>{try{return JSON.stringify(d);}catch(e){return "";}};
+
+/* union transactions by id; on overlap, newer updatedAt wins. Deletes are
+   tombstones (deletedAt set on the record), so they merge like any other
+   edit — no separate delete-handling needed. */
+function mergeExpenseArrays(localExp,remoteExp){
+  const map=new Map();
+  (localExp||[]).forEach(e=>map.set(e.id,e));
+  (remoteExp||[]).forEach(re=>{
+    const le=map.get(re.id);
+    if(!le){map.set(re.id,re);return;}
+    const lt=le.updatedAt||le.date||"";
+    const rt=re.updatedAt||re.date||"";
+    map.set(re.id,rt>lt?re:le);
+  });
+  return Array.from(map.values());
+}
+/* Auto-reconcile local vs remote when ONLY the expenses array differs.
+   Returns the merged data (no modal needed) or null if something else
+   (plans/goals/settings) also diverged, so the caller falls back to
+   the conflict modal — with expenses already merged either way. */
+function tryAutoMergeExpenses(local,remote){
+  const merged=mergeExpenseArrays(local.expenses,remote.expenses);
+  if(fingerprint({...local,expenses:[]})===fingerprint({...remote,expenses:[]})){
+    return{...local,expenses:merged};
+  }
+  return null;
+}
 
 const loadSyncMeta=()=>{
   try{
@@ -865,10 +893,19 @@ function App(){
             meta.lastCloudSnapshot=remoteFP;
             meta.lastCloudPulledAt=new Date().toISOString();
             saveSyncMeta(meta);
-          }else if(!cancelled){
-            setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+          }else{
+            const merged=tryAutoMergeExpenses(localResolved,remoteMigrated);
+            if(merged){
+              resolved=merged;
+              lastCloudSnapshotRef.current=remoteFP;
+              meta.hasUnsyncedChanges=true;
+              meta.lastCloudSnapshot=remoteFP;
+              meta.lastCloudPulledAt=new Date().toISOString();
+              saveSyncMeta(meta);
+            }else if(!cancelled){
+              setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+            }
           }
-        }
         // remote fetch failed or unconfigured → keep local, stay dirty, don't touch meta
       }else if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
@@ -953,14 +990,34 @@ function App(){
       const payload=dataRef.current;
       const result=await KVSync.save(payload);
       if(result&&result.conflict){
-        setHasUnsyncedChanges(true);
-        setSyncMsg("⚠️ Cloud changed — review before saving");
         try{
           const remoteRaw=await KVSync.load();
           if(remoteRaw&&Array.isArray(remoteRaw.plans)){
-            setConflict({local:payload,remote:migrate(remoteRaw),remoteSavedAt:KVSync.lastPulledAt});
+            const remoteMigrated=migrate(remoteRaw);
+            const merged=tryAutoMergeExpenses(payload,remoteMigrated);
+            const retry=merged?await KVSync.save(merged):null;
+            if(merged&&retry&&!retry.conflict&&retry.ok!==false){
+              skipSave.current=true;
+              setData(merged);
+              try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
+              const fp=fingerprint(merged);
+              lastCloudSnapshotRef.current=fp;
+              const now=new Date();
+              const meta=loadSyncMeta();
+              meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudSavedAt=now.toISOString();meta.changesSinceSave=0;
+              saveSyncMeta(meta);
+              setLastCloudSavedAt(now);setHasUnsyncedChanges(false);setChangesSinceSave(0);
+              setSyncMsg("Merged with cloud changes and saved ✓");
+            }else{
+              setHasUnsyncedChanges(true);
+              setSyncMsg("⚠️ Cloud changed — review before saving");
+              setConflict({local:payload,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+            }
           }
-        }catch(e){}
+        }catch(e){
+          setHasUnsyncedChanges(true);
+          setSyncMsg("⚠️ Cloud changed — review before saving");
+        }
       }else if(!result||result.ok===false){
         setSyncMsg("Cloud save failed — data is safe on this device");
       }else{
@@ -1019,8 +1076,20 @@ function App(){
             setLastCloudPulledAt(now);
             setSyncMsg("Already up to date ✓");
           }else{
-            setSyncMsg("");
-            setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+            const merged=tryAutoMergeExpenses(dataRef.current,remoteMigrated);
+            if(merged){
+              skipSave.current=true;
+              setData(merged);
+              try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
+              lastCloudSnapshotRef.current=remoteFP;
+              const now=new Date();
+              const meta=loadSyncMeta();meta.hasUnsyncedChanges=true;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
+              setHasUnsyncedChanges(true);setLastCloudPulledAt(now);
+              setSyncMsg("Merged with cloud changes — save to sync ✓");
+            }else{
+              setSyncMsg("");
+              setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+            }
           }
         }else{
           stashPreCloudBackup(dataRef.current);
@@ -1274,10 +1343,10 @@ function App(){
      `name` is the recurring/short title (e.g. "Amazon Now"), `note` is the
      free-form detail (e.g. "bought a charger + cable"). isTransfer marks
      quick-transfer logs against untracked categories. */
-  const expenses=data.expenses||[];
-  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer}]}));
-  const updateExpenseTx=(id,patch)=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount}:e)}));
-  const removeExpenseTx=id=>setData(d=>({...d,expenses:(d.expenses||[]).filter(e=>e.id!==id)}));
+  const expenses=(data.expenses||[]).filter(e=>!e.deletedAt);
+  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,updatedAt:new Date().toISOString()}]}));
+  const updateExpenseTx=(id,patch)=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount,updatedAt:new Date().toISOString()}:e)}));
+  const removeExpenseTx=id=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}));
 
   /* quick-transfer: logs a transaction against an untracked category (e.g. Savings)
      and remembers the actual amount transferred, since it doesn't always match
@@ -1955,6 +2024,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     if(r>=0.8)return P.amberS;
     return P.sfA;
   };
+  
+  /* pace-vs-calendar flag — only fires in the "on track" green zone
+     (spend<80%), when spend ratio is already outrunning elapsed-days ratio */
+  const paceHot=(spent,budget,expectedRatio)=>{
+    if(budget<=0||expectedRatio==null)return false;
+    const r=spent/budget;
+    return r<0.8&&r>expectedRatio;
+  };
 
   /* default transaction date for the currently viewed bucket — the bucket's
      own start date when using pay-periods (viewMonth IS that date already),
@@ -2297,16 +2374,23 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             const spent=spentMap[env.id]||0;
             const left=env.budget-spent;
             const ratio=env.budget>0?spent/env.budget:0;
-            const color=statusColor(spent,env.budget);
-            const bg=statusBg(spent,env.budget);
             const trend=trendByCat[env.id];
             const burn=isNow?burnFor(env):null;
             const expectedRatio=isNow&&daysInMonth>0?dayOfMonth/daysInMonth:null;
+            const pacing=paceHot(spent,env.budget,expectedRatio);
+            const color=pacing?P.amber:statusColor(spent,env.budget);
+            const bg=pacing?P.amberS:statusBg(spent,env.budget);
             return(
               <div key={env.id} style={{borderRadius:14,padding:"12px 16px",background:P.sf,border:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
                   <span style={{flex:1,fontSize:14,fontWeight:600,color:P.ink}}>{env.name}</span>
+                  {pacing&&(
+                    <span title="Spending is outpacing the calendar for this period"
+                      style={{fontSize:10,fontWeight:600,color:P.amber,display:"flex",alignItems:"center",gap:2}}>
+                      <I.TrendUp size={10}/>pace
+                    </span>
+                  )}
                   {trend&&trend.avg!=null&&(
                     <span title={`3-month avg: ${fmt(trend.avg)}`}
                       style={{fontSize:10,fontWeight:600,color:spent>trend.avg*1.15?P.red:spent<trend.avg*0.85?P.gr:P.faint,
