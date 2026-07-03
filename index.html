@@ -19,8 +19,8 @@
       var root=document.documentElement;
       root.setAttribute("data-theme","dark");
       var vars={
-        "--bg":"#0F1722","--ink":"#EAF0FA","--sub":"#9FB0C8","--faint":"#647289",
-        "--line":"#26344A","--sf":"#16202F","--sfA":"#1C2839","--gr":"#5B8FD9",
+        "--bg":"#000000","--ink":"#EAF0FA","--sub":"#9FB0C8","--faint":"#647289",
+        "--line":"#242C38","--sf":"#12161E","--sfA":"#161B24","--gr":"#5B8FD9",
         "--grD":"#9FC1ED","--grS":"#1E2F4A","--br":"#4FA9C7","--brS":"#1A323B","--red":"#E07A68",
         "--deep":"#0A1119","--deepHi":"#7E93B5"
       };
@@ -205,7 +205,7 @@ function FadeList({items,renderItem,keyFn}){
    so every component that reads P.xxx at render time picks up the new value
    without needing prop-drilling or context. */
 const PALETTE_LIGHT={bg:"#E8EDF4",ink:"#15243B",sub:"#56657E",faint:"#8A98AD",line:"#D2DBE7",sf:"#FFFFFF",sfA:"#F0F4F9",gr:"#2C5FA8",grD:"#1B3E73",grS:"#E2EAF6",br:"#2E8BB0",brS:"#E0EEF4",red:"#C2533F",deep:"#15243B",deepHi:"#9DB0CC",redS:"#FDF0EE",amberS:"#FEF4E8",amber:"#B5651D"};
-const PALETTE_DARK={bg:"#0F1722",ink:"#EAF0FA",sub:"#9FB0C8",faint:"#647289",line:"#26344A",sf:"#16202F",sfA:"#1C2839",gr:"#5B8FD9",grD:"#9FC1ED",grS:"#1E2F4A",br:"#4FA9C7",brS:"#1A323B",red:"#E07A68",deep:"#0A1119",deepHi:"#7E93B5",redS:"#3A1E1C",amberS:"#3A2E18",amber:"#E0A85C"};
+const PALETTE_DARK={bg:"#000000",ink:"#EAF0FA",sub:"#9FB0C8",faint:"#647289",line:"#242C38",sf:"#12161E",sfA:"#161B24",gr:"#5B8FD9",grD:"#9FC1ED",grS:"#1E2F4A",br:"#4FA9C7",brS:"#1A323B",red:"#E07A68",deep:"#0A1119",deepHi:"#7E93B5",redS:"#3A1E1C",amberS:"#3A2E18",amber:"#E0A85C"};
 const P={...PALETTE_LIGHT};
 function applyTheme(mode){
   const src=mode==="dark"?PALETTE_DARK:PALETTE_LIGHT;
@@ -764,6 +764,7 @@ function App(){
   const[tab,setTab]=useState("budget");
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
+  const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
   const[syncMsg,setSyncMsg]=useState("");
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
   const skipSave=useRef(false);
@@ -1485,7 +1486,7 @@ function App(){
 
         <TabPane tab={tab}>
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
@@ -1501,6 +1502,14 @@ function App(){
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
       {showProfilePicker&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
+      {tab!=="expenses"&&
+        <button aria-label="Quick add transaction" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
+          style={{position:"fixed",right:16,bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:70,
+            width:56,height:56,borderRadius:999,background:P.gr,color:"#fff",border:"none",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            boxShadow:"0 6px 20px rgba(12,22,40,.35)",cursor:"pointer"}}>
+          <I.Plus size={24}/>
+        </button>}
     </div>
   );
 }
@@ -1838,7 +1847,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor}){
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -1984,6 +1993,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     setForm({...blankForm,catId:presetCatId||"",date:defaultDateForBucket});
     setShowAdd(true);
   };
+  // Global FAB (in App) bumps globalAddTrigger to ask us to open the add-transaction
+  // modal from wherever the user was. Trigger starts at 0 (falsy), so the initial
+  // mount is a no-op — only real bumps (1,2,3...) fire this.
+  useEffect(()=>{if(globalAddTrigger)openAdd();},[globalAddTrigger]);
   const openEdit=(tx)=>{
     setEditTx(tx.id);
     setAddMode("tracked"); // edits always go through the tracked flow — transfers/goal contributions aren't editable here
@@ -4010,6 +4023,15 @@ window.__hideLoading=function(){
   if(el){el.style.opacity="0";el.style.transition="opacity 0.3s";setTimeout(function(){el.remove();},300);}
 };
 setTimeout(window.__hideLoading,8000);
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => {
+        console.log('SW Registration failed:', err);
+      });
+    });
+  }
 </script>
 </body>
 </html>
