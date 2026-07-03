@@ -143,17 +143,6 @@ select{transition:background .22s;}
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const{useState,useEffect,useMemo,useRef,useCallback}=React;
-/* Renders children directly onto document.body instead of in the normal DOM
-   tree. Needed for any fixed-position overlay (modals/sheets): tab panes are
-   wrapped in an entrance-animation div whose transform never fully clears
-   (fill-mode "both" keeps translateX(0) applied after the animation ends),
-   which silently turns that div into the containing block for *all*
-   position:fixed descendants — so "fixed" modals inside it end up anchored
-   to the scrollable page instead of the viewport. Portaling to <body> sidesteps
-   that entirely. */
-function Portal({children}){
-  return ReactDOM.createPortal(children,document.body);
-}
 const _RC=(typeof Recharts!=='undefined')?Recharts:window.Recharts||{};
 const{PieChart,Pie,Cell,ResponsiveContainer,LineChart,Line,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
 
@@ -297,6 +286,12 @@ const goalIcon=t=>GI[t]||GI.savings;
 /* ── utils ── */
 const uid=()=>Math.random().toString(36).slice(2,9);
 const STORAGE_KEY="salaryPlanner:v3";
+const SYNC_META_KEY="salaryPlanner:v3:syncMeta";
+const PRE_CLOUD_RESTORE_KEY="salaryPlanner:v3:preCloudRestore";
+/* stable snapshot used to compare local vs cloud state without a deep-diff */
+function fingerprint(d){try{return JSON.stringify(d);}catch(e){return String(Math.random());}}
+function loadSyncMeta(){try{const raw=localStorage.getItem(SYNC_META_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
+function saveSyncMeta(meta){try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(meta));}catch(e){}}
 const monthLabel=()=>new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
 const FX_CODES=["USD","SAR","PHP","AED","EUR","GBP","JPY","INR","AUD","CAD","SGD"];
 const BANK_CCY=["SAR","PHP","USD","AED","EUR","GBP"];
@@ -732,54 +727,118 @@ function App(){
   const[showSettings,setShowSettings]=useState(false);
   const[syncMsg,setSyncMsg]=useState("");
   const[syncing,setSyncing]=useState(false);
-  const[lastSyncedAt,setLastSyncedAt]=useState(null);
+  const[syncOp,setSyncOp]=useState(null); // "push" | "pull" | null
+  const[hasUnsyncedChanges,setHasUnsyncedChanges]=useState(false);
+  const[lastCloudSavedAt,setLastCloudSavedAt]=useState(null);
+  const[lastCloudPulledAt,setLastCloudPulledAt]=useState(null);
+  const[pendingCount,setPendingCount]=useState(0);
+  const[conflict,setConflict]=useState(null); // {local,remote,remoteFp} | null
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
   const skipSave=useRef(false);
   const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
 
-  /* load — pull the latest cloud copy FIRST (when sync is configured), so
-     opening the app on a second device never autosaves a stale local copy
-     over data that was just saved from elsewhere. Local storage is only
-     used as the source of truth when sync isn't configured or the pull
-     fails (offline, etc.) — and even then we write whatever we end up
-     using back into localStorage so this device's cache stays current. */
+  /* refs mirroring latest state so async handlers (cloud save/pull, the
+     touch-gesture listener) never act on a stale closure */
+  const dataRef=useRef(data);dataRef.current=data;
+  const cloudFingerprintRef=useRef(null); // set imperatively, never stale
+  const lastCloudSavedAtRef=useRef(null);lastCloudSavedAtRef.current=lastCloudSavedAt;
+  const lastCloudPulledAtRef=useRef(null);lastCloudPulledAtRef.current=lastCloudPulledAt;
+  const syncingRef=useRef(false);syncingRef.current=syncing;
+
+  /* persist enough sync metadata locally that closing/reopening the app
+     never falsely treats unsaved local work as cloud-synced */
+  const persistMeta=(overrides={})=>{
+    saveSyncMeta({
+      cloudFingerprint:cloudFingerprintRef.current,
+      lastCloudSavedAt:lastCloudSavedAtRef.current?lastCloudSavedAtRef.current.toISOString():null,
+      lastCloudPulledAt:lastCloudPulledAtRef.current?lastCloudPulledAtRef.current.toISOString():null,
+      ...overrides,
+    });
+  };
+
+  /* load — startup policy (see brief §4):
+     • No unsynced local changes → safe to auto-pull cloud and use it outright.
+     • Unsynced local changes exist → never silently replace them. Compare
+       fingerprints; if remote is identical, just mark clean. If it differs,
+       KEEP local, surface a conflict choice, and let the user decide. */
   useEffect(()=>{
     let cancelled=false;
     (async()=>{
       let initial="light";
       let resolved=null;
-      let gotRemote=false;
+      let localResolved=null;
+      let conflictDetected=null;
+      let pulledAt=null;
+      let dirty=false;
 
-      if(kvReady){
-        try{
-          const remote=await KVSync.load();
-          if(remote&&Array.isArray(remote.plans)){resolved=migrate(remote);gotRemote=true;}
-        }catch(e){}
+      try{
+        const raw=localStorage.getItem(STORAGE_KEY);
+        if(raw)localResolved=migrate(JSON.parse(raw));
+      }catch(e){}
+
+      const meta=loadSyncMeta();
+      if(meta){
+        if(meta.lastCloudSavedAt)setLastCloudSavedAt(new Date(meta.lastCloudSavedAt));
+        if(meta.lastCloudPulledAt)setLastCloudPulledAt(new Date(meta.lastCloudPulledAt));
+        if(meta.cloudFingerprint)cloudFingerprintRef.current=meta.cloudFingerprint;
       }
 
-      if(!resolved){
+      const localMatchesKnownCloud=!!(localResolved&&cloudFingerprintRef.current&&fingerprint(localResolved)===cloudFingerprintRef.current);
+      const localLooksDirty=!!localResolved&&!localMatchesKnownCloud;
+
+      if(kvReady){
+        let remoteMigrated=null,gotRemote=false;
         try{
-          const raw=localStorage.getItem(STORAGE_KEY);
-          if(raw)resolved=migrate(JSON.parse(raw));
+          const remote=await KVSync.load();
+          if(remote&&Array.isArray(remote.plans)){remoteMigrated=migrate(remote);gotRemote=true;}
         }catch(e){}
+        if(cancelled)return;
+
+        if(gotRemote&&!localLooksDirty){
+          resolved=remoteMigrated;
+          cloudFingerprintRef.current=fingerprint(remoteMigrated);
+          pulledAt=new Date();
+          dirty=false;
+        }else if(gotRemote&&localLooksDirty){
+          const remoteFp=fingerprint(remoteMigrated);
+          const localFp=fingerprint(localResolved);
+          if(remoteFp===localFp){
+            resolved=localResolved;
+            cloudFingerprintRef.current=remoteFp;
+            pulledAt=new Date();
+            dirty=false;
+          }else{
+            resolved=localResolved; // preserve unsynced work, never overwrite silently
+            dirty=true;
+            conflictDetected={local:localResolved,remote:remoteMigrated,remoteFp};
+          }
+        }else{
+          resolved=localResolved;
+          dirty=localLooksDirty;
+        }
+      }else{
+        resolved=localResolved;
+        dirty=false;
       }
 
       if(cancelled)return;
+      if(!resolved)resolved=defaultData();
 
-      if(resolved){
-        // skip the very next autosave so loading remote data doesn't
-        // immediately re-trigger a save round-trip
-        skipSave.current=true;
-        setData(resolved);
-        initial=resolved.theme||"light";
-        try{localStorage.setItem(STORAGE_KEY,JSON.stringify(resolved));}catch(e){}
-      }
+      // skip the very next autosave so loading data doesn't immediately
+      // re-trigger a local-save round-trip (cloud is never auto-written)
+      skipSave.current=true;
+      setData(resolved);
+      setHasUnsyncedChanges(dirty);
+      initial=resolved.theme||"light";
+      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(resolved));}catch(e){}
       try{
         const savedTheme=localStorage.getItem("allocation:theme");
         if(savedTheme)initial=savedTheme;
       }catch(e){}
 
-      if(gotRemote)setLastSyncedAt(new Date());
+      if(pulledAt)setLastCloudPulledAt(pulledAt);
+      persistMeta(pulledAt?{lastCloudPulledAt:pulledAt.toISOString()}:{});
+      if(conflictDetected)setConflict(conflictDetected);
 
       applyTheme(initial);
       applySegTheme(initial);
@@ -799,55 +858,205 @@ function App(){
     setData(d=>({...d,theme:next}));
   };
 
-  /* persist */
+  /* local persist ONLY — never calls KVSync.save(). Runs after every data
+     change (typing, edits, theme, auto net-worth snapshots, import, reset,
+     anything) and just (a) writes localStorage and (b) marks the change as
+     pending a cloud save. This is the ONLY place besides load/pull/conflict
+     resolution that touches localStorage for the main dataset. */
   useEffect(()=>{
     if(!loaded)return;
     if(skipSave.current){skipSave.current=false;return;}
-    const t=setTimeout(async()=>{
+    const t=setTimeout(()=>{
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
-      if(kvReady){
-        try{
-          setSyncing(true);
-          const result=await KVSync.save(data);
-          if(result.conflict){
-            setSyncMsg("⚠️ Conflict — tap Pull to get latest");
-          }else{
-            setLastSyncedAt(new Date());
-            setSyncMsg("Synced ✓");
-          }
-        }catch(e){setSyncMsg("Sync failed — saved locally");}
-        setSyncing(false);setTimeout(()=>setSyncMsg(""),3000);
-      }
-    },600);
+      setHasUnsyncedChanges(true);
+      setPendingCount(c=>c+1);
+    },450);
     return()=>clearTimeout(t);
-  },[data,loaded,kvReady]);
+  },[data,loaded]);
 
-  /* KV pull — fetch latest from Cloudflare KV */
-  const pullKV=async()=>{
-    if(!kvReady){setSyncMsg("Add Worker URL + sync token first");setTimeout(()=>setSyncMsg(""),3000);return;}
+  /* accept a cloud copy as the new local state (used by a clean pull, a
+     matching-fingerprint pull, and "Use Cloud" in the conflict dialog).
+     Keeps one recoverable backup of whatever local data existed first. */
+  const acceptCloudData=(migratedData,fp)=>{
     try{
-      setSyncing(true);setSyncMsg("Pulling…");
-      const remote=await KVSync.load();
-      if(remote&&Array.isArray(remote.plans)){
-        skipSave.current=true;
-        setData(migrate(remote));
-        setLastSyncedAt(new Date());
-        setSyncMsg("Up to date ✓");
-      }else setSyncMsg("Nothing saved yet — will sync on next change");
-    }catch(e){setSyncMsg("Pull failed — check Worker URL");}
-    setSyncing(false);setTimeout(()=>setSyncMsg(""),3000);
+      const rawLocal=localStorage.getItem(STORAGE_KEY);
+      if(rawLocal)localStorage.setItem(PRE_CLOUD_RESTORE_KEY,JSON.stringify({at:new Date().toISOString(),data:JSON.parse(rawLocal)}));
+    }catch(e){}
+    skipSave.current=true;
+    setData(migratedData);
+    try{localStorage.setItem(STORAGE_KEY,JSON.stringify(migratedData));}catch(e){}
+    cloudFingerprintRef.current=fp;
+    setHasUnsyncedChanges(false);
+    setPendingCount(0);
+    const now=new Date();
+    setLastCloudPulledAt(now);
+    persistMeta({cloudFingerprint:fp,lastCloudPulledAt:now.toISOString()});
   };
 
-  /* ── pull-to-refresh ──────────────────────────────────────────────────────
-     Standard mobile pattern: dragging down from the very top of the page
-     triggers a sync pull. pullDist drives the visible indicator; the touch
-     math lives in refs so the listeners don't need to be re-attached on
-     every move (only pullDist is state, purely for rendering). ─────────── */
+  /* manual Save to Cloud — the ONLY function in the app allowed to call
+     KVSync.save(). Always saves the latest in-memory data via dataRef, never
+     a stale closure. */
+  const saveToCloud=async()=>{
+    if(!kvReady){setSyncMsg("Cloud sync isn't configured — see Settings.");setTimeout(()=>setSyncMsg(""),3000);return{ok:false,reason:"not configured"};}
+    if(syncingRef.current)return{ok:false,reason:"busy"};
+    syncingRef.current=true;setSyncing(true);setSyncOp("push");setSyncMsg("Saving…");
+    const snapshot=dataRef.current;
+    try{
+      const result=await KVSync.save(snapshot);
+      if(result&&result.conflict){
+        let remoteMigrated=null;
+        try{const remote=await KVSync.load();if(remote&&Array.isArray(remote.plans))remoteMigrated=migrate(remote);}catch(e){}
+        setSyncMsg("");
+        setConflict({local:snapshot,remote:remoteMigrated,remoteFp:remoteMigrated?fingerprint(remoteMigrated):null});
+        return{ok:false,reason:"conflict"};
+      }
+      if(!result||result.ok===false){
+        setSyncMsg("Cloud save failed — data is safe on this device");
+        setTimeout(()=>setSyncMsg(""),3500);
+        return{ok:false,reason:(result&&result.reason)||"error"};
+      }
+      const fp=fingerprint(snapshot);
+      cloudFingerprintRef.current=fp;
+      setHasUnsyncedChanges(false);
+      setPendingCount(0);
+      const now=new Date();
+      setLastCloudSavedAt(now);
+      persistMeta({cloudFingerprint:fp,lastCloudSavedAt:now.toISOString()});
+      setSyncMsg("Cloud saved ✓");
+      setTimeout(()=>setSyncMsg(""),2500);
+      return{ok:true};
+    }catch(e){
+      setSyncMsg("Cloud save failed — data is safe on this device");
+      setTimeout(()=>setSyncMsg(""),3500);
+      return{ok:false,reason:"network"};
+    }finally{
+      setSyncing(false);setSyncOp(null);syncingRef.current=false;
+    }
+  };
+
+  /* manual Pull from Cloud — never POSTs. Detects unsynced local changes
+     before ever replacing them. */
+  const pullFromCloud=async()=>{
+    if(!kvReady){setSyncMsg("Cloud sync isn't configured — see Settings.");setTimeout(()=>setSyncMsg(""),3000);return{ok:false,reason:"not configured"};}
+    if(syncingRef.current)return{ok:false,reason:"busy"};
+    syncingRef.current=true;setSyncing(true);setSyncOp("pull");setSyncMsg("Pulling…");
+    try{
+      const remote=await KVSync.load();
+      if(!remote||!Array.isArray(remote.plans)){
+        setSyncMsg("Nothing saved in the cloud yet");
+        setTimeout(()=>setSyncMsg(""),3000);
+        return{ok:false,reason:"empty"};
+      }
+      const migrated=migrate(remote);
+      const remoteFp=fingerprint(migrated);
+      if(!hasUnsyncedChanges){
+        acceptCloudData(migrated,remoteFp);
+        setSyncMsg("Cloud data loaded ✓");
+        setTimeout(()=>setSyncMsg(""),2500);
+        return{ok:true,action:"loaded"};
+      }
+      if(remoteFp===fingerprint(dataRef.current)){
+        cloudFingerprintRef.current=remoteFp;
+        setHasUnsyncedChanges(false);
+        setPendingCount(0);
+        const now=new Date();
+        setLastCloudPulledAt(now);
+        persistMeta({cloudFingerprint:remoteFp,lastCloudPulledAt:now.toISOString()});
+        setSyncMsg("Already up to date ✓");
+        setTimeout(()=>setSyncMsg(""),2500);
+        return{ok:true,action:"clean"};
+      }
+      setSyncMsg("");
+      setConflict({local:dataRef.current,remote:migrated,remoteFp});
+      return{ok:false,reason:"conflict"};
+    }catch(e){
+      setSyncMsg("Pull failed — using local data");
+      setTimeout(()=>setSyncMsg(""),3000);
+      return{ok:false,reason:"network"};
+    }finally{
+      setSyncing(false);setSyncOp(null);syncingRef.current=false;
+    }
+  };
+
+  /* conflict dialog resolution (blocking modal — see ConflictModal) */
+  const resolveKeepLocal=()=>{
+    setConflict(null);
+    setHasUnsyncedChanges(true);
+    setSyncMsg("Kept this device's version — Save to Cloud when ready");
+    setTimeout(()=>setSyncMsg(""),3500);
+  };
+  const resolveUseCloud=()=>{
+    if(!conflict||!conflict.remote){setConflict(null);return;}
+    acceptCloudData(conflict.remote,conflict.remoteFp);
+    setConflict(null);
+    setSyncMsg("Cloud data loaded ✓");
+    setTimeout(()=>setSyncMsg(""),2500);
+  };
+  const resolveSaveLocalToCloud=async()=>{
+    setConflict(null);
+    await saveToCloud(); // may re-open the conflict dialog if remote changed again meanwhile
+  };
+
+  /* restore the one recoverable backup taken right before a cloud copy last
+     replaced local data (see acceptCloudData) */
+  const restorePreCloud=()=>{
+    try{
+      const raw=localStorage.getItem(PRE_CLOUD_RESTORE_KEY);
+      if(!raw){setSyncMsg("No previous local copy to restore");setTimeout(()=>setSyncMsg(""),2500);return;}
+      const parsed=JSON.parse(raw);
+      setData(migrate(parsed.data));
+      setSyncMsg("Previous local copy restored — Save to Cloud when ready");
+      setTimeout(()=>setSyncMsg(""),3500);
+    }catch(e){
+      setSyncMsg("Restore failed");
+      setTimeout(()=>setSyncMsg(""),2500);
+    }
+  };
+
+  /* subtle warning only — never blocks ordinary navigation */
+  useEffect(()=>{
+    const handler=e=>{
+      if(hasUnsyncedChanges){e.preventDefault();e.returnValue="";}
+    };
+    window.addEventListener("beforeunload",handler);
+    return()=>window.removeEventListener("beforeunload",handler);
+  },[hasUnsyncedChanges]);
+
+  /* ── Pull to Sync ─────────────────────────────────────────────────────────
+     Context-aware mobile gesture: if there are pending local changes, saves
+     them to the cloud first (never pulls/overwrites before the save
+     succeeds); if local is already clean, behaves as a safe cloud pull.
+     pullDist drives the visible indicator; touch math lives in refs so
+     listeners don't need re-attaching on every move. The gesture handler
+     itself is re-created every render and stashed in a ref so the listeners
+     (attached once) never call a stale version. ─────────────────────────── */
   const PULL_THRESHOLD=68,PULL_MAX=110;
   const[pullDist,setPullDist]=useState(0);
   const pullStartY=useRef(null);
   const pullArmed=useRef(false);
   const pullDistRef=useRef(0);
+
+  const handlePullToSync=()=>{
+    if(hasUnsyncedChanges){
+      saveToCloud().then(res=>{
+        if(res.ok){setSyncMsg("Cloud saved and synced ✓");setTimeout(()=>setSyncMsg(""),2500);}
+        // failure/conflict messaging is already handled inside saveToCloud
+      });
+    }else{
+      pullFromCloud();
+    }
+  };
+  const pullGestureRef=useRef(handlePullToSync);
+  pullGestureRef.current=handlePullToSync;
+
+  const pullLabel=()=>{
+    if(typeof navigator!=="undefined"&&navigator.onLine===false)return"Offline — saved locally";
+    if(syncing)return syncOp==="push"?"Saving to cloud…":"Checking cloud…";
+    if(pullDist>=PULL_THRESHOLD)return hasUnsyncedChanges?"Release to save & sync":"Release to pull";
+    if(pullDist>0)return hasUnsyncedChanges?"Pull to save & sync":"Pull to check cloud";
+    return"";
+  };
+
   useEffect(()=>{
     const atTop=()=>(window.scrollY||document.documentElement.scrollTop||0)<=0;
     const onStart=e=>{
@@ -866,7 +1075,7 @@ function App(){
       setPullDist(val);
     };
     const onEnd=()=>{
-      if(pullArmed.current&&pullDistRef.current>=PULL_THRESHOLD)pullKV();
+      if(pullArmed.current&&pullDistRef.current>=PULL_THRESHOLD)pullGestureRef.current();
       pullArmed.current=false;
       pullStartY.current=null;
       pullDistRef.current=0;
@@ -1154,9 +1363,9 @@ function App(){
 
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
-      {/* pull-to-refresh indicator */}
-      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",
-        justifyContent:"center",pointerEvents:"none",
+      {/* Pull to Sync indicator */}
+      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",flexDirection:"column",
+        alignItems:"center",justifyContent:"center",pointerEvents:"none",gap:4,
         paddingTop:`calc(env(safe-area-inset-top) + ${Math.max(8,pullDist-30)}px)`,
         opacity:pullDist>0||syncing?Math.min(1,pullDist/PULL_THRESHOLD)||(syncing?1:0):0,
         transition:pullDist===0?"opacity .2s ease":"none"}}>
@@ -1166,6 +1375,8 @@ function App(){
             transform:syncing?"none":`rotate(${Math.min(pullDist,PULL_THRESHOLD)/PULL_THRESHOLD*360}deg)`,
             ...(syncing?{animation:"spin .8s linear infinite"}:{})}}/>
         </div>
+        <div style={{fontSize:10,fontWeight:600,color:P.sub,background:P.sf,border:`1px solid ${P.line}`,
+          borderRadius:999,padding:"2px 8px",whiteSpace:"nowrap"}}>{pullLabel()}</div>
       </div>
       <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px 80px"}}>
 
@@ -1182,11 +1393,25 @@ function App(){
                 style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
                 {data.theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
               </button>
-              <button onClick={pullKV} title={kvReady?"Pull latest from Cloudflare KV":"Configure Worker URL and sync token to enable sync"}
-                style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
-                  background:kvReady?P.grS:P.sf,color:kvReady?P.grD:P.sub,border:`1px solid ${kvReady?P.grS:P.line}`}}>
-                <I.Cloud size={13} style={syncing?{animation:"spin .9s linear infinite"}:null}/>
-                {lastSyncedAt?"Synced":kvReady?"Pull":"Sync"}
+              <button onClick={pullFromCloud} disabled={syncing}
+                title={kvReady?`Pull from Cloud${lastCloudPulledAt?` · last pulled ${lastCloudPulledAt.toLocaleTimeString()}`:""}`:"Configure Worker URL and sync token to enable sync"}
+                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
+                  color:P.sub,background:"transparent",border:"none",opacity:syncing?0.6:1}}>
+                <I.Refresh size={15} style={syncing&&syncOp==="pull"?{animation:"spin .9s linear infinite"}:null}/>
+              </button>
+              <button onClick={saveToCloud} disabled={syncing||!kvReady}
+                title={!kvReady?"Configure Worker URL and sync token to enable cloud sync":
+                  hasUnsyncedChanges?`Save ${pendingCount>0?`${pendingCount} pending `:""}change${pendingCount===1?"":"s"} to the cloud`:
+                  `Cloud is up to date${lastCloudSavedAt?` · saved ${lastCloudSavedAt.toLocaleTimeString()}`:""}`}
+                style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
+                  background:!kvReady?P.sf:hasUnsyncedChanges?P.grS:P.sf,
+                  color:!kvReady?P.sub:hasUnsyncedChanges?P.grD:P.sub,
+                  border:`1px solid ${!kvReady?P.line:hasUnsyncedChanges?P.grS:P.line}`,
+                  opacity:syncing?0.7:1}}>
+                <I.Cloud size={13} style={syncing&&syncOp==="push"?{animation:"spin .9s linear infinite"}:null}/>
+                {!kvReady?"Cloud sync off":syncing&&syncOp==="push"?"Saving…":hasUnsyncedChanges?"Save to Cloud":"Cloud saved"}
+                {kvReady&&hasUnsyncedChanges&&!syncing&&
+                  <span style={{position:"absolute",top:-2,right:-2,width:7,height:7,borderRadius:999,background:P.red}}/>}
               </button>
               <button onClick={()=>setShowSettings(true)} style={{borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
                 <I.Settings size={18}/>
@@ -1200,7 +1425,7 @@ function App(){
               <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
             </div>
             <div style={{textAlign:"right"}}>
-              <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>Income</div>
+              <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>{plan.month} · Income</div>
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
                 <input type="number" value={plan.income} onChange={e=>patchPlan({income:Number(e.target.value)})}
@@ -1234,7 +1459,11 @@ function App(){
           {tab==="overview"&&<OverviewView {...{plan,fmt,pct,allocated,remaining}}/>}
         </TabPane>
       </div>
-      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),pullKV,kvReady,lastSyncedAt,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod}}/>}
+      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
+        saveToCloud,pullFromCloud,restorePreCloud,kvReady,syncing,syncOp,
+        hasUnsyncedChanges,pendingCount,lastCloudSavedAt,lastCloudPulledAt,
+        setOwnerName,owners:data.owners,toggleTheme,setPayPeriod}}/>}
+      {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocal={resolveSaveLocalToCloud}/>}
     </div>
   );
 }
@@ -1579,12 +1808,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const[showAdd,setShowAdd]=useState(false);
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
-  const[logGrouping,setLogGrouping]=useState("category"); // "month" | "category"
+  const[logGrouping,setLogGrouping]=useState("month"); // "month" | "category"
   const[collapsedCats,setCollapsedCats]=useState({});
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
-  const[untrackedOpen,setUntrackedOpen]=useState(false);
-  const[logExpanded,setLogExpanded]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
   const[transferModal,setTransferModal]=useState(null); // {catId,name,budget} for quick transfer
 
@@ -1667,7 +1894,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   /* default transaction date for the currently viewed bucket — the bucket's
      own start date when using pay-periods (viewMonth IS that date already),
      or the 1st of the calendar month otherwise */
-  const defaultDateForBucket=isNow?todayISO():(usesPayPeriod?viewMonth:viewMonth+"-01");
+  const defaultDateForBucket=usesPayPeriod?viewMonth:viewMonth+"-01";
 
   const blankForm={catId:"",name:"",note:"",amount:"",date:defaultDateForBucket};
   const[form,setForm]=useState(blankForm);
@@ -2006,14 +2233,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       {/* ── untracked categories — quick transfer ── */}
       {untrackedEnvelopes.length>0&&(
         <>
-          <button onClick={()=>setUntrackedOpen(o=>!o)}
-            style={{display:"flex",alignItems:"center",gap:6,marginBottom:untrackedOpen?10:20,width:"100%",
-              background:"transparent",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
-            <I.Chevron size={13} style={{color:P.faint,transform:untrackedOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
             <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Untracked transfers</h2>
-            <span style={{fontSize:11,color:P.faint}}>{untrackedOpen?"one-time allocations, not itemized":`${untrackedEnvelopes.length} hidden`}</span>
-          </button>
-          {untrackedOpen&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            <span style={{fontSize:11,color:P.faint}}>one-time allocations, not itemized</span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
             {untrackedEnvelopes.map(env=>{
               const funded=fundedMap[env.id]||0;
               const isFunded=funded>=env.budget&&funded>0;
@@ -2035,123 +2259,113 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 </div>
               );
             })}
-          </div>}
-        </>
-      )}
-
-      {/* ── transaction log — collapsed by default, expand to browse ── */}
-      <button onClick={()=>setLogExpanded(o=>!o)}
-        style={{display:"flex",alignItems:"center",gap:6,marginBottom:logExpanded?8:20,width:"100%",
-          background:"transparent",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
-        <I.Chevron size={13} style={{color:P.faint,transform:logExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
-        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>All transactions</h2>
-        <span style={{fontSize:11,color:P.faint}}>{logExpanded?`${allFiltered.length} entries`:`${allFiltered.length} hidden`}</span>
-      </button>
-
-      {logExpanded&&(
-        <>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8,flexWrap:"wrap",gap:8}}>
-            <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
-              {[["month","Month"],["category","Category"]].map(([gv,label])=>(
-                <button key={gv} onClick={()=>setLogGrouping(gv)}
-                  style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
-                    background:logGrouping===gv?P.ink:"transparent",color:logGrouping===gv?"#fff":P.sub}}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
-              style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
-                border:`1px solid ${P.line}`,color:P.sub}}>
-              <option value="all">All categories</option>
-              {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
-              {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
-            </select>
           </div>
-
-          {allFiltered.length===0
-            ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
-                background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
-                No transactions yet. Tap "Add transaction" to start tracking.
-              </div>
-            :logGrouping==="category"
-            ?categoryGroups.map(catGroup=>{
-              const isOpen=collapsedCats[catGroup.name]===undefined?true:!collapsedCats[catGroup.name];
-              const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
-              return(
-                <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
-                  border:`1px solid ${P.line}`,marginBottom:10}}>
-                  <button
-                    onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
-                    style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                      padding:"12px 16px",background:P.sfA,border:"none",cursor:"pointer",
-                      borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
-                        transition:"transform .2s",flexShrink:0}}/>
-                      <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
-                      <span style={{fontSize:14,fontWeight:700,color:P.ink}}>{catGroup.name}</span>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
-                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(catGroup.total)}</span>
-                    </div>
-                  </button>
-                  {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
-                </div>
-              );
-            })
-            :allMonths.map(mo=>{
-              const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
-              const isCurrent=mo===nowMonth;
-              const isViewing=mo===viewMonth;
-              const isFutureMo=mo>nowMonth;
-              const defaultOpen=isCurrent||isFutureMo||isViewing;
-              const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
-              const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
-              const moLabel=fmtMonth(mo);
-
-              let headerBg=P.sfA;
-              if(isCurrent)headerBg=P.grS;
-              else if(isFutureMo)headerBg=P.brS;
-              const labelColor=isCurrent?P.grD:isFutureMo?P.br:P.ink;
-
-              return(
-                <div key={mo} style={{borderRadius:16,overflow:"hidden",background:P.sf,
-                  border:`2px solid ${isViewing?P.gr:P.line}`,marginBottom:10,transition:"border-color .2s"}}>
-                  <button
-                    onClick={()=>setCollapsedMonths(c=>({...c,[mo]:isOpen}))}
-                    style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                      padding:"12px 16px",background:headerBg,border:"none",cursor:"pointer",
-                      borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
-                        transition:"transform .2s",flexShrink:0}}/>
-                      <span style={{fontSize:14,fontWeight:700,color:labelColor}}>{moLabel}</span>
-                      {isCurrent&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
-                        background:P.gr,color:"#fff",fontWeight:700}}>NOW</span>}
-                      {isFutureMo&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
-                        background:P.br,color:"#fff",fontWeight:700}}>PLANNED</span>}
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
-                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(monthTotal)}</span>
-                    </div>
-                  </button>
-
-                  {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
-                </div>
-              );
-            })
-          }
         </>
       )}
+
+      {/* ── transaction log — all months collapsible ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:8}}>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>All transactions</h2>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+            {[["month","Month"],["category","Category"]].map(([gv,label])=>(
+              <button key={gv} onClick={()=>setLogGrouping(gv)}
+                style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
+                  background:logGrouping===gv?P.ink:"transparent",color:logGrouping===gv?"#fff":P.sub}}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
+            style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
+              border:`1px solid ${P.line}`,color:P.sub}}>
+            <option value="all">All categories</option>
+            {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+            {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
+          </select>
+        </div>
+      </div>
+
+      {allFiltered.length===0
+        ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
+            background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
+            No transactions yet. Tap "Add transaction" to start tracking.
+          </div>
+        :logGrouping==="category"
+        ?categoryGroups.map(catGroup=>{
+          const isOpen=collapsedCats[catGroup.name]===undefined?true:!collapsedCats[catGroup.name];
+          const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
+          return(
+            <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
+              border:`1px solid ${P.line}`,marginBottom:10}}>
+              <button
+                onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
+                style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+                  padding:"12px 16px",background:P.sfA,border:"none",cursor:"pointer",
+                  borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                    transition:"transform .2s",flexShrink:0}}/>
+                  <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
+                  <span style={{fontSize:14,fontWeight:700,color:P.ink}}>{catGroup.name}</span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
+                  <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(catGroup.total)}</span>
+                </div>
+              </button>
+              {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
+            </div>
+          );
+        })
+        :allMonths.map(mo=>{
+          const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
+          const isCurrent=mo===nowMonth;
+          const isViewing=mo===viewMonth;
+          const isFutureMo=mo>nowMonth;
+          const defaultOpen=isCurrent||isFutureMo||isViewing;
+          const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
+          const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
+          const moLabel=fmtMonth(mo);
+
+          let headerBg=P.sfA;
+          if(isCurrent)headerBg=P.grS;
+          else if(isFutureMo)headerBg=P.brS;
+          const labelColor=isCurrent?P.grD:isFutureMo?P.br:P.ink;
+
+          return(
+            <div key={mo} style={{borderRadius:16,overflow:"hidden",background:P.sf,
+              border:`2px solid ${isViewing?P.gr:P.line}`,marginBottom:10,transition:"border-color .2s"}}>
+              <button
+                onClick={()=>setCollapsedMonths(c=>({...c,[mo]:isOpen}))}
+                style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+                  padding:"12px 16px",background:headerBg,border:"none",cursor:"pointer",
+                  borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                    transition:"transform .2s",flexShrink:0}}/>
+                  <span style={{fontSize:14,fontWeight:700,color:labelColor}}>{moLabel}</span>
+                  {isCurrent&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
+                    background:P.gr,color:"#fff",fontWeight:700}}>NOW</span>}
+                  {isFutureMo&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
+                    background:P.br,color:"#fff",fontWeight:700}}>PLANNED</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
+                  <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(monthTotal)}</span>
+                </div>
+              </button>
+
+              {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
+            </div>
+          );
+        })
+      }
 
       {/* ── add/edit transaction modal ── */}
       {showAdd&&(
-        <Portal>
-        <div className="sheet-bg" onClick={closeForm}>
-          <div className="sheet" onClick={e=>e.stopPropagation()}>
+        <div className="modal-bg" onClick={closeForm}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
               <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
                 {editTx?"Edit transaction":isFuture?"Plan transaction":"Add transaction"}
@@ -2170,17 +2384,13 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                   background:P.sfA,border:`1px solid ${form.catId?P.line:P.red}`,color:P.ink}}>
                 <option value="">Select a category…</option>
-                {(monthPlan.groups||[]).map(g=>{
-                  const opts=allCatOptions.filter(c=>c.groupId===g.id&&c.tracked);
-                  if(opts.length===0)return null;
-                  return(
-                    <optgroup key={g.id} label={g.name}>
-                      {opts.map(c=>(
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
+                {(monthPlan.groups||[]).map(g=>(
+                  <optgroup key={g.id} label={g.name}>
+                    {allCatOptions.filter(c=>c.groupId===g.id).map(c=>(
+                      <option key={c.id} value={c.id}>{c.name}{!c.tracked?" (untracked)":""}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
 
@@ -2267,19 +2477,17 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </div>
           </div>
         </div>
-        </Portal>
       )}
 
       {/* ── quick transfer sheet ── */}
-      {transferModal&&<Portal><QuickTransferSheet
+      {transferModal&&<QuickTransferSheet
         transferModal={transferModal}
         onClose={()=>setTransferModal(null)}
         onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner);setTransferModal(null);}}
-        fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/></Portal>}
+        fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/>}
 
       {/* ── create monthly plan modal ── */}
       {showPlanPicker&&(
-        <Portal>
         <div className="modal-bg" onClick={()=>setShowPlanPicker(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -2324,7 +2532,6 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </button>
           </div>
         </div>
-        </Portal>
       )}
     </div>
   );
@@ -2738,7 +2945,6 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 
       {/* Add trade modal */}
       {tradeModal&&(
-        <Portal>
         <div className="modal-bg" onClick={()=>setTradeModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -2777,7 +2983,6 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
             </button>
           </div>
         </div>
-        </Portal>
       )}
     </div>
   );
@@ -3116,7 +3321,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         const g=goals.find(x=>x.id===typePicker);
         if(!g)return null;
         return(
-          <Portal>
           <div className="modal-bg" onClick={()=>setTypePicker(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -3139,7 +3343,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </div>
             </div>
           </div>
-          </Portal>
         );
       })()}
 
@@ -3149,7 +3352,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         if(!g)return null;
         const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
         return(
-          <Portal>
           <div className="modal-bg" onClick={()=>setAddModal(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -3182,7 +3384,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </button>
             </div>
           </div>
-          </Portal>
         );
       })()}
 
@@ -3195,7 +3396,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
         const Icon=goalIcon(g.type);
         return(
-          <Portal>
           <div className="modal-bg" onClick={()=>setDetailModal(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
@@ -3240,7 +3440,6 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </button>
             </div>
           </div>
-          </Portal>
         );
       })()}
     </div>
@@ -3285,7 +3484,43 @@ function OverviewView({plan,fmt,pct,allocated,remaining}){
 }
 
 /* ── SETTINGS MODAL ── */
-function SettingsModal({data,setData,onClose,pullKV,kvReady,lastSyncedAt,setOwnerName,owners,toggleTheme,setPayPeriod}){
+/* Blocking conflict dialog — shown when local has unsynced changes AND the
+   cloud copy has diverged (from another device/session). Never dismissible
+   via backdrop click; the user must make an explicit choice. */
+function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocal}){
+  if(!conflict)return null;
+  const choiceBtn={textAlign:"left",width:"100%",borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`,color:P.ink};
+  return(
+    <div className="modal-bg" style={{zIndex:80}}>
+      <div className="modal" style={{maxWidth:420}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+          <I.Cloud size={18} style={{color:P.red}}/>
+          <h3 style={{margin:0,fontWeight:600}}>Cloud data differs</h3>
+        </div>
+        <p style={{fontSize:13,color:P.sub,lineHeight:1.6,marginBottom:16}}>
+          This device has changes that haven't been saved to the cloud, and the cloud copy is different too —
+          likely edited from another device. Choose which version to keep before continuing.
+        </p>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={onKeepLocal} style={choiceBtn}>
+            <div style={{fontWeight:600,fontSize:13}}>Keep Local</div>
+            <div style={{fontSize:11,color:P.sub,marginTop:2}}>Keep this device's version. Save to Cloud afterward when ready.</div>
+          </button>
+          <button onClick={onUseCloud} disabled={!conflict.remote} style={{...choiceBtn,opacity:conflict.remote?1:0.5}}>
+            <div style={{fontWeight:600,fontSize:13}}>Use Cloud</div>
+            <div style={{fontSize:11,color:P.sub,marginTop:2}}>Replace this device's data with the cloud copy. This device's version is kept as a recoverable backup.</div>
+          </button>
+          <button onClick={onSaveLocal} style={choiceBtn}>
+            <div style={{fontWeight:600,fontSize:13}}>Save Local to Cloud</div>
+            <div style={{fontSize:11,color:P.sub,marginTop:2}}>Overwrite the cloud copy with this device's version.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({data,setData,onClose,saveToCloud,pullFromCloud,restorePreCloud,kvReady,syncing,syncOp,hasUnsyncedChanges,pendingCount,lastCloudSavedAt,lastCloudPulledAt,setOwnerName,owners,toggleTheme,setPayPeriod}){
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
@@ -3361,10 +3596,33 @@ function SettingsModal({data,setData,onClose,pullKV,kvReady,lastSyncedAt,setOwne
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Cloudflare KV Sync</div>
         {kvReady
           ?<div style={{marginBottom:16}}>
-            <div style={{fontSize:12,color:P.gr,marginBottom:8,padding:"8px 10px",background:P.grS,borderRadius:10}}>
-              ✅ Sync active — no login needed · {lastSyncedAt?`Last synced ${lastSyncedAt.toLocaleTimeString()}`:"Not yet synced this session"}
+            <div style={{fontSize:12,color:hasUnsyncedChanges?P.sub:P.gr,marginBottom:8,padding:"8px 10px",
+              background:hasUnsyncedChanges?P.sfA:P.grS,borderRadius:10,lineHeight:1.7}}>
+              <div style={{fontWeight:600}}>
+                {hasUnsyncedChanges?`${pendingCount>0?`${pendingCount} local change${pendingCount===1?"":"s"} pending`:"Local changes pending"}`:"Cloud is up to date"}
+              </div>
+              <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                Last saved to cloud: {lastCloudSavedAt?lastCloudSavedAt.toLocaleString():"never"}<br/>
+                Last pulled from cloud: {lastCloudPulledAt?lastCloudPulledAt.toLocaleString():"never"}
+              </div>
             </div>
-            <button onClick={pullKV} style={{...btn,width:"100%"}}><I.Cloud size={14}/>Pull latest from KV</button>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <button onClick={saveToCloud} disabled={syncing}
+                style={{...btn,background:hasUnsyncedChanges?P.gr:P.sfA,color:hasUnsyncedChanges?"#fff":P.ink,border:`1px solid ${hasUnsyncedChanges?P.gr:P.line}`}}>
+                <I.Cloud size={14}/>{syncing&&syncOp==="push"?"Saving…":"Save to Cloud"}
+              </button>
+              <button onClick={pullFromCloud} disabled={syncing} style={btn}>
+                <I.Refresh size={14}/>{syncing&&syncOp==="pull"?"Pulling…":"Pull from Cloud"}
+              </button>
+            </div>
+            <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginBottom:8}}>
+              Changes save automatically on this device. Cloud upload only happens when you tap Save to Cloud.
+              Opening the app checks the cloud automatically. Pull to Sync (swipe down on mobile) saves pending
+              changes first, or pulls the latest cloud copy if nothing is pending.
+            </div>
+            <button onClick={restorePreCloud} style={{...btn,width:"100%",fontSize:12}}>
+              Restore previous local copy
+            </button>
           </div>
           :<div style={{marginBottom:16,fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
             Add your Worker URL and Sync Token to <code>index.html</code> to enable sync.
