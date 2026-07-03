@@ -296,6 +296,20 @@ const goalIcon=t=>GI[t]||GI.savings;
 
 /* ── utils ── */
 const uid=()=>Math.random().toString(36).slice(2,9);
+/* inline math evaluator for amount fields — only allows digits/operators/parens,
+   evaluates via Function constructor, and falls back to the previous value on
+   anything invalid (empty, unsafe chars, NaN, division errors, etc). */
+const MATH_CHARS_RE=/^[0-9+\-*/. ()]+$/;
+const evalMathExpr=(raw,fallback=0)=>{
+  if(raw==null)return fallback;
+  const s=String(raw).trim();
+  if(s==="")return fallback;
+  if(!MATH_CHARS_RE.test(s))return Number(s)||fallback;
+  try{
+    const val=new Function("return ("+s+")")();
+    return(typeof val==="number"&&isFinite(val))?val:fallback;
+  }catch(e){return fallback;}
+};
 const STORAGE_KEY="salaryPlanner:v3";
 const monthLabel=()=>new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
 const FX_CODES=["USD","SAR","PHP","AED","EUR","GBP","JPY","INR","AUD","CAD","SGD"];
@@ -973,6 +987,18 @@ function App(){
   const saveToCloudRef=useRef(saveToCloud);
   useEffect(()=>{saveToCloudRef.current=saveToCloud;});
 
+  /* ── Ctrl+S / Cmd+S — save & sync to cloud without reaching for the mouse ── */
+  useEffect(()=>{
+    const onKeyDown=e=>{
+      if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&(e.key==="s"||e.key==="S")){
+        e.preventDefault();
+        saveToCloudRef.current();
+      }
+    };
+    window.addEventListener("keydown",onKeyDown);
+    return()=>window.removeEventListener("keydown",onKeyDown);
+  },[]);
+
   /* ── manual Pull from Cloud — GET only, never POSTs ──────────────────── */
   const pullFromCloud=async()=>{
     if(!kvReady){setSyncMsg("Add Worker URL + sync token first");setTimeout(()=>setSyncMsg(""),3000);return;}
@@ -1459,7 +1485,7 @@ function App(){
 
         <TabPane tab={tab}>
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
@@ -1666,7 +1692,9 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                         /* when subs exist, show computed total (read-only style) */
                         ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.gr}}>{effAmt.toLocaleString("en-US")}</span>
                         /* no subs — manual input as before */
-                        :<input type="number" value={c.amount} onChange={e=>updateCat(c.id,{amount:Number(e.target.value)})}
+                        :<input type="text" inputMode="decimal" value={c.amount} onChange={e=>updateCat(c.id,{amount:e.target.value})}
+                          onBlur={e=>updateCat(c.id,{amount:evalMathExpr(e.target.value,0)})}
+                          onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
                           className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600}}/>
                       }
                     </div>
@@ -1695,7 +1723,9 @@ function BudgetView({planForMonth,monthlyPlans,clonePlanForMonth,removePlanForMo
                             className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.ink}}/>
                           <div style={{display:"flex",alignItems:"center",gap:4}}>
                             <span style={{fontSize:11,color:P.faint}}>{cur}</span>
-                            <input type="number" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:Number(e.target.value)})}
+                            <input type="text" inputMode="decimal" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:e.target.value})}
+                              onBlur={e=>handleSubChange(c.id,sub.id,{amount:evalMathExpr(e.target.value,0)})}
+                              onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
                               className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600}}/>
                           </div>
                           <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.35}}><I.X size={13}/></button>
@@ -1808,7 +1838,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods}){
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -1817,12 +1847,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   // depends on payPeriods, not just budgetOwner.
   useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[showAdd,setShowAdd]=useState(false);
+  const[addMode,setAddMode]=useState("tracked"); // "tracked" | "untracked" | "goals" — unified add-transaction modal routing
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
   const[logGrouping,setLogGrouping]=useState("category"); // "month" | "category"
   const[collapsedCats,setCollapsedCats]=useState({});
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
+  const[showReorder,setShowReorder]=useState(false);
   const[untrackedOpen,setUntrackedOpen]=useState(false);
   const[logExpanded,setLogExpanded]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
@@ -1836,6 +1868,17 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   /* which plan applies to the viewed month */
   const monthPlan=planForMonth(viewMonth,budgetOwner);
   const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner);
+
+  /* move a category earlier(-1)/later(+1) in the viewed month's plan —
+     the transaction log below groups by this same order */
+  const moveCat=(catId,dir)=>setCatsFor(monthPlan.id,cats=>{
+    const arr=[...cats];
+    const i=arr.findIndex(c=>c.id===catId);
+    const j=i+dir;
+    if(i<0||j<0||j>=arr.length)return arr;
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+    return arr;
+  });
 
   /* envelopes from the MONTH'S plan (not necessarily the active plan) —
      split into tracked (shown with full progress bars + add transaction)
@@ -1909,9 +1952,12 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
      or the 1st of the calendar month otherwise */
   const defaultDateForBucket=isNow?todayISO():(usesPayPeriod?viewMonth:viewMonth+"-01");
 
-  const blankForm={catId:"",name:"",note:"",amount:"",date:defaultDateForBucket};
+  const blankForm={catId:"",goalId:"",name:"",note:"",amount:"",date:defaultDateForBucket};
   const[form,setForm]=useState(blankForm);
   useEffect(()=>{if(!editTx)setForm(f=>({...f,date:defaultDateForBucket}));},[viewMonth]);
+
+  /* active goals for this owner — used by the "Goals" mode of the unified add-transaction modal */
+  const ownerGoals=useMemo(()=>(goals||[]).filter(g=>g.owner===budgetOwner),[goals,budgetOwner]);
 
   /* recurring-name memory: previously used transaction names, most recent first,
      scoped to this owner so suggestions stay relevant */
@@ -1934,12 +1980,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   const openAdd=(presetCatId)=>{
     setEditTx(null);
+    setAddMode("tracked");
     setForm({...blankForm,catId:presetCatId||"",date:defaultDateForBucket});
     setShowAdd(true);
   };
   const openEdit=(tx)=>{
     setEditTx(tx.id);
-    setForm({catId:tx.catId,name:tx.name||"",note:tx.note||"",amount:String(tx.amount),date:tx.date});
+    setAddMode("tracked"); // edits always go through the tracked flow — transfers/goal contributions aren't editable here
+    setForm({catId:tx.catId,goalId:"",name:tx.name||"",note:tx.note||"",amount:String(tx.amount),date:tx.date});
     // jump the month/period navigator to the transaction's own bucket so the
     // category dropdown reflects whichever plan was active for that bucket
     const txBucket=tx.date?bucketKeyFor(tx.date,payPeriods,budgetOwner):"";
@@ -1949,9 +1997,29 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const closeForm=()=>{setShowAdd(false);setEditTx(null);};
 
   const submitTx=()=>{
-    if(!form.catId||!form.name||!form.amount)return;
-    if(editTx)updateExpenseTx(editTx,{catId:form.catId,name:form.name,note:form.note,amount:Number(form.amount),date:form.date});
-    else addExpenseTx(form.catId,form.name,form.note,Number(form.amount),form.date,budgetOwner);
+    if(editTx){
+      if(!form.catId||!form.name||!form.amount)return;
+      updateExpenseTx(editTx,{catId:form.catId,name:form.name,note:form.note,amount:evalMathExpr(form.amount,Number(form.amount)||0),date:form.date});
+      closeForm();
+      return;
+    }
+    const amt=evalMathExpr(form.amount,Number(form.amount)||0);
+    if(!amt)return;
+    if(addMode==="tracked"){
+      if(!form.catId||!form.name)return;
+      addExpenseTx(form.catId,form.name,form.note,amt,form.date,budgetOwner);
+    }else if(addMode==="untracked"){
+      if(!form.catId)return;
+      const env=untrackedEnvelopes.find(e=>e.id===form.catId);
+      quickTransfer(form.catId,form.name||env?.name||"",amt,form.date,budgetOwner);
+    }else if(addMode==="goals"){
+      if(!form.goalId)return;
+      const goal=ownerGoals.find(g=>g.id===form.goalId);
+      // deduct from salary/budget as a transfer, same as an untracked category…
+      addExpenseTx(form.goalId,form.name||(goal?`${goal.name} (goal)`:"Goal contribution"),form.note,amt,form.date,budgetOwner,true);
+      // …and route the money into the goal's own progress
+      addContribution(form.goalId,amt,form.note);
+    }
     closeForm();
   };
 
@@ -1970,22 +2038,42 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   /* transaction log grouped by category name — names (not raw catId) are the
      grouping key because each month/pay-period can carry its own cloned plan
      with brand-new category ids, so the same conceptual category ("Groceries")
-     may have a different id per bucket. Falls back to the transaction's own
-     title for entries whose category can no longer be found (e.g. a category
-     that was later deleted from that bucket's plan). */
+     may have a different id per bucket. Falls back to a "Goals" pseudo-group
+     for goal-contribution transfers (logged with the goal's id as catId), and
+     finally to the transaction's own title for entries whose category can no
+     longer be found (e.g. a category that was later deleted from that
+     bucket's plan). */
+  const GOALS_GROUP_COLOR=P.gr;
   const byCategory={};
   allFiltered.forEach(tx=>{
     if(!tx.date)return;
     const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
     const moPlan=planForMonth(mo);
     const cat=(moPlan.categories||[]).find(c=>c.id===tx.catId);
-    const name=cat?cat.name:"Uncategorized";
-    const color=cat?cat.color:P.faint;
+    let name,color;
+    if(cat){name=cat.name;color=cat.color;}
+    else if((goals||[]).some(g=>g.id===tx.catId)){name="Goals";color=GOALS_GROUP_COLOR;}
+    else{name="Uncategorized";color=P.faint;}
     if(!byCategory[name])byCategory[name]={name,color,txs:[],total:0};
     byCategory[name].txs.push(tx);
     byCategory[name].total+=tx.amount;
   });
-  const categoryGroups=Object.values(byCategory).sort((a,b)=>b.total-a.total);
+  /* order the log's category sections to match the viewed month's plan
+     order (as controlled by "Reorder categories" below); groups that don't
+     correspond to a live plan category (Goals, Uncategorized) sort after,
+     by total spent */
+  const catOrderIndex=useMemo(()=>{
+    const idx={};
+    (monthPlan.categories||[]).forEach((c,i)=>{idx[c.name]=i;});
+    return idx;
+  },[monthPlan]);
+  const categoryGroups=Object.values(byCategory).sort((a,b)=>{
+    const ai=catOrderIndex[a.name],bi=catOrderIndex[b.name];
+    if(ai!=null&&bi!=null)return ai-bi;
+    if(ai!=null)return -1;
+    if(bi!=null)return 1;
+    return b.total-a.total;
+  });
 
   /* shared row renderer — used by both the month-grouped and
      category-grouped transaction log so the two stay visually identical */
@@ -1993,11 +2081,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
     const moPlan=planForMonth(mo);
     const env=(moPlan.categories||[]).find(c=>c.id===tx.catId);
+    const goal=!env?(goals||[]).find(g=>g.id===tx.catId):null;
+    const dotColor=env?.color||(goal?GOALS_GROUP_COLOR:P.faint);
+    const subLabel=env?env.name:goal?goal.name:"";
     return(
       <div key={tx.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",
         borderBottom:idx<total-1?`1px solid ${P.sfA}`:"none"}}>
         <div style={{width:8,height:8,borderRadius:999,
-          background:env?.color||P.faint,flexShrink:0}}/>
+          background:dotColor,flexShrink:0}}/>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:14,fontWeight:500,color:P.ink,
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
@@ -2005,7 +2096,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
           </div>
           <div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-            {tx.date}{env?` · ${env.name}`:""}{tx.note?` · ${tx.note}`:""}
+            {tx.date}{subLabel?` · ${subLabel}`:""}{tx.note?` · ${tx.note}`:""}
           </div>
         </div>
         <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(tx.amount)}</span>
@@ -2291,6 +2382,13 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       {logExpanded&&(
         <>
           <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8,flexWrap:"wrap",gap:8}}>
+            {logGrouping==="category"&&(monthPlan.categories||[]).length>1&&(
+              <button onClick={()=>setShowReorder(true)}
+                style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"4px 10px",
+                  fontSize:12,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+                <I.ArrowUp size={10}/><I.ArrowDown size={10}/>Reorder
+              </button>
+            )}
             <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
               {[["month","Month"],["category","Category"]].map(([gv,label])=>(
                 <button key={gv} onClick={()=>setLogGrouping(gv)}
@@ -2316,7 +2414,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               </div>
             :logGrouping==="category"
             ?categoryGroups.map(catGroup=>{
-              const isOpen=collapsedCats[catGroup.name]===undefined?true:!collapsedCats[catGroup.name];
+              const isOpen=collapsedCats[catGroup.name]===undefined?false:!collapsedCats[catGroup.name];
               const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
               return(
                 <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
@@ -2404,36 +2502,66 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               {editTx?`Editing entry for ${fmtMonth(form.date?bucketKeyFor(form.date,payPeriods,budgetOwner):viewMonth)}`:isFuture?`Planning ahead for ${fmtMonth(viewMonth)}`:`Recording for ${fmtMonth(viewMonth)}`}
             </div>
 
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Category</div>
-              <select value={form.catId} onChange={e=>setForm(f=>({...f,catId:e.target.value}))}
-                style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                  background:P.sfA,border:`1px solid ${form.catId?P.line:P.red}`,color:P.ink}}>
-                <option value="">Select a category…</option>
-                {(monthPlan.groups||[]).map(g=>{
-                  const opts=allCatOptions.filter(c=>c.groupId===g.id&&c.tracked);
-                  if(opts.length===0)return null;
-                  return(
-                    <optgroup key={g.id} label={g.name}>
-                      {opts.map(c=>(
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
-              </select>
-            </div>
+            {/* ── segmented control: Tracked / Untracked / Goals — hidden while editing an existing entry ── */}
+            {!editTx&&(
+              <div style={{display:"flex",gap:4,marginBottom:14,background:P.sfA,borderRadius:999,padding:3}}>
+                {[["tracked","Tracked"],["untracked","Untracked"],["goals","Goals"]].map(([mv,label])=>(
+                  <button key={mv} onClick={()=>{setAddMode(mv);setForm(f=>({...f,catId:"",goalId:"",name:""}));}}
+                    style={{flex:1,borderRadius:999,padding:"6px 0",fontSize:12,fontWeight:600,border:"none",
+                      background:addMode===mv?P.ink:"transparent",color:addMode===mv?"#fff":P.sub}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ── category / envelope / goal dropdown, dynamic by mode ── */}
+            {addMode==="goals"&&!editTx?(
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Goal</div>
+                <select value={form.goalId} onChange={e=>setForm(f=>({...f,goalId:e.target.value}))}
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                    background:P.sfA,border:`1px solid ${form.goalId?P.line:P.red}`,color:P.ink}}>
+                  <option value="">Select a goal…</option>
+                  {ownerGoals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+                {ownerGoals.length===0&&<div style={{fontSize:11,color:P.faint,marginTop:4}}>No active goals for {owners[budgetOwner]} yet — add one in the Goals tab.</div>}
+              </div>
+            ):(
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Category</div>
+                <select value={form.catId} onChange={e=>setForm(f=>({...f,catId:e.target.value}))}
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
+                    background:P.sfA,border:`1px solid ${form.catId?P.line:P.red}`,color:P.ink}}>
+                  <option value="">Select a category…</option>
+                  {addMode==="untracked"&&!editTx
+                    ?untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)
+                    :(monthPlan.groups||[]).map(g=>{
+                        const opts=allCatOptions.filter(c=>c.groupId===g.id&&c.tracked);
+                        if(opts.length===0)return null;
+                        return(
+                          <optgroup key={g.id} label={g.name}>
+                            {opts.map(c=>(
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </optgroup>
+                        );
+                      })
+                  }
+                </select>
+              </div>
+            )}
 
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Title</div>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Title{addMode==="goals"&&!editTx?<span style={{color:P.faint,fontWeight:400}}> (optional)</span>:null}</div>
               <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
-                placeholder="e.g. Amazon Now" list="tx-name-suggestions"
+                placeholder={addMode==="goals"&&!editTx?"e.g. Monthly deposit":"e.g. Amazon Now"} list="tx-name-suggestions"
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                   background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
               <datalist id="tx-name-suggestions">
                 {nameSuggestions.map(n=><option key={n} value={n}/>)}
               </datalist>
-              {nameSuggestions.length>0&&!form.name&&(
+              {nameSuggestions.length>0&&!form.name&&addMode==="tracked"&&(
                 <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
                   {nameSuggestions.slice(0,5).map(n=>(
                     <button key={n} onClick={()=>setForm(f=>({...f,name:n}))}
@@ -2456,8 +2584,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             <div style={{display:"flex",gap:8,marginBottom:12}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({cur})</div>
-                <input type="number" value={form.amount}
-                  onChange={e=>setForm(f=>({...f,amount:e.target.value}))} placeholder="0"
+                <input type="text" inputMode="decimal" value={form.amount}
+                  onChange={e=>setForm(f=>({...f,amount:e.target.value}))}
+                  onBlur={e=>setForm(f=>({...f,amount:e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(f.amount)||0))}))}
+                  onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                  placeholder="0"
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                     background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
               </div>
@@ -2470,7 +2601,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               </div>
             </div>
 
-            {form.catId&&form.amount&&(()=>{
+            {addMode==="tracked"&&form.catId&&form.amount&&(()=>{
               const env=envelopes.find(e=>e.id===form.catId);
               if(!env)return null;
               const editingTx=editTx?expenses.find(e=>e.id===editTx):null;
@@ -2501,8 +2632,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               <button onClick={submitTx}
                 style={{flex:1,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
                   background:isFuture?P.br:P.gr,color:"#fff",border:"none",
-                  opacity:(!form.catId||!form.name||!form.amount)?.5:1}}>
-                {editTx?"Save changes":isFuture?"Save planned transaction":"Record transaction"}
+                  opacity:(editTx?(!form.catId||!form.name||!form.amount)
+                    :addMode==="goals"?(!form.goalId||!form.amount)
+                    :addMode==="untracked"?(!form.catId||!form.amount)
+                    :(!form.catId||!form.name||!form.amount))?.5:1}}>
+                {editTx?"Save changes":addMode==="goals"?"Add to goal":addMode==="untracked"?"Transfer":isFuture?"Save planned transaction":"Record transaction"}
               </button>
             </div>
           </div>
@@ -2516,6 +2650,56 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         onClose={()=>setTransferModal(null)}
         onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner);setTransferModal(null);}}
         fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/></Portal>}
+
+      {/* ── reorder categories modal — controls both this log's grouping order and the envelope order above ── */}
+      {showReorder&&(
+        <Portal>
+        <div className="modal-bg" onClick={()=>setShowReorder(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Reorder categories</h3>
+              <button onClick={()=>setShowReorder(false)}
+                style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+            </div>
+            <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+              Move categories up or down. This controls the order they appear in below, both here and in the envelope list above.
+            </div>
+            <div style={{borderRadius:12,border:`1px solid ${P.line}`,overflow:"hidden"}}>
+              <div style={{maxHeight:"60vh",overflowY:"auto"}}>
+                {(monthPlan.categories||[]).map((c,i,arr)=>{
+                  const g=(monthPlan.groups||[]).find(gr=>gr.id===c.groupId);
+                  return(
+                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",
+                      background:P.sf,borderBottom:i<arr.length-1?`1px solid ${P.sfA}`:"none"}}>
+                      <span style={{width:8,height:8,borderRadius:999,background:c.color,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:P.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
+                        {g&&<div style={{fontSize:10,color:P.faint}}>{g.name}</div>}
+                      </div>
+                      <button onClick={()=>moveCat(c.id,-1)} disabled={i===0}
+                        style={{background:"transparent",border:`1px solid ${P.line}`,borderRadius:8,padding:4,
+                          color:i===0?P.faint:P.sub,opacity:i===0?.4:1}}>
+                        <I.ArrowUp size={13}/>
+                      </button>
+                      <button onClick={()=>moveCat(c.id,1)} disabled={i===arr.length-1}
+                        style={{background:"transparent",border:`1px solid ${P.line}`,borderRadius:8,padding:4,
+                          color:i===arr.length-1?P.faint:P.sub,opacity:i===arr.length-1?.4:1}}>
+                        <I.ArrowDown size={13}/>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <button onClick={()=>setShowReorder(false)}
+              style={{width:"100%",marginTop:14,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                background:P.gr,color:"#fff",border:"none"}}>
+              Done
+            </button>
+          </div>
+        </div>
+        </Portal>
+      )}
 
       {/* ── create monthly plan modal ── */}
       {showPlanPicker&&(
@@ -2609,7 +2793,9 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
         <div style={{display:"flex",gap:8,marginBottom:16}}>
           <div style={{flex:1}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({cur})</div>
-            <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus
+            <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)}
+              onBlur={e=>setAmount(String(evalMathExpr(e.target.value,Number(amount)||0)))}
+              onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} autoFocus
               style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
           </div>
           <div style={{flex:1}}>
@@ -2637,89 +2823,188 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
   return(
     <div>
       <div style={{...card,padding:16,marginBottom:16}}>
-        <div style={{fontSize:13,fontWeight:600,color:P.sub,marginBottom:10}}>Shared monthly expenses · {fmt(total)}</div>
+        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12}}>
+          <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Shared monthly expenses</span>
+          <span className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmt(total)}</span>
+        </div>
+
+        {/* ── visual split bar ── */}
+        <div style={{height:22,borderRadius:999,overflow:"hidden",display:"flex",marginBottom:6}}>
+          <div style={{width:`${hh.splitMine}%`,background:P.gr,display:"flex",alignItems:"center",justifyContent:"center",transition:"width .3s"}}>
+            {hh.splitMine>=14&&<span style={{fontSize:11,fontWeight:700,color:"#fff"}} className="tnum">{hh.splitMine}%</span>}
+          </div>
+          <div style={{width:`${100-hh.splitMine}%`,background:P.br,display:"flex",alignItems:"center",justifyContent:"center",transition:"width .3s"}}>
+            {100-hh.splitMine>=14&&<span style={{fontSize:11,fontWeight:700,color:"#fff"}} className="tnum">{100-hh.splitMine}%</span>}
+          </div>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:P.faint,marginBottom:12}}>
+          <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:7,height:7,borderRadius:999,background:P.gr,display:"inline-block"}}/>{owners.me}</span>
+          <span style={{display:"flex",alignItems:"center",gap:4}}>{owners.wife}<span style={{width:7,height:7,borderRadius:999,background:P.br,display:"inline-block"}}/></span>
+        </div>
+
+        {/* ── metric cards ── */}
         <div style={{display:"flex",gap:12,marginBottom:12}}>
           <div style={{flex:1,background:P.grS,borderRadius:12,padding:12}}>
-            <div style={{fontSize:11,color:P.grD}}>{owners.me} pays ({hh.splitMine}%)</div>
+            <div style={{fontSize:11,color:P.grD}}>{owners.me}'s Share</div>
             <div className="serif tnum" style={{fontSize:22,fontWeight:600,color:P.grD}}>{fmt(mine)}</div>
           </div>
           <div style={{flex:1,background:P.brS,borderRadius:12,padding:12}}>
-            <div style={{fontSize:11,color:P.br}}>{owners.wife} pays ({100-hh.splitMine}%)</div>
+            <div style={{fontSize:11,color:P.br}}>{owners.wife}'s Share</div>
             <div className="serif tnum" style={{fontSize:22,fontWeight:600,color:P.br}}>{fmt(theirs)}</div>
           </div>
         </div>
         <input type="range" min="0" max="100" value={hh.splitMine} onChange={e=>setSplit(Number(e.target.value))} style={{width:"100%"}}/>
       </div>
-      <section style={{...card,overflow:"hidden"}}>
+
+      {/* ── recurring expenses — 2-column grid on wider screens, tight card list on mobile ── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:10,marginBottom:10}}>
         {hh.expenses.map(e=>(
-          <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderBottom:`1px solid ${P.sfA}`}}>
+          <div key={e.id} style={{...card,padding:"10px 14px",display:"flex",alignItems:"center",gap:8}}>
             <span style={{width:10,height:10,borderRadius:999,background:e.color,flexShrink:0}}/>
-            <input value={e.name} onChange={ev=>updateExpense(e.id,{name:ev.target.value})} className="bare" style={{flex:1,fontSize:14}}/>
-            <input type="number" value={e.amount} onChange={ev=>updateExpense(e.id,{amount:Number(ev.target.value)})}
-              className="bare tnum" style={{width:92,textAlign:"right",fontSize:14,fontWeight:600}}/>
-            <button onClick={()=>removeExpense(e.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.3}}><I.X size={15}/></button>
+            <input value={e.name} onChange={ev=>updateExpense(e.id,{name:ev.target.value})} className="bare" style={{flex:1,minWidth:0,fontSize:14}}/>
+            <input type="text" inputMode="decimal" value={e.amount} onChange={ev=>updateExpense(e.id,{amount:ev.target.value})}
+              onBlur={ev=>updateExpense(e.id,{amount:evalMathExpr(ev.target.value,0)})}
+              onKeyDown={ev=>{if(ev.key==="Enter")ev.currentTarget.blur();}}
+              className="bare tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600}}/>
+            <button onClick={()=>removeExpense(e.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.3,flexShrink:0}}><I.X size={15}/></button>
           </div>
         ))}
-        <button onClick={addExpense} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
-          <I.Plus size={14}/>Add shared expense
-        </button>
-      </section>
+      </div>
+      <button onClick={addExpense}
+        style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",borderRadius:14,padding:"10px 16px",
+          fontSize:14,fontWeight:500,color:P.gr,background:P.sf,border:`1px dashed ${P.line}`}}>
+        <I.Plus size={14}/>Add shared expense
+      </button>
     </div>
   );
 }
 
-/* ── BANKS VIEW ── */
+/* ── BANKS VIEW — grid of "digital wallet pass" cards ── */
 function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners}){
+  const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
   const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
   const sarOf=b=>{const v=convert(b.balance,b.currency,"SAR");return v==null?0:v;};
   const total=banks.reduce((s,b)=>s+sarOf(b),0);
   const usdTotal=sarRate?Math.round(total/sarRate):null;
   const phpTotal=convert?convert(total,"SAR","PHP"):null;
-  const Row=b=>(
-    <div key={b.id} style={{padding:"12px 16px",borderBottom:`1px solid ${P.sfA}`}}>
-      <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <input value={b.name} placeholder="Account name" onChange={e=>updateBank(b.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0}}/>
-        <button onClick={()=>removeBank(b.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
-      </div>
-      <div style={{marginTop:8,display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
-        <input value={b.bank} placeholder="Bank name" onChange={e=>updateBank(b.id,{bank:e.target.value})} className="bare" style={{fontSize:12,color:P.sub,width:110}}/>
-        <select value={b.country} onChange={e=>updateBank(b.id,{country:e.target.value})} style={{borderRadius:999,padding:"2px 8px",fontSize:12,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
-          {COUNTRIES.map(([c,l])=><option key={c} value={c}>{l}</option>)}
-        </select>
-        <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})} style={{borderRadius:999,padding:"2px 8px",fontSize:12,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
-          {BANK_CCY.map(c=><option key={c}>{c}</option>)}
-        </select>
-        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontSize:12,color:P.faint}}>{b.currency}</span>
-          <input type="number" value={b.balance} onChange={e=>updateBank(b.id,{balance:Number(e.target.value)})} className="bare tnum" style={{width:100,textAlign:"right",fontSize:14,fontWeight:600}}/>
+  const meTotal=banks.filter(b=>b.owner==="me").reduce((s,b)=>s+sarOf(b),0);
+  const wifeTotal=banks.filter(b=>b.owner==="wife").reduce((s,b)=>s+sarOf(b),0);
+
+  const Card=b=>{
+    const isOpen=openId===b.id;
+    const accent=b.owner==="me"?P.gr:P.br;
+    const accentS=b.owner==="me"?P.grS:P.brS;
+    return(
+      <div key={b.id} style={{borderRadius:18,background:P.sf,border:`1px solid ${P.line}`,overflow:"hidden",
+        position:"relative",display:"flex",flexDirection:"column"}}>
+        {/* accent strip — reads as the "card network" band of a wallet pass */}
+        <div style={{height:5,background:accent}}/>
+        <div style={{padding:16,flex:1,display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:11,fontWeight:600,color:accent,textTransform:"uppercase",letterSpacing:".05em"}}>{b.bank||"Bank"}</div>
+              <div style={{fontSize:16,fontWeight:700,color:P.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.name||"Account"}</div>
+            </div>
+            <button onClick={()=>setOpenId(isOpen?null:b.id)}
+              title="Account settings"
+              style={{flexShrink:0,background:isOpen?accentS:P.sfA,border:`1px solid ${P.line}`,borderRadius:10,padding:6,color:isOpen?accent:P.sub}}>
+              <I.Settings size={14}/>
+            </button>
+          </div>
+
+          <div>
+            <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.ink}}>
+              {b.currency} {Number(b.balance||0).toLocaleString("en-US")}
+            </div>
+            {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.faint,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
+          </div>
+
+          <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",background:accentS,color:accent}}>{b.currency}</span>
+            <span style={{fontSize:10,color:P.faint}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
+            <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{owners[b.owner]}</span>
+          </div>
         </div>
+
+        {/* ── settings panel — edit fields, collapsed by default ── */}
+        {isOpen&&(
+          <div style={{borderTop:`1px solid ${P.line}`,background:P.sfA,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{display:"flex",gap:8}}>
+              <input value={b.name} placeholder="Account name" onChange={e=>updateBank(b.id,{name:e.target.value})}
+                className="bare" style={{flex:1,fontSize:13,fontWeight:600,background:P.sf,borderRadius:8,padding:"6px 8px",border:`1px solid ${P.line}`}}/>
+              <input value={b.bank} placeholder="Bank name" onChange={e=>updateBank(b.id,{bank:e.target.value})}
+                className="bare" style={{flex:1,fontSize:13,background:P.sf,borderRadius:8,padding:"6px 8px",border:`1px solid ${P.line}`}}/>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <select value={b.country} onChange={e=>updateBank(b.id,{country:e.target.value})}
+                style={{flex:1,borderRadius:8,padding:"6px 8px",fontSize:12,background:P.sf,border:`1px solid ${P.line}`,color:P.sub}}>
+                {COUNTRIES.map(([c,l])=><option key={c} value={c}>{l}</option>)}
+              </select>
+              <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})}
+                style={{borderRadius:8,padding:"6px 8px",fontSize:12,background:P.sf,border:`1px solid ${P.line}`,color:P.sub}}>
+                {BANK_CCY.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:P.faint}}>Balance ({b.currency})</span>
+              <input type="text" inputMode="decimal" value={b.balance} onChange={e=>updateBank(b.id,{balance:e.target.value})}
+                onBlur={e=>updateBank(b.id,{balance:evalMathExpr(e.target.value,0)})}
+                onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                className="bare tnum" style={{flex:1,textAlign:"right",fontSize:14,fontWeight:600,background:P.sf,borderRadius:8,padding:"6px 8px",border:`1px solid ${P.line}`}}/>
+            </div>
+            <button onClick={()=>{removeBank(b.id);setOpenId(null);}}
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:8,padding:"7px 0",
+                fontSize:12,fontWeight:600,background:"transparent",border:`1px solid ${P.line}`,color:P.red}}>
+              <I.Trash size={12}/>Delete account
+            </button>
+          </div>
+        )}
       </div>
-      {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,textAlign:"right",marginTop:4,color:P.faint}}>= {sar(sarOf(b))}</div>}
-    </div>
-  );
+    );
+  };
+
   return(
     <div>
-      <div style={{background:P.deep,color:"#fff",borderRadius:16,padding:16,marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Cash across all accounts</div>
-        <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
-        <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:P.deepHi,fontSize:14}}>
-          <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
-          <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
+      {/* ── top summary — total liquid assets, split by owner ── */}
+      <div style={{background:P.deep,color:"#fff",borderRadius:16,padding:16,marginBottom:16,
+        display:"flex",flexWrap:"wrap",gap:16,alignItems:"center"}}>
+        <div style={{flex:"1 1 200px"}}>
+          <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total liquid assets</div>
+          <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
+          <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:P.deepHi,fontSize:14}}>
+            <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
+            <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
+          <div style={{flex:1,background:"rgba(255,255,255,.08)",borderRadius:12,padding:"10px 12px"}}>
+            <div style={{fontSize:11,color:P.deepHi}}>{owners.me}</div>
+            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(meTotal)}</div>
+          </div>
+          <div style={{flex:1,background:"rgba(255,255,255,.08)",borderRadius:12,padding:"10px 12px"}}>
+            <div style={{fontSize:11,color:P.deepHi}}>{owners.wife}</div>
+            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(wifeTotal)}</div>
+          </div>
         </div>
       </div>
+
+      {/* ── card grid, per owner ── */}
       {["me","wife"].map(ok=>{
         const items=banks.filter(b=>b.owner===ok);
-        const sub=items.reduce((s,b)=>s+sarOf(b),0);
         return(
-          <section key={ok} style={{marginBottom:16,borderRadius:16,overflow:"hidden",background:P.sf,border:`1px solid ${P.line}`}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderBottom:`1px solid ${P.line}`,background:ok==="me"?P.grS:P.brS}}>
-              <span style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br}}>{owners[ok]}</span>
-              <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.sub}}>{sar(sub)}</span>
+          <section key={ok} style={{marginBottom:22}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.gr:P.br}}/>
+              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
             </div>
-            {items.map(Row)}
-            <button onClick={()=>addBank(ok)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
-              <I.Plus size={14}/>Add {owners[ok]}'s account
-            </button>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+              {items.map(Card)}
+              <button onClick={()=>addBank(ok)}
+                style={{borderRadius:18,minHeight:150,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr,
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
+                <I.Plus size={20}/>Add {owners[ok]}'s account
+              </button>
+            </div>
           </section>
         );
       })}
@@ -3403,7 +3688,10 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </div>
               <div style={{marginBottom:12}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount to add</div>
-                <input type="number" value={addAmount} onChange={e=>setAddAmount(e.target.value)} placeholder="0" autoFocus
+                <input type="text" inputMode="decimal" value={addAmount} onChange={e=>setAddAmount(e.target.value)}
+                  onBlur={e=>setAddAmount(e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(addAmount)||0)))}
+                  onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                  placeholder="0" autoFocus
                   style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
               </div>
               <div style={{marginBottom:16}}>
