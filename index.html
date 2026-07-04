@@ -1925,7 +1925,7 @@ function App(){
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
-          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
+          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy:data.currency||"SAR",owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
@@ -3469,15 +3469,18 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
 }
 
 /* ── BANKS VIEW — grid of "digital wallet pass" cards ── */
-function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners}){
+function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy,owners}){
   const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
-  const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
-  const sarOf=b=>{const v=convert(b.balance,b.currency,"SAR");return v==null?0:v;};
-  const total=banks.reduce((s,b)=>s+sarOf(b),0);
-  const usdTotal=sarRate?Math.round(total/sarRate):null;
-  const phpTotal=convert?convert(total,"SAR","PHP"):null;
-  const meTotal=banks.filter(b=>b.owner==="me").reduce((s,b)=>s+sarOf(b),0);
-  const wifeTotal=banks.filter(b=>b.owner==="wife").reduce((s,b)=>s+sarOf(b),0);
+  const ccy=mainCcy||"SAR";
+  const fmtMain=n=>`${ccy} ${Math.round(n).toLocaleString("en-US")}`;
+  const mainOf=b=>{const v=convert(b.balance,b.currency,ccy);return v==null?0:v;};
+  const total=banks.reduce((s,b)=>s+mainOf(b),0);
+  // secondary reference readouts — pick two other well-known currencies that
+  // aren't already the selected base currency, so we're not just repeating it
+  const refCcys=["USD","SAR","PHP"].filter(c=>c!==ccy).slice(0,2);
+  const refTotals=refCcys.map(c=>({code:c,amount:convert?convert(total,ccy,c):null}));
+  const meTotal=banks.filter(b=>b.owner==="me").reduce((s,b)=>s+mainOf(b),0);
+  const wifeTotal=banks.filter(b=>b.owner==="wife").reduce((s,b)=>s+mainOf(b),0);
 
   const Card=b=>{
     const isOpen=openId===b.id;
@@ -3504,7 +3507,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
             <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
               {b.currency} {Number(b.balance||0).toLocaleString("en-US")}
             </div>
-            {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
+            {b.currency!==ccy&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {fmtMain(mainOf(b))}</div>}
           </div>
 
           <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
@@ -3559,20 +3562,21 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
         display:"flex",flexWrap:"wrap",gap:16,alignItems:"center"}}>
         <div style={{flex:"1 1 200px"}}>
           <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total liquid assets</div>
-          <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
+          <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{fmtMain(total)}</span>
           <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:P.deepHi,fontSize:14}}>
-            <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
-            <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
+            {refTotals.map(({code,amount})=>
+              <span key={code}>{amount!=null?`≈ ${code} ${Math.round(amount).toLocaleString("en-US")}`:`${code} —`}</span>
+            )}
           </div>
         </div>
         <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
           <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
             <div style={{fontSize:11,color:P.deepHi}}>{owners.me}</div>
-            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(meTotal)}</div>
+            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{fmtMain(meTotal)}</div>
           </div>
           <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
             <div style={{fontSize:11,color:P.deepHi}}>{owners.wife}</div>
-            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(wifeTotal)}</div>
+            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{fmtMain(wifeTotal)}</div>
           </div>
         </div>
       </div>
