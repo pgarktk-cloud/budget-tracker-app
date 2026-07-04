@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Allocation — Salary &amp; Net Worth</title>
+<title>Where'dItGo — Salary &amp; Net Worth</title>
 <link rel="manifest" href="manifest.webmanifest"/>
 <meta name="theme-color" content="#15243B"/>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="apple-mobile-web-app-title" content="Allocation"/>
+<meta name="apple-mobile-web-app-title" content="Where'dItGo"/>
 <link rel="apple-touch-icon" href="icon-180.png"/>
 <script>
 (function(){
@@ -19,10 +19,13 @@
       var root=document.documentElement;
       root.setAttribute("data-theme","dark");
       var vars={
-        "--bg":"#000000","--ink":"#EAF0FA","--sub":"#9FB0C8","--faint":"#647289",
-        "--line":"#242C38","--sf":"#12161E","--sfA":"#161B24","--gr":"#5B8FD9",
-        "--grD":"#9FC1ED","--grS":"#1E2F4A","--br":"#4FA9C7","--brS":"#1A323B","--red":"#E07A68",
-        "--deep":"#0A1119","--deepHi":"#7E93B5"
+        "--bg":"#15191B","--ink":"#EAF0FA","--sub":"#9FB0C8","--faint":"#647289",
+        "--line":"rgba(255,255,255,.09)","--sf":"#1E2427","--sfA":"#0E1213","--gr":"#3FBF9E",
+        "--grD":"#8FE3CC","--grS":"#17322B","--br":"#4FA9C7","--brS":"#1A323B","--red":"#C97177",
+        "--deep":"#0A1119","--deepHi":"#7E93B5",
+        "--neuBg":"#15191B","--neuHi":"#232A2D","--neuLo":"#060809","--neuInk":"#E7ECEC","--neuSub":"#93A1A7",
+        "--jade":"#3FBF9E","--jadeS":"#17322B","--wine":"#C97177","--wineS":"#3A2224",
+        "--glassBg":"rgba(255,255,255,.07)","--glassBgStrong":"rgba(255,255,255,.12)","--glassBorder":"rgba(255,255,255,.16)","--glassShadow":"rgba(0,0,0,.5)","--glassHi":"rgba(255,255,255,.18)"
       };
       for(var k in vars)root.style.setProperty(k,vars[k]);
     }
@@ -36,11 +39,14 @@
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.10/babel.min.js" crossorigin="anonymous"></script>
 <style>
 :root{
-  --bg:#E8EDF4;--ink:#15243B;--sub:#56657E;--faint:#8A98AD;
-  --line:#D2DBE7;--sf:#FFFFFF;--sfA:#F0F4F9;
-  --gr:#2C5FA8;--grD:#1B3E73;--grS:#E2EAF6;
-  --br:#2E8BB0;--brS:#E0EEF4;--red:#C2533F;
+  --bg:#E4E7E9;--ink:#15243B;--sub:#56657E;--faint:#8A98AD;
+  --line:rgba(34,41,44,.09);--sf:#EEF0F1;--sfA:#DADEE0;
+  --gr:#1E6E5C;--grD:#154F42;--grS:#DCEAE5;
+  --br:#2E8BB0;--brS:#E0EEF4;--red:#9B4A4E;
   --deep:#15243B;--deepHi:#9DB0CC;
+  --neuBg:#E4E7E9;--neuHi:#FFFFFF;--neuLo:#B8C1C5;--neuInk:#22292C;--neuSub:#5C6B70;
+  --jade:#1E6E5C;--jadeS:#DCEAE5;--wine:#9B4A4E;--wineS:#F3E2E1;
+  --glassBg:rgba(255,255,255,.5);--glassBgStrong:rgba(255,255,255,.68);--glassBorder:rgba(255,255,255,.85);--glassShadow:rgba(34,41,44,.16);--glassHi:rgba(255,255,255,.6);
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;}
@@ -55,7 +61,6 @@ input[type=number]{-moz-appearance:textfield;}
 button{cursor:pointer;font:inherit;}
 select{font:inherit;}
 
-  
 /* ── Keyframes ── */
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -74,14 +79,17 @@ select{font:inherit;}
    and stays clear of the on-screen keyboard which eats the bottom half. ── */
 .sheet-bg{
   position:fixed;inset:0;z-index:40;display:flex;align-items:flex-start;justify-content:center;
-  background:rgba(12,22,40,.45);
+  background:rgba(21,25,27,.32);
+  backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
   animation:sheetBgIn .25s ease both;
   overflow-y:auto;
   padding:calc(env(safe-area-inset-top) + 16px) 12px 16px;
 }
 .sheet{
-  border-radius:18px;padding:18px;
-  width:100%;max-width:480px;max-height:calc(100vh - env(safe-area-inset-top) - 32px);overflow-y:auto;background:var(--sf);
+  border-radius:20px;padding:18px;
+  width:100%;max-width:480px;max-height:calc(100vh - env(safe-area-inset-top) - 32px);overflow-y:auto;
+  background:var(--glassBgStrong);
+  border:1px solid var(--glassBorder);box-shadow:0 16px 40px var(--glassShadow),inset 0 1px 0 var(--glassHi);
   animation:sheetDown .28s cubic-bezier(.22,1,.36,1) both;
 }
 .sheet-handle{display:none;}
@@ -112,11 +120,14 @@ select{font:inherit;}
 /* ── Modal overlay + panel ── */
 .modal-bg{
   position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:16px;
-  background:rgba(12,22,40,.45);
+  background:rgba(21,25,27,.32);
+  backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
   animation:overlayIn .3s ease both;
 }
 .modal{
-  border-radius:18px;padding:20px;width:100%;max-width:400px;max-height:88vh;overflow-y:auto;background:var(--sf);
+  border-radius:20px;padding:20px;width:100%;max-width:400px;max-height:88vh;overflow-y:auto;
+  background:var(--glassBgStrong);
+  border:1px solid var(--glassBorder);box-shadow:0 16px 40px var(--glassShadow),inset 0 1px 0 var(--glassHi);
   animation:scaleIn .4s cubic-bezier(.22,1,.36,1) both;
 }
 
@@ -129,6 +140,58 @@ select{transition:background .22s;}
 .bar-animated{transition:width .8s cubic-bezier(.22,1,.36,1);}
 .bar-color{transition:background .5s;}
 
+/* ── Neumorphism + liquid-glass (Budget pilot) ──
+   Neumorphic surfaces are matte, same hue as their bed, carved via dual
+   soft shadows (a light "highlight" + a dark "depth" tint of the same
+   stone color — never pure black, which reads cheap). Glass is reserved
+   for floating/overlay chrome: translucent, blurred, edge-lit. */
+.neu-raised{
+  background:var(--neuBg);border-radius:18px;
+  box-shadow:7px 7px 15px var(--neuLo),-7px -7px 15px var(--neuHi);
+  transition:box-shadow .25s ease;
+}
+.neu-inset{
+  background:var(--neuBg);border-radius:14px;
+  box-shadow:inset 4px 4px 9px var(--neuLo),inset -4px -4px 9px var(--neuHi);
+}
+.neu-btn{
+  background:var(--neuBg);border-radius:999px;border:none;color:var(--neuInk);
+  box-shadow:4px 4px 9px var(--neuLo),-4px -4px 9px var(--neuHi);
+  transition:box-shadow .15s ease,transform .12s ease;
+}
+.neu-btn:active{
+  box-shadow:inset 3px 3px 6px var(--neuLo),inset -3px -3px 6px var(--neuHi);
+  transform:scale(.97);
+}
+.neu-btn.is-active{
+  box-shadow:inset 3px 3px 7px var(--neuLo),inset -3px -3px 7px var(--neuHi);
+  color:var(--jade);
+}
+.glass-panel{
+  background:var(--glassBg);
+  backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
+  border:1px solid var(--glassBorder);
+  box-shadow:0 10px 26px var(--glassShadow),inset 0 1px 0 var(--glassHi);
+  border-radius:20px;
+}
+.glass-btn{
+  background:var(--glassBgStrong);
+  backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);
+  border:1px solid var(--glassBorder);
+  box-shadow:0 4px 12px var(--glassShadow),inset 0 1px 0 var(--glassHi);
+  border-radius:999px;color:var(--neuInk);
+  transition:box-shadow .15s ease,transform .12s ease;
+}
+.glass-btn:active{transform:scale(.96);}
+/* liquid-fill progress: an inset trough (neu-inset) contains this —
+   a translucent gradient body with a glassy highlight riding the top,
+   like liquid settling in a tube. */
+.liquid-fill{
+  position:relative;height:100%;border-radius:999px;
+  transition:width .8s cubic-bezier(.22,1,.36,1);
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.5),inset 0 -6px 10px -4px rgba(0,0,0,.18);
+}
+
 /* ── Reduced motion override ── */
 @media(prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important;}
@@ -136,11 +199,11 @@ select{transition:background .22s;}
 
 #root{padding-top:env(safe-area-inset-top);}
 #loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;transition:background .25s;}
-.loader{width:32px;height:32px;border:3px solid #D2DBE7;border-top-color:#2C5FA8;border-radius:50%;animation:spin .8s linear infinite;}
+.loader{width:32px;height:32px;border:3px solid #DADEE0;border-top-color:#1E6E5C;border-radius:50%;animation:spin .8s linear infinite;}
 </style>
 </head>
 <body>
-<div id="loading"><div class="loader"></div><span>Loading Allocation…</span></div>
+<div id="loading"><div class="loader"></div><span>Loading Where'dItGo…</span></div>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const{useState,useEffect,useMemo,useRef,useCallback}=React;
@@ -205,8 +268,16 @@ function FadeList({items,renderItem,keyFn}){
    P's properties are mutated in place (not reassigned) when switching themes,
    so every component that reads P.xxx at render time picks up the new value
    without needing prop-drilling or context. */
-const PALETTE_LIGHT={bg:"#E8EDF4",ink:"#15243B",sub:"#56657E",faint:"#8A98AD",line:"#D2DBE7",sf:"#FFFFFF",sfA:"#F0F4F9",gr:"#2C5FA8",grD:"#1B3E73",grS:"#E2EAF6",br:"#2E8BB0",brS:"#E0EEF4",red:"#C2533F",deep:"#15243B",deepHi:"#9DB0CC",redS:"#FDF0EE",amberS:"#FEF4E8",amber:"#B5651D"};
-const PALETTE_DARK={bg:"#000000",ink:"#EAF0FA",sub:"#9FB0C8",faint:"#647289",line:"#242C38",sf:"#12161E",sfA:"#161B24",gr:"#5B8FD9",grD:"#9FC1ED",grS:"#1E2F4A",br:"#4FA9C7",brS:"#1A323B",red:"#E07A68",deep:"#0A1119",deepHi:"#7E93B5",redS:"#3A1E1C",amberS:"#3A2E18",amber:"#E0A85C"};
+const PALETTE_LIGHT={bg:"#E4E7E9",ink:"#15243B",sub:"#56657E",faint:"#8A98AD",line:"rgba(34,41,44,.09)",sf:"#EEF0F1",sfA:"#DADEE0",gr:"#1E6E5C",grD:"#154F42",grS:"#DCEAE5",br:"#2E8BB0",brS:"#E0EEF4",red:"#9B4A4E",deep:"#15243B",deepHi:"#9DB0CC",redS:"#F3E2E1",amberS:"#FEF4E8",amber:"#B5651D",
+  neuBg:"#E4E7E9",neuHi:"#FFFFFF",neuLo:"#B8C1C5",neuInk:"#22292C",neuSub:"#5C6B70",
+  jade:"#1E6E5C",jadeS:"#DCEAE5",jadeD:"#154F42",
+  wine:"#9B4A4E",wineS:"#F3E2E1",
+  glassBg:"rgba(255,255,255,.5)",glassBgStrong:"rgba(255,255,255,.68)",glassBorder:"rgba(255,255,255,.85)",glassShadow:"rgba(34,41,44,.16)",glassHi:"rgba(255,255,255,.6)"};
+const PALETTE_DARK={bg:"#15191B",ink:"#EAF0FA",sub:"#9FB0C8",faint:"#647289",line:"rgba(255,255,255,.09)",sf:"#1E2427",sfA:"#0E1213",gr:"#3FBF9E",grD:"#8FE3CC",grS:"#17322B",br:"#4FA9C7",brS:"#1A323B",red:"#C97177",deep:"#0A1119",deepHi:"#7E93B5",redS:"#3A2224",amberS:"#3A2E18",amber:"#E0A85C",
+  neuBg:"#15191B",neuHi:"#232A2D",neuLo:"#060809",neuInk:"#E7ECEC",neuSub:"#93A1A7",
+  jade:"#3FBF9E",jadeS:"#17322B",jadeD:"#8FE3CC",
+  wine:"#C97177",wineS:"#3A2224",
+  glassBg:"rgba(255,255,255,.07)",glassBgStrong:"rgba(255,255,255,.12)",glassBorder:"rgba(255,255,255,.16)",glassShadow:"rgba(0,0,0,.5)",glassHi:"rgba(255,255,255,.18)"};
 const P={...PALETTE_LIGHT};
 function applyTheme(mode){
   const src=mode==="dark"?PALETTE_DARK:PALETTE_LIGHT;
@@ -227,10 +298,36 @@ function applyTheme(mode){
   root.style.setProperty("--red",src.red);
   root.style.setProperty("--deep",src.deep);
   root.style.setProperty("--deepHi",src.deepHi);
+  root.style.setProperty("--neuBg",src.neuBg);
+  root.style.setProperty("--neuHi",src.neuHi);
+  root.style.setProperty("--neuLo",src.neuLo);
+  root.style.setProperty("--neuInk",src.neuInk);
+  root.style.setProperty("--neuSub",src.neuSub);
+  root.style.setProperty("--jade",src.jade);
+  root.style.setProperty("--jadeS",src.jadeS);
+  root.style.setProperty("--wine",src.wine);
+  root.style.setProperty("--wineS",src.wineS);
+  root.style.setProperty("--glassBg",src.glassBg);
+  root.style.setProperty("--glassBgStrong",src.glassBgStrong);
+  root.style.setProperty("--glassBorder",src.glassBorder);
+  root.style.setProperty("--glassShadow",src.glassShadow);
+  root.style.setProperty("--glassHi",src.glassHi);
   root.setAttribute("data-theme",mode);
   const meta=document.querySelector('meta[name="theme-color"]');
   if(meta)meta.setAttribute("content",src.bg);
 }
+
+/* ── global neumorphic + liquid-glass style helpers ──
+   Read P.xxx live, so they always reflect the current theme. Used across
+   every view now, not just Budget/Expense Tracker. */
+function neu(r=18){return{background:P.neuBg,borderRadius:r,boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`};}
+function neuSm(r=14){return{background:P.neuBg,borderRadius:r,boxShadow:`4px 4px 10px ${P.neuLo},-4px -4px 10px ${P.neuHi}`};}
+function neuInset(r=14){return{background:P.neuBg,borderRadius:r,boxShadow:`inset 4px 4px 9px ${P.neuLo},inset -4px -4px 9px ${P.neuHi}`};}
+function neuBtnStyle(active){return{background:P.neuBg,borderRadius:999,border:"none",color:active?P.jade:P.neuInk,
+  boxShadow:active?`inset 3px 3px 7px ${P.neuLo},inset -3px -3px 7px ${P.neuHi}`:`4px 4px 9px ${P.neuLo},-4px -4px 9px ${P.neuHi}`};}
+function glassPanel(r=20){return{background:P.glassBg,backdropFilter:"blur(16px) saturate(160%)",WebkitBackdropFilter:"blur(16px) saturate(160%)",
+  border:`1px solid ${P.glassBorder}`,boxShadow:`0 10px 26px ${P.glassShadow}, inset 0 1px 0 ${P.glassHi}`,borderRadius:r};}
+function liquidFillBg(color){return `linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.05) 45%, ${color}CC 45%, ${color} 100%)`;}
 const SEG_LIGHT=["#2C5FA8","#6FA0D6","#1B3E73","#2E8BB0","#4C6E9C","#8FB4DD","#173B5E","#5BA7C2","#3D5A86","#7E97C4","#2A6F8E","#9DB8D9","#244C7A","#4F8FB0","#6678A8","#87A9CE"];
 const SEG_DARK=["#6FA0D6","#8FB4DD","#5BA7C2","#9DB8D9","#4FA9C7","#7E97C4","#87A9CE","#6678A8","#4C6E9C","#2C5FA8","#9FC1ED","#5B8FD9","#3D5A86","#2A6F8E","#1B3E73","#173B5E"];
 let SEG=[...SEG_LIGHT];
@@ -1554,7 +1651,7 @@ function App(){
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
             <div style={{display:"flex",alignItems:"center",gap:8,color:P.gr}}>
               <I.Wallet size={18} sw={2.2}/>
-              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Allocation</span>
+              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Where'dItGo</span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
@@ -1606,12 +1703,12 @@ function App(){
         </header>
 
         {/* tabs */}
-        <nav style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:20}}>
+        <nav style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:20}}>
           {TABS.map(([id,label,Icon])=>(
-            <button key={id} onClick={()=>setTab(id)}
+            <button key={id} onClick={()=>setTab(id)} className="glass-btn"
               style={tab===id
-                ?{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.deep,color:"#fff",border:"none"}
-                :{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",fontSize:14,fontWeight:500,background:P.sf,color:P.sub,border:`1px solid ${P.line}`}}>
+                ?{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",fontSize:14,fontWeight:600,color:P.jade}
+                :{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",fontSize:14,fontWeight:500,color:P.neuSub,background:"transparent",backdropFilter:"none",WebkitBackdropFilter:"none",border:"1px solid transparent",boxShadow:"none"}}>
               <Icon size={14}/>{label}
             </button>
           ))}
@@ -1661,7 +1758,14 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
   const[showInvestSettings,setShowInvestSettings]=useState(false);
-  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+  /* neumorphic + glass helpers, scoped to this view */
+  const card={background:P.neuBg,borderRadius:18,boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`};
+  const neu=(r=18)=>({background:P.neuBg,borderRadius:r,boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`});
+  const neuInset=(r=14)=>({background:P.neuBg,borderRadius:r,boxShadow:`inset 4px 4px 9px ${P.neuLo},inset -4px -4px 9px ${P.neuHi}`});
+  const neuBtn=(active)=>({background:P.neuBg,borderRadius:999,border:"none",color:active?P.jade:P.neuInk,
+    boxShadow:active?`inset 3px 3px 7px ${P.neuLo},inset -3px -3px 7px ${P.neuHi}`:`4px 4px 9px ${P.neuLo},-4px -4px 9px ${P.neuHi}`});
+  const glassPanel=(r=20)=>({background:P.glassBg,backdropFilter:"blur(16px) saturate(160%)",WebkitBackdropFilter:"blur(16px) saturate(160%)",
+    border:`1px solid ${P.glassBorder}`,boxShadow:`0 10px 26px ${P.glassShadow}, inset 0 1px 0 ${P.glassHi}`,borderRadius:r});
 
   const addMonths=(ym,n)=>bucketShift(ym,payPeriods,budgetOwner,n);
   const fmtMonth=m=>bucketLabel(m,payPeriods,budgetOwner);
@@ -1720,35 +1824,33 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   const createCopyFrom=()=>{if(copySourceId){clonePlanForMonth(viewMonth,copySourceId,budgetOwner,fmtMonth(viewMonth));setShowCopyPicker(false);}};
 
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px",transition:"background .25s ease"}}>
       {/* ── owner toggle ── */}
       <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
 
-      {/* ── month navigator ── */}
-      <div className="fade-up" style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:P.sf,borderRadius:16,padding:"10px 14px",border:`1px solid ${P.line}`}}>
-        <button onClick={()=>setViewMonth(m=>addMonths(m,-1))}
-          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>‹</button>
+      {/* ── month navigator (glass — floating nav chrome) ── */}
+      <div className="fade-up glass-panel" style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"10px 14px"}}>
+        <button className="glass-btn" onClick={()=>setViewMonth(m=>addMonths(m,-1))}
+          style={{padding:"4px 10px",fontSize:18,lineHeight:1}}>‹</button>
         <div style={{flex:1,textAlign:"center"}}>
           <div style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmtMonth(viewMonth)}</div>
-          <div style={{fontSize:11,fontWeight:600,marginTop:1,color:isFuture?P.br:isNow?P.gr:P.faint}}>
+          <div style={{fontSize:11,fontWeight:600,marginTop:1,color:isFuture?P.br:isNow?P.jade:P.faint}}>
             {isFuture?"Planning ahead":isNow?(usesPayPeriod?"Current pay period":"Current month"):(usesPayPeriod?"Past pay period":"Past month")}
           </div>
         </div>
-        <button onClick={()=>setViewMonth(m=>addMonths(m,1))}
-          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>›</button>
+        <button className="glass-btn" onClick={()=>setViewMonth(m=>addMonths(m,1))}
+          style={{padding:"4px 10px",fontSize:18,lineHeight:1}}>›</button>
         {viewMonth!==nowMonth&&(
-          <button onClick={()=>setViewMonth(nowMonth)}
-            style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,background:P.grS,color:P.grD,border:"none"}}>Today</button>
+          <button className="glass-btn" onClick={()=>setViewMonth(nowMonth)}
+            style={{padding:"4px 10px",fontSize:12,fontWeight:600,color:P.jadeD||P.jade}}>Today</button>
         )}
       </div>
 
-      {/* ── plan status banner ── */}
-      <div style={{borderRadius:14,padding:"12px 14px",marginBottom:12,
-        background:isNow?P.grS:hasOwnPlan?P.brS:P.sfA,
-        border:`1px solid ${isNow?P.grS:hasOwnPlan?P.brS:P.line}`,
+      {/* ── plan status banner (neumorphic raised, subtly tinted) ── */}
+      <div style={{...neu(14),padding:"12px 14px",marginBottom:12,
         display:"flex",alignItems:"center",gap:10}}>
         <div style={{flex:1}}>
-          <div style={{fontSize:12,fontWeight:600,color:isNow?P.grD:hasOwnPlan?P.br:P.sub}}>
+          <div style={{fontSize:12,fontWeight:600,color:isNow?P.jade:hasOwnPlan?P.br:P.neuSub}}>
             {isNow?"📋 Carry-forward plan":hasOwnPlan?`📋 Custom plan for ${fmtMonth(viewMonth)}`:"📋 Carry-forward (preview)"}
           </div>
           <div style={{fontSize:11,color:isNow?P.gr:hasOwnPlan?P.br:P.faint,marginTop:2}}>
@@ -1761,13 +1863,13 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
           {!isNow&&(hasOwnPlan
-            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)}
-                style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:"transparent",border:`1px solid ${P.line}`,color:P.red,fontWeight:500}}>Remove</button>
+            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)} className="neu-btn"
+                style={{fontSize:11,padding:"5px 12px",color:P.wine,fontWeight:500}}>Remove</button>
             :<>
-              <button onClick={createCopy}
-                  style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:P.br,color:"#fff",border:"none",fontWeight:600,whiteSpace:"nowrap"}}>+ Create copy</button>
+              <button onClick={createCopy} className="neu-btn"
+                  style={{fontSize:11,padding:"5px 12px",color:P.jade,fontWeight:600,whiteSpace:"nowrap"}}>+ Create copy</button>
               <button onClick={()=>setShowCopyPicker(v=>!v)}
-                  style={{fontSize:10,background:"transparent",border:"none",color:P.faint,padding:0,textDecoration:"underline",whiteSpace:"nowrap"}}>copy from a different month</button>
+                  style={{fontSize:10,background:"transparent",border:"none",color:P.neuSub,padding:0,textDecoration:"underline",whiteSpace:"nowrap"}}>copy from a different month</button>
             </>
           )}
         </div>
@@ -1775,33 +1877,34 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
 
       {/* ── optional: pick a specific source plan to copy from ── */}
       {!isNow&&!hasOwnPlan&&showCopyPicker&&(
-        <div style={{...card,padding:12,marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <div style={{...neuInset(14),padding:12,marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
           <select value={copySourceId} onChange={e=>setCopySourceId(e.target.value)}
-            style={{fontSize:12,borderRadius:8,padding:"5px 8px",background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,flex:1,minWidth:160}}>
+            style={{fontSize:12,borderRadius:8,padding:"5px 8px",background:P.neuBg,border:"none",color:P.neuInk,flex:1,minWidth:160}}>
             <option value="">Select a plan to copy…</option>
             {ownerPlanOptions.map(p=>(
               <option key={p.id} value={p.id}>{p.name||p.month} ({cur} {(p.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})})</option>
             ))}
           </select>
-          <button onClick={createCopyFrom} disabled={!copySourceId}
-            style={{fontSize:11,borderRadius:8,padding:"5px 12px",background:copySourceId?P.br:P.sfA,color:copySourceId?"#fff":P.faint,border:"none",fontWeight:600}}>Copy</button>
+          <button onClick={createCopyFrom} disabled={!copySourceId} className="neu-btn"
+            style={{fontSize:11,padding:"6px 14px",color:copySourceId?P.jade:P.neuSub,fontWeight:600}}>Copy</button>
         </div>
       )}
 
       {/* ── income + allocation summary ── */}
-      <div style={{...card,padding:16,marginBottom:16}}>
+      <div style={{...neu(16),padding:16,marginBottom:16}}>
         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
           <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-            <span style={{fontSize:12,color:P.faint,textTransform:"uppercase",letterSpacing:".08em"}}>Income</span>
-            <span style={{fontSize:13,color:P.sub}}>{cur}</span>
+            <span style={{fontSize:12,color:P.neuSub,textTransform:"uppercase",letterSpacing:".08em"}}>Income</span>
+            <span style={{fontSize:13,color:P.neuSub}}>{cur}</span>
             <input type="number" value={income} disabled={!editable}
               onChange={e=>setIncome(e.target.value)}
-              className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:editable?P.ink:P.faint}}/>
+              className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:editable?P.neuInk:P.neuSub,
+                ...(editable?neuInset(8):{}),padding:editable?"2px 8px":undefined}}/>
           </div>
         </div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Allocated {fmt(allocated)}</span>
-          <span key={remaining} className="num-flash" style={{fontSize:13,fontWeight:600,color:remaining<0?P.red:P.gr}}>
+          <span style={{fontSize:13,fontWeight:600,color:P.neuSub}}>Allocated {fmt(allocated)}</span>
+          <span key={remaining} className="num-flash" style={{fontSize:13,fontWeight:600,color:remaining<0?P.wine:P.jade}}>
             {remaining<0?"Over by ":"Left "}{fmt(Math.abs(remaining))}
           </span>
         </div>
@@ -1816,7 +1919,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         })).filter(d=>d.value>0);
         return(
           <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
-            <div style={{...card,padding:16,flex:"1 1 200px",minWidth:200}}>
+            <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200}}>
               <div style={{width:"100%",height:190}}>
                 <ResponsiveContainer>
                   <PieChart>
@@ -1828,13 +1931,13 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                 </ResponsiveContainer>
               </div>
             </div>
-            <div style={{...card,padding:16,flex:"1 1 200px",minWidth:200,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-              <div style={{fontSize:11,fontWeight:600,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Where {fmt(income)} goes</div>
+            <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+              <div style={{fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Where {fmt(income)} goes</div>
               {groupData.map(d=>(
                 <div key={d.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,padding:"4px 0"}}>
                   <span style={{width:9,height:9,borderRadius:999,background:d.color,flexShrink:0}}/>
-                  <span style={{flex:1,color:P.sub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
-                  <span className="tnum" style={{color:P.faint,fontSize:12}}>{pct(d.value).toFixed(2)}%</span>
+                  <span style={{flex:1,color:P.neuSub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+                  <span className="tnum" style={{color:P.neuSub,fontSize:12,opacity:.75}}>{pct(d.value).toFixed(2)}%</span>
                 </div>
               ))}
             </div>
@@ -1853,12 +1956,12 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         const thresholdPct=Number(investTarget?.thresholdPct)||0;
         const meetsTarget=thresholdPct>0&&investPct>=thresholdPct;
         const gapSar=Math.max(0,(thresholdPct/100)*income-investAmt);
+        const barPct=thresholdPct>0?Math.min(100,(investPct/thresholdPct)*100):Math.min(100,investPct);
+        const fillColor=thresholdPct===0?P.neuSub:meetsTarget?P.jade:P.br;
         return(
-          <div style={{...card,padding:"12px 14px",marginBottom:16,
-            background:thresholdPct===0?P.sfA:meetsTarget?P.grS:P.brS,
-            border:`1px solid ${thresholdPct===0?P.line:meetsTarget?P.grS:P.brS}`}}>
+          <div style={{...neu(16),padding:"12px 14px",marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-              <div style={{fontSize:13,fontWeight:600,color:thresholdPct===0?P.sub:meetsTarget?P.grD:P.br}}>
+              <div style={{fontSize:13,fontWeight:600,color:thresholdPct===0?P.neuSub:meetsTarget?P.jade:P.br}}>
                 {thresholdPct>0&&(meetsTarget?"✓ ":"⚠ ")}
                 Invest &amp; Grow — {investPct.toFixed(2)}% of income
                 {thresholdPct>0&&(meetsTarget
@@ -1866,25 +1969,30 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                   :` · ${fmt(gapSar)} short of ${thresholdPct}% target`)}
               </div>
               <button onClick={()=>setShowInvestSettings(v=>!v)} title="Edit target"
-                style={{background:"transparent",border:"none",color:thresholdPct===0?P.faint:meetsTarget?P.grD:P.br,padding:2,display:"flex"}}>
+                style={{background:"transparent",border:"none",color:thresholdPct===0?P.neuSub:meetsTarget?P.jade:P.br,padding:2,display:"flex"}}>
                 <I.Settings size={14}/>
               </button>
+            </div>
+            {/* ── signature: liquid-glass fill in a neumorphic inset trough ── */}
+            <div style={{...neuInset(999),height:14,marginTop:10,overflow:"hidden"}}>
+              <div className="bar-animated liquid-fill" style={{width:`${barPct}%`,
+                background:`linear-gradient(180deg, rgba(255,255,255,.65) 0%, rgba(255,255,255,.08) 45%, ${fillColor}CC 45%, ${fillColor} 100%)`}}/>
             </div>
             {showInvestSettings&&(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-                  <span style={{fontSize:12,color:P.sub}}>Target</span>
+                  <span style={{fontSize:12,color:P.neuSub}}>Target</span>
                   <input type="number" value={thresholdPct}
                     onChange={e=>setInvestTarget({thresholdPct:Number(e.target.value)||0})}
-                    className="bare tnum" style={{width:50,fontSize:13,fontWeight:600,textAlign:"right",background:P.sf,borderRadius:6,padding:"2px 4px"}}/>
-                  <span style={{fontSize:12,color:P.sub}}>% of income</span>
+                    className="bare tnum" style={{...neuInset(6),width:50,fontSize:13,fontWeight:600,textAlign:"right",padding:"2px 4px",color:P.neuInk}}/>
+                  <span style={{fontSize:12,color:P.neuSub}}>% of income</span>
                 </div>
-                <div style={{fontSize:11,color:P.faint,marginBottom:6}}>Groups counted toward this target:</div>
+                <div style={{fontSize:11,color:P.neuSub,marginBottom:6}}>Groups counted toward this target:</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
                   {(monthPlan.groups||[]).map(g=>{
                     const checked=investGroupNames.includes(g.name);
                     return(
-                      <label key={g.id} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:P.sub,cursor:"pointer"}}>
+                      <label key={g.id} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:P.neuSub,cursor:"pointer"}}>
                         <input type="checkbox" checked={checked} onChange={()=>{
                           const next=checked?investGroupNames.filter(n=>n!==g.name):[...investGroupNames,g.name];
                           setInvestTarget({groupNames:next});
@@ -1902,14 +2010,13 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
 
       {/* ── locked preview hint for non-current months without a copy ── */}
       {!editable&&(
-        <div style={{borderRadius:14,padding:"14px 16px",marginBottom:16,textAlign:"center",
-          background:P.sf,border:`1px dashed ${P.line}`}}>
-          <div style={{fontSize:13,color:P.sub,marginBottom:10}}>
+        <div style={{...neuInset(14),padding:"14px 16px",marginBottom:16,textAlign:"center"}}>
+          <div style={{fontSize:13,color:P.neuSub,marginBottom:10}}>
             You're previewing your carry-forward budget for {fmtMonth(viewMonth)}.<br/>
             Create a copy to add categories or change amounts just for this month.
           </div>
-          <button onClick={createCopy}
-            style={{display:"inline-flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 16px",fontSize:14,fontWeight:600,background:P.br,color:"#fff",border:"none"}}>
+          <button onClick={createCopy} className="neu-btn"
+            style={{display:"inline-flex",alignItems:"center",gap:6,padding:"8px 16px",fontSize:14,fontWeight:600,color:P.jade}}>
             <I.Plus size={14}/>Create copy for {fmtMonth(viewMonth)}
           </button>
         </div>
@@ -1919,13 +2026,13 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
         const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
         return(
-          <section key={g.id} style={{...card,overflow:"hidden",marginBottom:16}}>
+          <section key={g.id} style={{...neu(16),overflow:"hidden",marginBottom:16}}>
             {/* Group header */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",background:P.sfA,borderBottom:`1px solid ${P.line}`}}>
-              <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600}}/>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px"}}>
+              <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600,color:P.neuInk}}/>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontSize:13,fontWeight:600,color:P.sub}} className="tnum">{fmt(groupTotal)}</span>
-                <button onClick={()=>removeGroup(g.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.Trash size={14}/></button>
+                <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(groupTotal)}</span>
+                <button onClick={()=>removeGroup(g.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.5}}><I.Trash size={14}/></button>
               </div>
             </div>
 
@@ -1935,67 +2042,67 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               const effAmt=effectiveAmt(c);
               const subsOpen=expandedSubs[c.id];
               return(
-                <div key={c.id} style={{borderBottom:`1px solid ${P.sfA}`}}>
+                <div key={c.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
                   {/* Category row */}
                   <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px"}}>
                     <span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>
                     <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare"
                       style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400,
-                        color:c.trackExpenses===false?P.faint:P.ink,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
-                    <span className="tnum" style={{fontSize:12,color:P.faint,width:44,textAlign:"right"}}>{pct(effAmt).toFixed(2)}%</span>
+                        color:c.trackExpenses===false?P.neuSub:P.neuInk,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
+                    <span className="tnum" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>{pct(effAmt).toFixed(2)}%</span>
                     <div style={{display:"flex",alignItems:"center",gap:4}}>
-                      <span style={{fontSize:11,color:P.faint}}>{cur}</span>
+                      <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
                       {hasSubs
                         /* when subs exist, show computed total (read-only style) */
-                        ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.gr}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                        ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.jade}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
                         /* no subs — manual input as before */
                         :<input type="text" inputMode="decimal" value={c.amount} onChange={e=>updateCat(c.id,{amount:e.target.value})}
                           onBlur={e=>updateCat(c.id,{amount:evalMathExpr(e.target.value,0)})}
                           onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
-                          className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600}}/>
+                          className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
                       }
                     </div>
                     {/* tracking toggle */}
                     <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
                       title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
-                      style={{background:"transparent",border:"none",color:c.trackExpenses===false?P.br:P.faint,padding:2,display:"flex",alignItems:"center",opacity:c.trackExpenses===false?1:.5}}>
+                      style={{background:"transparent",border:"none",color:c.trackExpenses===false?P.br:P.neuSub,padding:2,display:"flex",alignItems:"center",opacity:c.trackExpenses===false?1:.5}}>
                       {c.trackExpenses===false?<I.EyeOff size={14}/>:<I.Receipt size={14}/>}
                     </button>
                     {/* sub-toggle button */}
                     <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
-                      style={{background:"transparent",border:"none",color:subsOpen?P.gr:P.faint,padding:2,display:"flex",alignItems:"center"}}>
+                      style={{background:"transparent",border:"none",color:subsOpen?P.jade:P.neuSub,padding:2,display:"flex",alignItems:"center"}}>
                       <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
                     </button>
-                    <button onClick={()=>removeCat(c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.3}}><I.X size={15}/></button>
+                    <button onClick={()=>removeCat(c.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
                   </div>
 
                   {/* Sub-items panel */}
                   {subsOpen&&(
-                    <div style={{background:P.sfA,borderTop:`1px solid ${P.line}`}}>
+                    <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
                       {subs.map(sub=>(
-                        <div key={sub.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 16px 7px 36px",borderBottom:`1px solid ${P.line}`}}>
+                        <div key={sub.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 16px 7px 36px",borderBottom:"1px solid rgba(0,0,0,.05)"}}>
                           {/* indent indicator */}
-                          <span style={{width:6,height:6,borderRadius:999,background:P.faint,flexShrink:0}}/>
+                          <span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>
                           <input value={sub.name} onChange={e=>handleSubChange(c.id,sub.id,{name:e.target.value})}
-                            className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.ink}}/>
+                            className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.neuInk}}/>
                           <div style={{display:"flex",alignItems:"center",gap:4}}>
-                            <span style={{fontSize:11,color:P.faint}}>{cur}</span>
+                            <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
                             <input type="text" inputMode="decimal" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:e.target.value})}
                               onBlur={e=>handleSubChange(c.id,sub.id,{amount:evalMathExpr(e.target.value,0)})}
                               onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
-                              className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600}}/>
+                              className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
                           </div>
-                          <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.35}}><I.X size={13}/></button>
+                          <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={13}/></button>
                         </div>
                       ))}
                       {/* sub total when multiple subs */}
                       {subs.length>1&&(
-                        <div style={{display:"flex",justifyContent:"flex-end",padding:"5px 16px 5px 36px",fontSize:12,color:P.sub}} className="tnum">
+                        <div style={{display:"flex",justifyContent:"flex-end",padding:"5px 16px 5px 36px",fontSize:12,color:P.neuSub}} className="tnum">
                           Subtotal: {cur} {effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
                         </div>
                       )}
                       <button onClick={()=>handleAddSub(c.id)}
-                        style={{display:"flex",alignItems:"center",gap:5,padding:"7px 16px 7px 36px",fontSize:13,color:P.gr,background:"transparent",border:"none",width:"100%"}}>
+                        style={{display:"flex",alignItems:"center",gap:5,padding:"7px 16px 7px 36px",fontSize:13,color:P.jade,background:"transparent",border:"none",width:"100%"}}>
                         <I.Plus size={12}/>Add sub-item
                       </button>
                     </div>
@@ -2005,7 +2112,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                   {!subsOpen&&!hasSubs&&(
                     <div style={{paddingLeft:36,paddingBottom:6,marginTop:-4}}>
                       <button onClick={()=>handleAddSub(c.id)}
-                        style={{fontSize:11,color:P.faint,background:"transparent",border:"none",padding:"0 0 2px",display:"flex",alignItems:"center",gap:4}}>
+                        style={{fontSize:11,color:P.neuSub,background:"transparent",border:"none",padding:"0 0 2px",display:"flex",alignItems:"center",gap:4}}>
                         <I.Plus size={10}/>add sub-items
                       </button>
                     </div>
@@ -2014,14 +2121,14 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               );
             })}
 
-            <button onClick={()=>addCat(g.id)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
+            <button onClick={()=>addCat(g.id)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
               <I.Plus size={14}/>Add category
             </button>
           </section>
         );
       })}
       {editable&&(
-        <button onClick={addGroup} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"8px 14px",fontSize:14,fontWeight:500,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr}}>
+        <button onClick={addGroup} className="neu-btn" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",fontSize:14,fontWeight:500,color:P.jade}}>
           <I.Plus size={14}/>Add group
         </button>
       )}
@@ -2116,6 +2223,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const[logExpanded,setLogExpanded]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
   const[transferModal,setTransferModal]=useState(null); // {catId,name,budget} for quick transfer
+
+  /* neumorphic + glass helpers, scoped to this view (same recipe as BudgetView) */
+  const neu=(r=18)=>({background:P.neuBg,borderRadius:r,boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`});
+  const neuInset=(r=14)=>({background:P.neuBg,borderRadius:r,boxShadow:`inset 4px 4px 9px ${P.neuLo},inset -4px -4px 9px ${P.neuHi}`});
 
   const addMonths=(ym,n)=>bucketShift(ym,payPeriods,budgetOwner,n);
   const fmtMonth=m=>bucketLabel(m,payPeriods,budgetOwner);
@@ -2355,26 +2466,26 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     const subLabel=env?env.name:goal?goal.name:"";
     return(
       <div key={tx.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",
-        borderBottom:idx<total-1?`1px solid ${P.sfA}`:"none"}}>
+        borderBottom:idx<total-1?"1px solid rgba(0,0,0,.06)":"none"}}>
         <div style={{width:8,height:8,borderRadius:999,
           background:dotColor,flexShrink:0}}/>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:14,fontWeight:500,color:P.ink,
+          <div style={{fontSize:14,fontWeight:500,color:P.neuInk,
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
             {tx.name}
             {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
           </div>
-          <div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+          <div style={{fontSize:11,color:P.neuSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
             {tx.date}{subLabel?` · ${subLabel}`:""}{tx.note?` · ${tx.note}`:""}
           </div>
         </div>
-        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(tx.amount)}</span>
+        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{fmt(tx.amount)}</span>
         <button onClick={()=>openEdit(tx)}
-          style={{background:"transparent",border:"none",color:P.gr,opacity:.5}}>
+          style={{background:"transparent",border:"none",color:P.jade,opacity:.6}}>
           <I.Edit size={13}/>
         </button>
         <button onClick={()=>removeExpenseTx(tx.id)}
-          style={{background:"transparent",border:"none",color:P.red,opacity:.4}}>
+          style={{background:"transparent",border:"none",color:P.wine,opacity:.5}}>
           <I.X size={14}/>
         </button>
       </div>
@@ -2434,40 +2545,39 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const ownerPlans=(plans||[]).filter(p=>p.owner===budgetOwner);
 
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px",transition:"background .25s ease"}}>
       {/* ── owner toggle ── */}
       <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
 
-      {/* ── month navigator ── */}
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:P.sf,borderRadius:16,padding:"10px 14px",border:`1px solid ${P.line}`}}>
-        <button onClick={()=>setViewMonth(m=>addMonths(m,-1))}
-          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>‹</button>
+      {/* ── month navigator (glass) ── */}
+      <div className="glass-panel" style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"10px 14px"}}>
+        <button className="glass-btn" onClick={()=>setViewMonth(m=>addMonths(m,-1))}
+          style={{padding:"4px 10px",fontSize:18,lineHeight:1}}>‹</button>
         <div style={{flex:1,textAlign:"center"}}>
           <div style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmtMonth(viewMonth)}</div>
           <div style={{fontSize:11,fontWeight:600,marginTop:1,
-            color:isFuture?P.br:isNow?P.gr:P.faint}}>
+            color:isFuture?P.br:isNow?P.jade:P.faint}}>
             {isFuture?"Planning ahead":isNow?(usesPayPeriod?"Current pay period":"Current month"):(usesPayPeriod?"Past pay period":"Past month")}
           </div>
         </div>
-        <button onClick={()=>setViewMonth(m=>addMonths(m,1))}
-          style={{borderRadius:999,padding:"4px 10px",fontSize:18,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,lineHeight:1}}>›</button>
+        <button className="glass-btn" onClick={()=>setViewMonth(m=>addMonths(m,1))}
+          style={{padding:"4px 10px",fontSize:18,lineHeight:1}}>›</button>
         {viewMonth!==nowMonth&&(
-          <button onClick={()=>setViewMonth(nowMonth)}
-            style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,background:P.grS,color:P.grD,border:"none"}}>
+          <button className="glass-btn" onClick={()=>setViewMonth(nowMonth)}
+            style={{padding:"4px 10px",fontSize:12,fontWeight:600,color:P.jade}}>
             Today
           </button>
         )}
       </div>
 
       {/* ── monthly plan banner ── */}
-      <div style={{borderRadius:14,padding:"12px 14px",marginBottom:12,
-        background:hasOwnPlan?P.grS:P.sfA,border:`1px solid ${hasOwnPlan?P.grS:P.line}`,
+      <div style={{...neu(14),padding:"12px 14px",marginBottom:12,
         display:"flex",alignItems:"center",gap:10}}>
         <div style={{flex:1}}>
-          <div style={{fontSize:12,fontWeight:600,color:hasOwnPlan?P.grD:P.sub}}>
+          <div style={{fontSize:12,fontWeight:600,color:hasOwnPlan?P.jade:P.neuSub}}>
             {hasOwnPlan?`📋 ${monthPlan.name}`:"📋 Using default plan"}
           </div>
-          <div style={{fontSize:11,color:hasOwnPlan?P.gr:P.faint,marginTop:2}}>
+          <div style={{fontSize:11,color:hasOwnPlan?P.jade:P.neuSub,marginTop:2,opacity:.85}}>
             {hasOwnPlan
               ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · Custom budget for ${fmtMonth(viewMonth)}`
               :`Showing allocations from "${monthPlan.name}". Create a custom plan for ${fmtMonth(viewMonth)} to set a different income or allocation.`
@@ -2476,14 +2586,12 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         </div>
         <div style={{display:"flex",gap:6,flexShrink:0}}>
           {hasOwnPlan
-            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)}
-                style={{fontSize:11,borderRadius:8,padding:"4px 10px",background:"transparent",
-                  border:`1px solid ${P.line}`,color:P.red,fontWeight:500}}>
+            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)} className="neu-btn"
+                style={{fontSize:11,padding:"5px 12px",color:P.wine,fontWeight:500}}>
                 Remove
               </button>
-            :<button onClick={()=>{setCloneSource(plans[0]?.id||"");setShowPlanPicker(true);}}
-                style={{fontSize:11,borderRadius:8,padding:"4px 10px",
-                  background:P.gr,color:"#fff",border:"none",fontWeight:600}}>
+            :<button onClick={()=>{setCloneSource(plans[0]?.id||"");setShowPlanPicker(true);}} className="neu-btn"
+                style={{fontSize:11,padding:"5px 12px",color:P.jade,fontWeight:600}}>
                 + Create plan
               </button>
           }
@@ -2491,23 +2599,23 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       </div>
 
       {/* ── remaining-to-allocate / untransferred salary ── */}
-      <div className="fade-up" style={{borderRadius:14,padding:"12px 14px",marginBottom:12,
-        background:totalUnallocatedOrUntransferred<0?P.redS:P.brS,border:`1px solid ${totalUnallocatedOrUntransferred<0?P.red:P.brS}`,
+      <div className="fade-up" style={{...neu(14),padding:"12px 14px",marginBottom:12,
         display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
         <div>
-          <div style={{fontSize:11,fontWeight:600,color:totalUnallocatedOrUntransferred<0?P.red:P.br,textTransform:"uppercase",letterSpacing:".06em"}}>
+          <div style={{fontSize:11,fontWeight:600,color:totalUnallocatedOrUntransferred<0?P.wine:P.br,textTransform:"uppercase",letterSpacing:".06em"}}>
             {totalUnallocatedOrUntransferred<0?"Over-transferred":"Salary not yet spent or transferred"}
           </div>
-          <div style={{fontSize:11,color:P.faint,marginTop:1}}>Income minus every logged transaction, tracked or not</div>
+          <div style={{fontSize:11,color:P.neuSub,marginTop:1}}>Income minus every logged transaction, tracked or not</div>
         </div>
-        <span className="tnum" key={totalUnallocatedOrUntransferred} style={{fontSize:18,fontWeight:700,color:totalUnallocatedOrUntransferred<0?P.red:P.br}}>
+        <span className="tnum" key={totalUnallocatedOrUntransferred} style={{fontSize:18,fontWeight:700,color:totalUnallocatedOrUntransferred<0?P.wine:P.br}}>
           {fmt(Math.abs(totalUnallocatedOrUntransferred))}
         </span>
       </div>
 
-      {/* ── hero summary ── */}
-      <div className="fade-up-1" style={{borderRadius:16,padding:16,marginBottom:16,
-        background:isFuture?`linear-gradient(135deg,${P.br} 0%,${P.grD} 100%)`:P.deep,color:"#fff"}}>
+      {/* ── hero summary (neumorphic dark tile + signature liquid-glass bar) ── */}
+      <div className="fade-up-1" style={{borderRadius:18,padding:16,marginBottom:16,
+        background:isFuture?`linear-gradient(135deg,${P.br} 0%,${P.grD} 100%)`:P.deep,color:"#fff",
+        boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
         <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
           {fmtMonth(viewMonth)} {isFuture?"plan":"spending"}
         </div>
@@ -2527,26 +2635,29 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               color:totalLeft>=0?"#4ADE80":"#F87171"}}>{fmt(Math.abs(totalLeft))}</div>
           </div>
         </div>
-        <div style={{marginTop:12,height:6,background:"rgba(255,255,255,.15)",borderRadius:999,overflow:"hidden"}}>
-          <div className="bar-animated" style={{width:`${Math.min(100,totalBudget>0?(totalSpent/totalBudget)*100:0)}%`,height:"100%",
-            background:totalSpent>=totalBudget?"#F87171":totalSpent/totalBudget>=.8?"#E07B2A":"#4ADE80"}}/>
+        <div style={{marginTop:12,height:10,background:"rgba(0,0,0,.28)",borderRadius:999,overflow:"hidden",
+          boxShadow:"inset 2px 2px 5px rgba(0,0,0,.35),inset -1px -1px 3px rgba(255,255,255,.06)"}}>
+          {(()=>{
+            const fc=totalSpent>=totalBudget?"#F87171":totalSpent/totalBudget>=.8?"#E07B2A":"#4ADE80";
+            return <div className="bar-animated liquid-fill" style={{width:`${Math.min(100,totalBudget>0?(totalSpent/totalBudget)*100:0)}%`,
+              background:`linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.05) 45%, ${fc}CC 45%, ${fc} 100%)`}}/>;
+          })()}
         </div>
       </div>
 
       {/* ── envelopes ── */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Envelopes</h2>
-        <button onClick={()=>openAdd()}
-          style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 14px",
-            fontSize:14,fontWeight:500,background:isFuture?P.br:P.gr,color:"#fff",border:"none"}}>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Envelopes</h2>
+        <button onClick={()=>openAdd()} className="neu-btn"
+          style={{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",
+            fontSize:14,fontWeight:500,color:isFuture?P.br:P.jade}}>
           <I.Plus size={14}/>{isFuture?"Plan transaction":"Add transaction"}
         </button>
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
         {envelopes.length===0
-          ?<div style={{borderRadius:14,padding:16,textAlign:"center",fontSize:13,color:P.faint,
-              background:P.sf,border:`1px solid ${P.line}`}}>
+          ?<div style={{...neuInset(14),padding:16,textAlign:"center",fontSize:13,color:P.neuSub}}>
               No tracked categories found. Add categories in the Budget tab, or check that they aren't marked "Untracked".
             </div>
           :envelopes.map(env=>{
@@ -2560,10 +2671,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             const color=pacing?P.amber:statusColor(spent,env.budget);
             const bg=pacing?P.amberS:statusBg(spent,env.budget);
             return(
-              <div key={env.id} style={{borderRadius:14,padding:"12px 16px",background:P.sf,border:`1px solid ${P.line}`}}>
+              <div key={env.id} style={{...neu(14),padding:"12px 16px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
-                  <span style={{flex:1,fontSize:14,fontWeight:600,color:P.ink}}>{env.name}</span>
+                  <span style={{flex:1,fontSize:14,fontWeight:600,color:P.neuInk}}>{env.name}</span>
                   {pacing&&(
                     <span title="Spending is outpacing the calendar for this period"
                       style={{fontSize:10,fontWeight:600,color:P.amber,display:"flex",alignItems:"center",gap:2}}>
@@ -2572,23 +2683,25 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                   )}
                   {trend&&trend.avg!=null&&(
                     <span title={`3-month avg: ${fmt(trend.avg)}`}
-                      style={{fontSize:10,fontWeight:600,color:spent>trend.avg*1.15?P.red:spent<trend.avg*0.85?P.gr:P.faint,
+                      style={{fontSize:10,fontWeight:600,color:spent>trend.avg*1.15?P.wine:spent<trend.avg*0.85?P.jade:P.neuSub,
                         display:"flex",alignItems:"center",gap:2}}>
                       {spent>trend.avg*1.15?<I.ArrowUp size={10}/>:spent<trend.avg*0.85?<I.ArrowDown size={10}/>:null}
                       avg {fmt(trend.avg)}
                     </span>
                   )}
-                  <span style={{fontSize:11,color:P.faint}}>{env.group}</span>
+                  <span style={{fontSize:11,color:P.neuSub}}>{env.group}</span>
                 </div>
-                <div style={{height:6,background:P.sfA,borderRadius:999,overflow:"hidden",marginBottom:6,position:"relative"}}>
-                  <div className="bar-animated bar-color" style={{width:`${Math.min(100,ratio*100)}%`,height:"100%",background:color}}/>
+                {/* liquid-glass fill in a neumorphic inset trough */}
+                <div style={{...neuInset(999),height:8,marginBottom:6,position:"relative",overflow:"hidden"}}>
+                  <div className="bar-animated liquid-fill" style={{width:`${Math.min(100,ratio*100)}%`,height:"100%",
+                    background:`linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.05) 45%, ${color}CC 45%, ${color} 100%)`}}/>
                   {expectedRatio!=null&&expectedRatio<1&&(
-                    <div style={{position:"absolute",top:0,bottom:0,left:`${Math.min(100,expectedRatio*100)}%`,width:1,background:"rgba(0,0,0,.25)"}} title="Even pace for today"/>
+                    <div style={{position:"absolute",top:0,bottom:0,left:`${Math.min(100,expectedRatio*100)}%`,width:1,background:"rgba(0,0,0,.3)"}} title="Even pace for today"/>
                   )}
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:12}} className="tnum">
-                  <span style={{color:P.sub}}>
-                    {isFuture?"Planned":"Spent"} <strong style={{color:P.ink}}>{fmt(spent)}</strong> of {fmt(env.budget)}
+                  <span style={{color:P.neuSub}}>
+                    {isFuture?"Planned":"Spent"} <strong style={{color:P.neuInk}}>{fmt(spent)}</strong> of {fmt(env.budget)}
                   </span>
                   <span style={{fontWeight:600,color,background:bg,borderRadius:8,padding:"1px 8px"}}>
                     {left>=0?`${fmt(left)} left`:`${fmt(-left)} over`}
@@ -2601,7 +2714,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                   </div>
                 )}
                 <button onClick={()=>openAdd(env.id)}
-                  style={{marginTop:8,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.gr,background:"transparent",border:"none",padding:0}}>
+                  style={{marginTop:8,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.jade,background:"transparent",border:"none",padding:0}}>
                   <I.Plus size={12}/>Add to {env.name}
                 </button>
               </div>
@@ -2616,9 +2729,9 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
           <button onClick={()=>setUntrackedOpen(o=>!o)}
             style={{display:"flex",alignItems:"center",gap:6,marginBottom:untrackedOpen?10:20,width:"100%",
               background:"transparent",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
-            <I.Chevron size={13} style={{color:P.faint,transform:untrackedOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
-            <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Untracked transfers</h2>
-            <span style={{fontSize:11,color:P.faint}}>{untrackedOpen?"one-time allocations, not itemized":`${untrackedEnvelopes.length} hidden`}</span>
+            <I.Chevron size={13} style={{color:P.neuSub,transform:untrackedOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
+            <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Untracked transfers</h2>
+            <span style={{fontSize:11,color:P.neuSub,opacity:.75}}>{untrackedOpen?"one-time allocations, not itemized":`${untrackedEnvelopes.length} hidden`}</span>
           </button>
           {untrackedOpen&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
             {untrackedEnvelopes.map(env=>{
@@ -2626,17 +2739,18 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               const isFunded=funded>=env.budget&&funded>0;
               const lastAmt=quickTransferLast?.[env.id];
               return(
-                <div key={env.id} style={{borderRadius:14,padding:"12px 16px",background:P.sf,border:`1px solid ${isFunded?P.grS:P.line}`,display:"flex",alignItems:"center",gap:12}}>
+                <div key={env.id} style={{...neu(14),padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
                   <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:600,color:P.ink}}>{env.name}</div>
-                    <div className="tnum" style={{fontSize:11,color:isFunded?P.gr:P.faint,marginTop:1}}>
+                    <div style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{env.name}</div>
+                    <div className="tnum" style={{fontSize:11,color:isFunded?P.jade:P.neuSub,marginTop:1}}>
                       {isFunded?`✓ Transferred ${fmt(funded)}`:`Budgeted ${fmt(env.budget)} · not yet transferred`}
                     </div>
                   </div>
                   <button onClick={()=>setTransferModal({catId:env.id,name:env.name,budget:env.budget,suggested:lastAmt||env.budget})}
+                    className={isFunded?"neu-btn":""}
                     style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"6px 12px",fontSize:12,fontWeight:600,
-                      background:isFunded?P.sfA:P.br,color:isFunded?P.sub:"#fff",border:isFunded?`1px solid ${P.line}`:"none",flexShrink:0}}>
+                      background:isFunded?undefined:P.br,color:isFunded?P.neuSub:"#fff",border:"none",flexShrink:0}}>
                     <I.Send size={11}/>{isFunded?"Add more":"Transfer"}
                   </button>
                 </div>
@@ -2650,33 +2764,32 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       <button onClick={()=>setLogExpanded(o=>!o)}
         style={{display:"flex",alignItems:"center",gap:6,marginBottom:logExpanded?8:20,width:"100%",
           background:"transparent",border:"none",padding:0,cursor:"pointer",textAlign:"left"}}>
-        <I.Chevron size={13} style={{color:P.faint,transform:logExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
-        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>All transactions</h2>
-        <span style={{fontSize:11,color:P.faint}}>{logExpanded?`${allFiltered.length} entries`:`${allFiltered.length} hidden`}</span>
+        <I.Chevron size={13} style={{color:P.neuSub,transform:logExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s",flexShrink:0}}/>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>All transactions</h2>
+        <span style={{fontSize:11,color:P.neuSub,opacity:.75}}>{logExpanded?`${allFiltered.length} entries`:`${allFiltered.length} hidden`}</span>
       </button>
 
       {logExpanded&&(
         <>
           <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8,flexWrap:"wrap",gap:8}}>
             {logGrouping==="category"&&(monthPlan.categories||[]).length>1&&(
-              <button onClick={()=>setShowReorder(true)}
-                style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"4px 10px",
-                  fontSize:12,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+              <button onClick={()=>setShowReorder(true)} className="neu-btn"
+                style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",
+                  fontSize:12,fontWeight:600,color:P.neuSub}}>
                 <I.ArrowUp size={10}/><I.ArrowDown size={10}/>Reorder
               </button>
             )}
-            <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+            <div style={{display:"flex",gap:4,...neuInset(999),padding:3}}>
               {[["month","Month"],["category","Category"]].map(([gv,label])=>(
                 <button key={gv} onClick={()=>setLogGrouping(gv)}
                   style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
-                    background:logGrouping===gv?P.ink:"transparent",color:logGrouping===gv?"#fff":P.sub}}>
+                    background:logGrouping===gv?P.jade:"transparent",color:logGrouping===gv?"#fff":P.neuSub}}>
                   {label}
                 </button>
               ))}
             </div>
             <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
-              style={{borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,
-                border:`1px solid ${P.line}`,color:P.sub}}>
+              style={{...neu(999),padding:"4px 10px",fontSize:12,border:"none",color:P.neuSub}}>
               <option value="all">All categories</option>
               {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
               {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
@@ -2684,8 +2797,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
           </div>
 
           {allFiltered.length===0
-            ?<div style={{borderRadius:16,padding:"24px 16px",textAlign:"center",fontSize:13,color:P.faint,
-                background:P.sf,border:`1px solid ${P.line}`,marginBottom:20}}>
+            ?<div style={{...neuInset(16),padding:"24px 16px",textAlign:"center",fontSize:13,color:P.neuSub,marginBottom:20}}>
                 No transactions yet. Tap "Add transaction" to start tracking.
               </div>
             :logGrouping==="category"
@@ -2693,22 +2805,21 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               const isOpen=collapsedCats[catGroup.name]===undefined?false:!collapsedCats[catGroup.name];
               const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
               return(
-                <div key={catGroup.name} style={{borderRadius:16,overflow:"hidden",background:P.sf,
-                  border:`1px solid ${P.line}`,marginBottom:10}}>
+                <div key={catGroup.name} style={{...neu(16),overflow:"hidden",marginBottom:10}}>
                   <button
                     onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
                     style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                      padding:"12px 16px",background:P.sfA,border:"none",cursor:"pointer",
-                      borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                      padding:"12px 16px",background:"transparent",border:"none",cursor:"pointer",
+                      borderBottom:isOpen?"1px solid rgba(0,0,0,.06)":"none",textAlign:"left"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                      <I.Chevron size={14} style={{color:P.neuSub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
                         transition:"transform .2s",flexShrink:0}}/>
                       <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
-                      <span style={{fontSize:14,fontWeight:700,color:P.ink}}>{catGroup.name}</span>
+                      <span style={{fontSize:14,fontWeight:700,color:P.neuInk}}>{catGroup.name}</span>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
-                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(catGroup.total)}</span>
+                      <span className="tnum" style={{fontSize:12,color:P.neuSub}}>{txs.length} tx</span>
+                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.neuInk}}>{fmt(catGroup.total)}</span>
                     </div>
                   </button>
                   {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
@@ -2725,31 +2836,29 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
               const moLabel=fmtMonth(mo);
 
-              let headerBg=P.sfA;
-              if(isCurrent)headerBg=P.grS;
-              else if(isFutureMo)headerBg=P.brS;
-              const labelColor=isCurrent?P.grD:isFutureMo?P.br:P.ink;
+              const labelColor=isCurrent?P.jade:isFutureMo?P.br:P.neuInk;
 
               return(
-                <div key={mo} style={{borderRadius:16,overflow:"hidden",background:P.sf,
-                  border:`2px solid ${isViewing?P.gr:P.line}`,marginBottom:10,transition:"border-color .2s"}}>
+                <div key={mo} style={{...neu(16),overflow:"hidden",marginBottom:10,
+                  ...(isViewing?{boxShadow:`0 0 0 2px ${P.jade}, 7px 7px 15px ${P.neuLo}, -7px -7px 15px ${P.neuHi}`}:{}),
+                  transition:"box-shadow .2s"}}>
                   <button
                     onClick={()=>setCollapsedMonths(c=>({...c,[mo]:isOpen}))}
                     style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                      padding:"12px 16px",background:headerBg,border:"none",cursor:"pointer",
-                      borderBottom:isOpen?`1px solid ${P.line}`:"none",textAlign:"left"}}>
+                      padding:"12px 16px",background:"transparent",border:"none",cursor:"pointer",
+                      borderBottom:isOpen?"1px solid rgba(0,0,0,.06)":"none",textAlign:"left"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <I.Chevron size={14} style={{color:P.sub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
+                      <I.Chevron size={14} style={{color:P.neuSub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
                         transition:"transform .2s",flexShrink:0}}/>
                       <span style={{fontSize:14,fontWeight:700,color:labelColor}}>{moLabel}</span>
                       {isCurrent&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
-                        background:P.gr,color:"#fff",fontWeight:700}}>NOW</span>}
+                        background:P.jade,color:"#fff",fontWeight:700}}>NOW</span>}
                       {isFutureMo&&<span style={{fontSize:10,borderRadius:999,padding:"2px 7px",
                         background:P.br,color:"#fff",fontWeight:700}}>PLANNED</span>}
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span className="tnum" style={{fontSize:12,color:P.sub}}>{txs.length} tx</span>
-                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.ink}}>{fmt(monthTotal)}</span>
+                      <span className="tnum" style={{fontSize:12,color:P.neuSub}}>{txs.length} tx</span>
+                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.neuInk}}>{fmt(monthTotal)}</span>
                     </div>
                   </button>
 
@@ -2767,7 +2876,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         <div className="sheet-bg" onClick={closeForm}>
           <div className="sheet" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>
                 {editTx?"Edit transaction":isFuture?"Plan transaction":"Add transaction"}
               </h3>
               <button onClick={closeForm}
@@ -2780,11 +2889,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
             {/* ── segmented control: Tracked / Untracked / Goals — hidden while editing an existing entry ── */}
             {!editTx&&(
-              <div style={{display:"flex",gap:4,marginBottom:14,background:P.sfA,borderRadius:999,padding:3}}>
+              <div style={{display:"flex",gap:4,marginBottom:14,background:"rgba(0,0,0,.05)",borderRadius:999,padding:3}}>
                 {[["tracked","Tracked"],["untracked","Untracked"],["goals","Goals"]].map(([mv,label])=>(
                   <button key={mv} onClick={()=>{setAddMode(mv);setForm(f=>({...f,catId:"",goalId:"",name:""}));}}
                     style={{flex:1,borderRadius:999,padding:"6px 0",fontSize:12,fontWeight:600,border:"none",
-                      background:addMode===mv?P.ink:"transparent",color:addMode===mv?"#fff":P.sub}}>
+                      background:addMode===mv?P.jade:"transparent",color:addMode===mv?"#fff":P.sub}}>
                     {label}
                   </button>
                 ))}
@@ -2797,7 +2906,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Goal</div>
                 <select value={form.goalId} onChange={e=>setForm(f=>({...f,goalId:e.target.value}))}
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                    background:P.sfA,border:`1px solid ${form.goalId?P.line:P.red}`,color:P.ink}}>
+                    background:"rgba(0,0,0,.05)",border:form.goalId?"none":`1px solid ${P.red}`,color:P.ink}}>
                   <option value="">Select a goal…</option>
                   {ownerGoals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
@@ -2808,7 +2917,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Category</div>
                 <select value={form.catId} onChange={e=>setForm(f=>({...f,catId:e.target.value}))}
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                    background:P.sfA,border:`1px solid ${form.catId?P.line:P.red}`,color:P.ink}}>
+                    background:"rgba(0,0,0,.05)",border:form.catId?"none":`1px solid ${P.red}`,color:P.ink}}>
                   <option value="">Select a category…</option>
                   {addMode==="untracked"&&!editTx
                     ?untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)
@@ -2833,7 +2942,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
                 placeholder={addMode==="goals"&&!editTx?"e.g. Monthly deposit":"e.g. Amazon Now"} list="tx-name-suggestions"
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                  background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                  background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               <datalist id="tx-name-suggestions">
                 {nameSuggestions.map(n=><option key={n} value={n}/>)}
               </datalist>
@@ -2841,7 +2950,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
                   {nameSuggestions.slice(0,5).map(n=>(
                     <button key={n} onClick={()=>setForm(f=>({...f,name:n}))}
-                      style={{fontSize:11,borderRadius:999,padding:"3px 9px",background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+                      style={{fontSize:11,borderRadius:999,padding:"3px 9px",background:"rgba(0,0,0,.05)",border:"none",color:P.sub}}>
                       {n}
                     </button>
                   ))}
@@ -2854,7 +2963,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               <input value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))}
                 placeholder="e.g. bought a charger + cable"
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                  background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                  background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
             </div>
 
             <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -2866,14 +2975,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                   onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
                   placeholder="0"
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                    background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                    background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
               <div style={{flex:1}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Date</div>
                 <input type="date" value={form.date}
                   onChange={e=>setForm(f=>({...f,date:e.target.value}))}
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
-                    background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                    background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
             </div>
 
@@ -2887,7 +2996,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               const left=env.budget-after;
               return(
                 <div style={{borderRadius:10,padding:10,marginBottom:12,
-                  background:left<0?P.redS:left/env.budget<.2?P.amberS:P.sfA,
+                  background:left<0?P.redS:left/env.budget<.2?P.amberS:"rgba(0,0,0,.05)",
                   fontSize:13}} className="tnum">
                   <span style={{color:P.sub}}>{env.name}: </span>
                   <span style={{fontWeight:600,color:statusColor(after,env.budget)}}>
@@ -2899,15 +3008,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
             <div style={{display:"flex",gap:8}}>
               {editTx&&(
-                <button onClick={()=>{removeExpenseTx(editTx);closeForm();}}
-                  style={{borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:600,
-                    background:"transparent",color:P.red,border:`1px solid ${P.line}`}}>
+                <button onClick={()=>{removeExpenseTx(editTx);closeForm();}} className="neu-btn"
+                  style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.wine}}>
                   Delete
                 </button>
               )}
               <button onClick={submitTx}
                 style={{flex:1,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
-                  background:isFuture?P.br:P.gr,color:"#fff",border:"none",
+                  background:isFuture?P.br:P.jade,color:"#fff",border:"none",
                   opacity:(editTx?(!form.catId||!form.name||!form.amount)
                     :addMode==="goals"?(!form.goalId||!form.amount)
                     :addMode==="untracked"?(!form.catId||!form.amount)
@@ -2933,32 +3041,32 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         <div className="modal-bg" onClick={()=>setShowReorder(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Reorder categories</h3>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Reorder categories</h3>
               <button onClick={()=>setShowReorder(false)}
                 style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
             </div>
             <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
               Move categories up or down. This controls the order they appear in below, both here and in the envelope list above.
             </div>
-            <div style={{borderRadius:12,border:`1px solid ${P.line}`,overflow:"hidden"}}>
+            <div style={{borderRadius:12,overflow:"hidden",background:"rgba(0,0,0,.03)"}}>
               <div style={{maxHeight:"60vh",overflowY:"auto"}}>
                 {(monthPlan.categories||[]).map((c,i,arr)=>{
                   const g=(monthPlan.groups||[]).find(gr=>gr.id===c.groupId);
                   return(
                     <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",
-                      background:P.sf,borderBottom:i<arr.length-1?`1px solid ${P.sfA}`:"none"}}>
+                      borderBottom:i<arr.length-1?"1px solid rgba(0,0,0,.06)":"none"}}>
                       <span style={{width:8,height:8,borderRadius:999,background:c.color,flexShrink:0}}/>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,color:P.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
                         {g&&<div style={{fontSize:10,color:P.faint}}>{g.name}</div>}
                       </div>
                       <button onClick={()=>moveCat(c.id,-1)} disabled={i===0}
-                        style={{background:"transparent",border:`1px solid ${P.line}`,borderRadius:8,padding:4,
+                        style={{background:"transparent",border:"none",borderRadius:8,padding:4,
                           color:i===0?P.faint:P.sub,opacity:i===0?.4:1}}>
                         <I.ArrowUp size={13}/>
                       </button>
                       <button onClick={()=>moveCat(c.id,1)} disabled={i===arr.length-1}
-                        style={{background:"transparent",border:`1px solid ${P.line}`,borderRadius:8,padding:4,
+                        style={{background:"transparent",border:"none",borderRadius:8,padding:4,
                           color:i===arr.length-1?P.faint:P.sub,opacity:i===arr.length-1?.4:1}}>
                         <I.ArrowDown size={13}/>
                       </button>
@@ -2969,7 +3077,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </div>
             <button onClick={()=>setShowReorder(false)}
               style={{width:"100%",marginTop:14,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
-                background:P.gr,color:"#fff",border:"none"}}>
+                background:P.jade,color:"#fff",border:"none"}}>
               Done
             </button>
           </div>
@@ -3002,24 +3110,23 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               {ownerPlans.map(p=>(
                 <button key={p.id} onClick={()=>setCloneSource(p.id)}
                   style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                    padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",
-                    background:cloneSource===p.id?P.grS:P.sfA,
-                    border:`2px solid ${cloneSource===p.id?P.gr:P.line}`,
-                    color:cloneSource===p.id?P.grD:P.ink}}>
+                    padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",border:"none",
+                    background:cloneSource===p.id?P.jadeS:"rgba(0,0,0,.05)",
+                    color:cloneSource===p.id?P.jadeD:P.ink}}>
                   <div>
                     <div style={{fontWeight:600}}>{p.name}</div>
                     <div style={{fontSize:11,color:P.faint,marginTop:2}}>
                       {cur} {(p.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · {(p.categories||[]).length} categories
                     </div>
                   </div>
-                  {cloneSource===p.id&&<I.Check size={16} style={{color:P.gr,flexShrink:0}}/>}
+                  {cloneSource===p.id&&<I.Check size={16} style={{color:P.jade,flexShrink:0}}/>}
                 </button>
               ))}
             </div>
 
             <button onClick={handleCreatePlan} disabled={!cloneSource}
               style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
-                background:P.gr,color:"#fff",border:"none",opacity:cloneSource?1:.4}}>
+                background:P.jade,color:"#fff",border:"none",opacity:cloneSource?1:.4}}>
               Create plan for {fmtMonth(viewMonth)}
             </button>
           </div>
@@ -3040,7 +3147,7 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-          <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Transfer — {transferModal.name}</h3>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Transfer — {transferModal.name}</h3>
           <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
         </div>
         <div style={{fontSize:12,color:P.faint,marginBottom:16}}>
@@ -3049,18 +3156,16 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
 
         <div style={{display:"flex",gap:6,marginBottom:14}}>
           <button onClick={()=>setAmount(String(transferModal.budget))}
-            style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:13,fontWeight:600,
-              background:Number(amount)===transferModal.budget?P.brS:P.sfA,
-              color:Number(amount)===transferModal.budget?P.br:P.sub,
-              border:`1px solid ${Number(amount)===transferModal.budget?P.br:P.line}`}}>
+            style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:13,fontWeight:600,border:"none",
+              background:Number(amount)===transferModal.budget?P.brS:"rgba(0,0,0,.05)",
+              color:Number(amount)===transferModal.budget?P.br:P.sub}}>
             Budgeted {fmt(transferModal.budget)}
           </button>
           {transferModal.suggested&&transferModal.suggested!==transferModal.budget&&(
             <button onClick={()=>setAmount(String(transferModal.suggested))}
-              style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:13,fontWeight:600,
-                background:Number(amount)===transferModal.suggested?P.grS:P.sfA,
-                color:Number(amount)===transferModal.suggested?P.grD:P.sub,
-                border:`1px solid ${Number(amount)===transferModal.suggested?P.gr:P.line}`}}>
+              style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:13,fontWeight:600,border:"none",
+                background:Number(amount)===transferModal.suggested?P.jadeS:"rgba(0,0,0,.05)",
+                color:Number(amount)===transferModal.suggested?P.jadeD:P.sub}}>
               Last time {fmt(transferModal.suggested)}
             </button>
           )}
@@ -3072,12 +3177,12 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
             <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)}
               onBlur={e=>setAmount(String(evalMathExpr(e.target.value,Number(amount)||0)))}
               onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} autoFocus
-              style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
           </div>
           <div style={{flex:1}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Date</div>
             <input type="date" value={date} onChange={e=>setDate(e.target.value)}
-              style={{width:"100%",borderRadius:10,padding:"10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+              style={{width:"100%",borderRadius:10,padding:"10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
           </div>
         </div>
 
@@ -3095,9 +3200,9 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
 function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners}){
   const total=hh.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
   const mine=total*(hh.splitMine/100),theirs=total-mine;
-  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+  const card={background:P.neuBg,borderRadius:16,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`};
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div style={{...card,padding:16,marginBottom:16}}>
         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12}}>
           <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Shared monthly expenses</span>
@@ -3168,69 +3273,68 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
 
   const Card=b=>{
     const isOpen=openId===b.id;
-    const accent=b.owner==="me"?P.gr:P.br;
-    const accentS=b.owner==="me"?P.grS:P.brS;
+    const accent=b.owner==="me"?P.jade:P.br;
+    const accentS=b.owner==="me"?P.jadeS:P.brS;
     return(
-      <div key={b.id} style={{borderRadius:18,background:P.sf,border:`1px solid ${P.line}`,overflow:"hidden",
-        position:"relative",display:"flex",flexDirection:"column"}}>
+      <div key={b.id} style={{...neu(18),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
         {/* accent strip — reads as the "card network" band of a wallet pass */}
         <div style={{height:5,background:accent}}/>
         <div style={{padding:16,flex:1,display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:11,fontWeight:600,color:accent,textTransform:"uppercase",letterSpacing:".05em"}}>{b.bank||"Bank"}</div>
-              <div style={{fontSize:16,fontWeight:700,color:P.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.name||"Account"}</div>
+              <div style={{fontSize:16,fontWeight:700,color:P.neuInk,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.name||"Account"}</div>
             </div>
             <button onClick={()=>setOpenId(isOpen?null:b.id)}
-              title="Account settings"
-              style={{flexShrink:0,background:isOpen?accentS:P.sfA,border:`1px solid ${P.line}`,borderRadius:10,padding:6,color:isOpen?accent:P.sub}}>
+              title="Account settings" className="neu-btn"
+              style={{flexShrink:0,borderRadius:10,padding:6,color:isOpen?accent:P.neuSub}}>
               <I.Settings size={14}/>
             </button>
           </div>
 
           <div>
-            <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.ink}}>
+            <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
               {b.currency} {Number(b.balance||0).toLocaleString("en-US")}
             </div>
-            {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.faint,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
+            {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
           </div>
 
           <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
             <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",background:accentS,color:accent}}>{b.currency}</span>
-            <span style={{fontSize:10,color:P.faint}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
+            <span style={{fontSize:10,color:P.neuSub}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
             <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{owners[b.owner]}</span>
           </div>
         </div>
 
         {/* ── settings panel — edit fields, collapsed by default ── */}
         {isOpen&&(
-          <div style={{borderTop:`1px solid ${P.line}`,background:P.sfA,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{...neuInset(0),borderRadius:0,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
             <div style={{display:"flex",gap:8}}>
               <input value={b.name} placeholder="Account name" onChange={e=>updateBank(b.id,{name:e.target.value})}
-                className="bare" style={{flex:1,fontSize:13,fontWeight:600,background:P.sf,borderRadius:8,padding:"6px 8px",border:`1px solid ${P.line}`}}/>
+                className="bare" style={{...neu(8),flex:1,fontSize:13,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
               <input value={b.bank} placeholder="Bank name" onChange={e=>updateBank(b.id,{bank:e.target.value})}
-                className="bare" style={{flex:1,fontSize:13,background:P.sf,borderRadius:8,padding:"6px 8px",border:`1px solid ${P.line}`}}/>
+                className="bare" style={{...neu(8),flex:1,fontSize:13,padding:"6px 8px",color:P.neuInk}}/>
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <select value={b.country} onChange={e=>updateBank(b.id,{country:e.target.value})}
-                style={{flex:1,borderRadius:8,padding:"6px 8px",fontSize:12,background:P.sf,border:`1px solid ${P.line}`,color:P.sub}}>
+                style={{...neu(8),flex:1,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
                 {COUNTRIES.map(([c,l])=><option key={c} value={c}>{l}</option>)}
               </select>
               <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})}
-                style={{borderRadius:8,padding:"6px 8px",fontSize:12,background:P.sf,border:`1px solid ${P.line}`,color:P.sub}}>
+                style={{...neu(8),padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
                 {BANK_CCY.map(c=><option key={c}>{c}</option>)}
               </select>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:12,color:P.faint}}>Balance ({b.currency})</span>
+              <span style={{fontSize:12,color:P.neuSub}}>Balance ({b.currency})</span>
               <input type="text" inputMode="decimal" value={b.balance} onChange={e=>updateBank(b.id,{balance:e.target.value})}
                 onBlur={e=>updateBank(b.id,{balance:evalMathExpr(e.target.value,0)})}
                 onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
-                className="bare tnum" style={{flex:1,textAlign:"right",fontSize:14,fontWeight:600,background:P.sf,borderRadius:8,padding:"6px 8px",border:`1px solid ${P.line}`}}/>
+                className="bare tnum" style={{...neuInset(8),flex:1,textAlign:"right",fontSize:14,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
             </div>
-            <button onClick={()=>{removeBank(b.id);setOpenId(null);}}
-              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:8,padding:"7px 0",
-                fontSize:12,fontWeight:600,background:"transparent",border:`1px solid ${P.line}`,color:P.red}}>
+            <button onClick={()=>{removeBank(b.id);setOpenId(null);}} className="neu-btn"
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"7px 0",
+                fontSize:12,fontWeight:600,color:P.wine}}>
               <I.Trash size={12}/>Delete account
             </button>
           </div>
@@ -3240,9 +3344,10 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
   };
 
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       {/* ── top summary — total liquid assets, split by owner ── */}
-      <div style={{background:P.deep,color:"#fff",borderRadius:16,padding:16,marginBottom:16,
+      <div style={{background:P.deep,color:"#fff",borderRadius:18,padding:16,marginBottom:16,
+        boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`,
         display:"flex",flexWrap:"wrap",gap:16,alignItems:"center"}}>
         <div style={{flex:"1 1 200px"}}>
           <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total liquid assets</div>
@@ -3253,11 +3358,11 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
           </div>
         </div>
         <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
-          <div style={{flex:1,background:"rgba(255,255,255,.08)",borderRadius:12,padding:"10px 12px"}}>
+          <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
             <div style={{fontSize:11,color:P.deepHi}}>{owners.me}</div>
             <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(meTotal)}</div>
           </div>
-          <div style={{flex:1,background:"rgba(255,255,255,.08)",borderRadius:12,padding:"10px 12px"}}>
+          <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
             <div style={{fontSize:11,color:P.deepHi}}>{owners.wife}</div>
             <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(wifeTotal)}</div>
           </div>
@@ -3270,13 +3375,13 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
         return(
           <section key={ok} style={{marginBottom:22}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.gr:P.br}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
+              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
+              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
               {items.map(Card)}
-              <button onClick={()=>addBank(ok)}
-                style={{borderRadius:18,minHeight:150,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr,
+              <button onClick={()=>addBank(ok)} className="neu-btn"
+                style={{borderRadius:18,minHeight:150,color:P.jade,
                   display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
                 <I.Plus size={20}/>Add {owners[ok]}'s account
               </button>
@@ -3383,9 +3488,10 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   const projData=series.map((v,i)=>({year:`Y${i}`,value:v}));
 
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       {/* hero */}
-      <div className="fade-up" style={{borderRadius:16,padding:20,marginBottom:16,background:P.deep,color:"#fff"}}>
+      <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.deep,color:"#fff",
+        boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
         <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Portfolio value (USD)</div>
         <span key={Math.round(totVal)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{usd(totVal)}</span>
         {(sarRate||convert)&&(
@@ -3412,25 +3518,25 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         const data=pts.map(p=>({label:fmtMo(p.month),value:p.value}));
         const pctChange=first>0?((last-first)/first*100):0;
         return(
-          <div className="fade-up-1" style={{borderRadius:16,padding:16,marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
+          <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-              <h3 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Portfolio over time</h3>
-              <span className="tnum" style={{fontSize:13,fontWeight:600,color:trending?P.gr:P.red}}>
+              <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Portfolio over time</h3>
+              <span className="tnum" style={{fontSize:13,fontWeight:600,color:trending?P.jade:P.wine}}>
                 {trending?"▲":"▼"} {Math.abs(pctChange).toFixed(1)}% total
               </span>
             </div>
             <div style={{width:"100%",height:160}}>
               <ResponsiveContainer>
                 <LineChart data={data} margin={{top:4,right:8,bottom:0,left:-16}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={P.sfA}/>
-                  <XAxis dataKey="label" tick={{fontSize:10,fill:P.faint}}/>
-                  <YAxis tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`$${Math.round(v/1000)}k`}/>
+                  <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
+                  <XAxis dataKey="label" tick={{fontSize:10,fill:P.neuSub}}/>
+                  <YAxis tick={{fontSize:10,fill:P.neuSub}} tickFormatter={v=>`$${Math.round(v/1000)}k`}/>
                   <Tooltip formatter={v=>`$${Math.round(v).toLocaleString("en-US")}`}/>
                   <Line type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2.5} dot={{r:3,fill:chartColor}}/>
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+            <div style={{fontSize:11,color:P.neuSub,marginTop:6}}>
               Captured monthly when you refresh prices · {pts.length} data point{pts.length!==1?"s":""}
             </div>
           </div>
@@ -3439,20 +3545,20 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 
       {/* controls */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-        <h2 style={{fontSize:14,fontWeight:600,color:P.sub,margin:0}}>Holdings</h2>
-        <button onClick={refresh} disabled={loading}
-          style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"6px 12px",fontSize:14,fontWeight:500,background:P.gr,color:"#fff",border:"none",opacity:loading?.6:1}}>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Holdings</h2>
+        <button onClick={refresh} disabled={loading} className="neu-btn"
+          style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade,opacity:loading?.6:1}}>
           <I.Refresh size={14} style={loading?{animation:"spin .9s linear infinite"}:null}/>
           {loading?"Fetching…":"Refresh prices"}
         </button>
       </div>
-      {err&&<div style={{fontSize:12,color:P.red,marginBottom:8,padding:"8px 12px",background:P.redS,borderRadius:8}}>{err}</div>}
-      {updatedAt&&!err&&<div style={{fontSize:11,color:P.faint,marginBottom:8}}>Prices updated {new Date(updatedAt).toLocaleTimeString()}</div>}
+      {err&&<div style={{fontSize:12,color:P.wine,marginBottom:8,padding:"8px 12px",background:P.wineS,borderRadius:8}}>{err}</div>}
+      {updatedAt&&!err&&<div style={{fontSize:11,color:P.neuSub,marginBottom:8}}>Prices updated {new Date(updatedAt).toLocaleTimeString()}</div>}
 
       {/* holdings list */}
-      <div style={{borderRadius:16,overflow:"hidden",marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
+      <div style={{...neu(16),overflow:"hidden",marginBottom:16}}>
         {rows.map(r=>(
-          <div key={r.id} style={{borderBottom:`1px solid ${P.sfA}`}}>
+          <div key={r.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
             {/* summary row */}
             <div style={{padding:"12px 16px"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -3463,12 +3569,12 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                     if(!t||r.name)return; // don't overwrite an existing name
                     fetchName(r.id,t);
                   }}
-                  className="bare" style={{fontSize:14,fontWeight:700,width:80,letterSpacing:".03em"}}/>
-                <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.sub,flex:1,minWidth:0}}/>
-                <span className="tnum" style={{fontSize:14,fontWeight:600}}>{usd(r.value)}</span>
-                <button onClick={()=>removeInv(r.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
+                  className="bare" style={{fontSize:14,fontWeight:700,width:80,letterSpacing:".03em",color:P.neuInk}}/>
+                <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.neuSub,flex:1,minWidth:0}}/>
+                <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{usd(r.value)}</span>
+                <button onClick={()=>removeInv(r.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
               </div>
-              <div style={{marginTop:6,display:"flex",flexWrap:"wrap",alignItems:"center",gap:14,fontSize:13,color:P.sub}} className="tnum">
+              <div style={{marginTop:6,display:"flex",flexWrap:"wrap",alignItems:"center",gap:14,fontSize:13,color:P.neuSub}} className="tnum">
                 <span>{r.shares.toFixed(4)} shares</span>
                 <span>Avg {usd(r.avgCost)}</span>
                 <span>Price {r.price>0?usd(r.price):"—"}</span>
@@ -3478,13 +3584,13 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
               </div>
               {/* trade log toggle + add trade */}
               <div style={{marginTop:8,display:"flex",gap:8}}>
-                <button onClick={()=>openTrade(r.id)}
-                  style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:500,background:P.grS,color:P.grD,border:"none"}}>
+                <button onClick={()=>openTrade(r.id)} className="neu-btn"
+                  style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
                   <I.Plus size={12}/>Add trade
                 </button>
                 {(r.trades||[]).length>0&&(
-                  <button onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}
-                    style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"4px 10px",fontSize:12,color:P.sub,background:P.sfA,border:`1px solid ${P.line}`}}>
+                  <button onClick={()=>setExpandedId(expandedId===r.id?null:r.id)} className="neu-btn"
+                    style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
                     {expandedId===r.id?"Hide":"Show"} {r.trades.length} trade{r.trades.length!==1?"s":""}
                   </button>
                 )}
@@ -3493,43 +3599,43 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 
             {/* trade history */}
             {expandedId===r.id&&(r.trades||[]).length>0&&(
-              <div style={{background:P.sfA,borderTop:`1px solid ${P.line}`}}>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:11,fontWeight:600,color:P.faint,textTransform:"uppercase",letterSpacing:".06em"}}>
+              <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em"}}>
                   <span>Date</span><span style={{textAlign:"right"}}>Type</span><span style={{textAlign:"right"}}>Shares</span><span style={{textAlign:"right"}}>Price</span><span/>
                 </div>
                 {[...(r.trades||[])].sort((a,b)=>a.date.localeCompare(b.date)).map(tr=>(
-                  <div key={tr.id} style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:13,alignItems:"center",borderTop:`1px solid ${P.line}`}}>
-                    <span className="tnum" style={{color:P.sub}}>{tr.date}</span>
-                    <span style={{textAlign:"right",fontWeight:600,color:tr.type==="buy"?P.gr:P.red,textTransform:"uppercase",fontSize:11}}>{tr.type}</span>
-                    <span className="tnum" style={{textAlign:"right"}}>{(Number(tr.shares)||0).toFixed(4)}</span>
-                    <span className="tnum" style={{textAlign:"right"}}>{usd(tr.price)}</span>
-                    <button onClick={()=>removeTrade(r.id,tr.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,padding:4}}><I.X size={12}/></button>
+                  <div key={tr.id} style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:13,alignItems:"center",borderTop:"1px solid rgba(0,0,0,.05)"}}>
+                    <span className="tnum" style={{color:P.neuSub}}>{tr.date}</span>
+                    <span style={{textAlign:"right",fontWeight:600,color:tr.type==="buy"?P.jade:P.wine,textTransform:"uppercase",fontSize:11}}>{tr.type}</span>
+                    <span className="tnum" style={{textAlign:"right",color:P.neuInk}}>{(Number(tr.shares)||0).toFixed(4)}</span>
+                    <span className="tnum" style={{textAlign:"right",color:P.neuInk}}>{usd(tr.price)}</span>
+                    <button onClick={()=>removeTrade(r.id,tr.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4,padding:4}}><I.X size={12}/></button>
                   </div>
                 ))}
               </div>
             )}
           </div>
         ))}
-        <button onClick={addInv} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}>
+        <button onClick={addInv} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
           <I.Plus size={14}/>Add holding
         </button>
       </div>
 
       {/* projection */}
-      <div style={{borderRadius:16,padding:16,background:P.sf,border:`1px solid ${P.line}`}}>
-        <h3 style={{fontSize:14,fontWeight:600,color:P.sub,margin:"0 0 8px"}}>Growth projection ({projection.rate||8}%/yr)</h3>
+      <div style={{...neu(16),padding:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 8px"}}>Growth projection ({projection.rate||8}%/yr)</h3>
         <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:10,fontSize:13}}>
-          <label style={{color:P.sub}}>+$/mo <input type="number" value={projection.monthly} onChange={e=>setProjection({monthly:Number(e.target.value)})} className="bare tnum" style={{width:80,fontWeight:600}}/></label>
-          <label style={{color:P.sub}}>Years <input type="number" value={projection.years} onChange={e=>setProjection({years:Number(e.target.value)})} className="bare tnum" style={{width:56,fontWeight:600}}/></label>
-          <label style={{color:P.sub}}>Rate % <input type="number" value={projection.rate??8} onChange={e=>setProjection({rate:Number(e.target.value)})} className="bare tnum" style={{width:48,fontWeight:600}} step="0.5" min="0" max="30"/></label>
-          <span className="tnum" style={{marginLeft:"auto",fontWeight:600,color:P.gr}}>→ ${series[series.length-1].toLocaleString("en-US")}</span>
+          <label style={{color:P.neuSub}}>+$/mo <input type="number" value={projection.monthly} onChange={e=>setProjection({monthly:Number(e.target.value)})} className="bare tnum" style={{width:80,fontWeight:600,color:P.neuInk}}/></label>
+          <label style={{color:P.neuSub}}>Years <input type="number" value={projection.years} onChange={e=>setProjection({years:Number(e.target.value)})} className="bare tnum" style={{width:56,fontWeight:600,color:P.neuInk}}/></label>
+          <label style={{color:P.neuSub}}>Rate % <input type="number" value={projection.rate??8} onChange={e=>setProjection({rate:Number(e.target.value)})} className="bare tnum" style={{width:48,fontWeight:600,color:P.neuInk}} step="0.5" min="0" max="30"/></label>
+          <span className="tnum" style={{marginLeft:"auto",fontWeight:600,color:P.jade}}>→ ${series[series.length-1].toLocaleString("en-US")}</span>
         </div>
         <div style={{width:"100%",height:180}}>
           <ResponsiveContainer>
             <LineChart data={projData} margin={{top:8,right:8,bottom:0,left:-12}}>
-              <CartesianGrid strokeDasharray="3 3" stroke={P.sfA}/>
-              <XAxis dataKey="year" tick={{fontSize:11,fill:P.faint}}/>
-              <YAxis tick={{fontSize:11,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
+              <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
+              <XAxis dataKey="year" tick={{fontSize:11,fill:P.neuSub}}/>
+              <YAxis tick={{fontSize:11,fill:P.neuSub}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
               <Tooltip formatter={v=>`$${Math.round(v).toLocaleString("en-US")}`}/>
               <Line type="monotone" dataKey="value" stroke={P.br} strokeWidth={2} dot={false}/>
             </LineChart>
@@ -3543,7 +3649,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         <div className="modal-bg" onClick={()=>setTradeModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>
                 Add trade — {invs.find(x=>x.id===tradeModal)?.ticker||""}
               </h3>
               <button onClick={()=>setTradeModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
@@ -3552,9 +3658,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
               {["buy","sell"].map(t=>(
                 <button key={t} onClick={()=>setTradeForm(f=>({...f,type:t}))}
                   style={{flex:1,borderRadius:10,padding:"8px 0",fontSize:14,fontWeight:600,textTransform:"capitalize",
-                    background:tradeForm.type===t?(t==="buy"?P.gr:P.red):"transparent",
-                    color:tradeForm.type===t?"#fff":(t==="buy"?P.gr:P.red),
-                    border:`2px solid ${t==="buy"?P.gr:P.red}`}}>
+                    background:tradeForm.type===t?(t==="buy"?P.jade:P.wine):"transparent",
+                    color:tradeForm.type===t?"#fff":(t==="buy"?P.jade:P.wine),
+                    border:`2px solid ${t==="buy"?P.jade:P.wine}`}}>
                   {t==="buy"?"▲ Buy":"▼ Sell"}
                 </button>
               ))}
@@ -3563,17 +3669,17 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
               <div key={k} style={{marginBottom:12}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>{label}</div>
                 <input type={type} value={tradeForm[k]} onChange={e=>setTradeForm(f=>({...f,[k]:e.target.value}))}
-                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
             ))}
             {tradeForm.shares&&tradeForm.price&&(
-              <div style={{background:P.sfA,borderRadius:10,padding:10,marginBottom:12,fontSize:13,color:P.sub}} className="tnum">
+              <div style={{background:"rgba(0,0,0,.05)",borderRadius:10,padding:10,marginBottom:12,fontSize:13,color:P.sub}} className="tnum">
                 Total: ${(Number(tradeForm.shares)*Number(tradeForm.price)).toLocaleString("en-US",{minimumFractionDigits:2})}
               </div>
             )}
             <button onClick={submitTrade}
               style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
-                background:tradeForm.type==="buy"?P.gr:P.red,color:"#fff",border:"none"}}>
+                background:tradeForm.type==="buy"?P.jade:P.wine,color:"#fff",border:"none"}}>
               Confirm {tradeForm.type==="buy"?"Purchase":"Sale"}
             </button>
           </div>
@@ -3587,47 +3693,49 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 /* ── Asset / liability row (top-level so it doesn't remount on each keystroke) ── */
 function AssetRow({a,updateAsset,removeAsset}){
   return(
-    <div style={{padding:"12px 16px",borderBottom:`1px solid ${P.sfA}`}}>
+    <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(0,0,0,.06)"}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-        <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0}}/>
-        <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{borderRadius:8,padding:"2px 6px",fontSize:12,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}>
+        <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0,color:P.neuInk}}/>
+        <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
           {BANK_CCY.map(c=><option key={c}>{c}</option>)}
         </select>
-        <button onClick={()=>removeAsset(a.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4}}><I.X size={15}/></button>
+        <button onClick={()=>removeAsset(a.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
       </div>
       {a.kind==="asset"?(
         <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontSize:12,color:P.faint}}>{a.currency}</span>
+          <span style={{fontSize:12,color:P.neuSub}}>{a.currency}</span>
           <input type="number" value={a.value} onChange={e=>updateAsset(a.id,{value:Number(e.target.value)})}
-            className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600}}/>
+            className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
         </div>
       ):(
         /* Liability installment mode */
         <div>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
-            <button onClick={()=>updateAsset(a.id,{installment:true})}
-              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,background:a.installment?P.gr:"transparent",color:a.installment?"#fff":P.sub,border:`1px solid ${a.installment?P.gr:P.line}`}}>
+            <button onClick={()=>updateAsset(a.id,{installment:true})} className={a.installment?"":"neu-btn"}
+              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,border:"none",
+                ...(a.installment?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>
               Installment
             </button>
-            <button onClick={()=>updateAsset(a.id,{installment:false})}
-              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,background:!a.installment?P.gr:"transparent",color:!a.installment?"#fff":P.sub,border:`1px solid ${!a.installment?P.gr:P.line}`}}>
+            <button onClick={()=>updateAsset(a.id,{installment:false})} className={!a.installment?"":"neu-btn"}
+              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,border:"none",
+                ...(!a.installment?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>
               Fixed amount
             </button>
           </div>
           {a.installment?(
             <div style={{display:"flex",flexWrap:"wrap",gap:10,fontSize:13}}>
-              <label style={{color:P.sub,display:"flex",flexDirection:"column",gap:3}}>
+              <label style={{color:P.neuSub,display:"flex",flexDirection:"column",gap:3}}>
                 <span style={{fontSize:11}}>Monthly payment ({a.currency})</span>
                 <input type="number" value={a.monthly||""} onChange={e=>updateAsset(a.id,{monthly:Number(e.target.value)})}
-                  className="bare tnum" style={{width:110,fontSize:14,fontWeight:600,padding:"4px 6px",background:P.sfA,borderRadius:6}}/>
+                  className="bare tnum" style={{...neuInset(6),width:110,fontSize:14,fontWeight:600,padding:"4px 6px",color:P.neuInk}}/>
               </label>
-              <label style={{color:P.sub,display:"flex",flexDirection:"column",gap:3}}>
+              <label style={{color:P.neuSub,display:"flex",flexDirection:"column",gap:3}}>
                 <span style={{fontSize:11}}>Months remaining (as of)</span>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   <input type="number" value={a.monthsRemaining||""} onChange={e=>updateAsset(a.id,{monthsRemaining:Number(e.target.value)})}
-                    className="bare tnum" style={{width:56,fontSize:14,fontWeight:600,padding:"4px 6px",background:P.sfA,borderRadius:6}}/>
+                    className="bare tnum" style={{...neuInset(6),width:56,fontSize:14,fontWeight:600,padding:"4px 6px",color:P.neuInk}}/>
                   <input type="month" value={(a.asOfDate||"").slice(0,7)} onChange={e=>updateAsset(a.id,{asOfDate:e.target.value+"-01"})}
-                    style={{fontSize:12,padding:"4px 6px",background:P.sfA,border:`1px solid ${P.line}`,borderRadius:6,color:P.ink}}/>
+                    style={{...neuInset(6),fontSize:12,padding:"4px 6px",border:"none",color:P.neuInk}}/>
                 </div>
               </label>
               {(a.monthly&&a.monthsRemaining&&a.asOfDate)&&(()=>{
@@ -3635,12 +3743,13 @@ function AssetRow({a,updateAsset,removeAsset}){
                 const now=new Date();const ref=new Date(a.asOfDate);
                 const elapsed=Math.max(0,(now.getFullYear()-ref.getFullYear())*12+(now.getMonth()-ref.getMonth()));
                 const remaining=Math.max(0,a.monthsRemaining-elapsed);
+                const donePct=Math.min(100,(elapsed/a.monthsRemaining)*100);
                 return(
-                  <div style={{width:"100%",background:P.sfA,borderRadius:10,padding:10,marginTop:4}}>
-                    <div style={{fontSize:12,color:P.sub}}>Balance today: <strong className="tnum">{a.currency} {Math.round(bal).toLocaleString("en-US")}</strong></div>
-                    <div style={{fontSize:11,color:P.faint,marginTop:2}}>{remaining} months remaining · {elapsed} months paid</div>
-                    <div style={{marginTop:6,height:6,background:P.line,borderRadius:999,overflow:"hidden"}}>
-                      <div style={{width:`${Math.min(100,(elapsed/a.monthsRemaining)*100)}%`,height:"100%",background:P.gr}}/>
+                  <div style={{width:"100%",...neu(10),padding:10,marginTop:4}}>
+                    <div style={{fontSize:12,color:P.neuSub}}>Balance today: <strong className="tnum" style={{color:P.neuInk}}>{a.currency} {Math.round(bal).toLocaleString("en-US")}</strong></div>
+                    <div style={{fontSize:11,color:P.neuSub,marginTop:2,opacity:.85}}>{remaining} months remaining · {elapsed} months paid</div>
+                    <div style={{...neuInset(999),marginTop:6,height:8,overflow:"hidden"}}>
+                      <div className="liquid-fill" style={{width:`${donePct}%`,height:"100%",background:liquidFillBg(P.jade)}}/>
                     </div>
                   </div>
                 );
@@ -3648,9 +3757,9 @@ function AssetRow({a,updateAsset,removeAsset}){
             </div>
           ):(
             <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:12,color:P.faint}}>{a.currency}</span>
+              <span style={{fontSize:12,color:P.neuSub}}>{a.currency}</span>
               <input type="number" value={a.value||""} onChange={e=>updateAsset(a.id,{value:Number(e.target.value)})}
-                className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600}}/>
+                className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
             </div>
           )}
         </div>
@@ -3680,8 +3789,9 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
   const liabItems=assets.filter(a=>a.kind==="liability");
 
   return(
-    <div>
-      <div className="fade-up" style={{borderRadius:16,padding:20,marginBottom:16,background:P.deep,color:"#fff"}}>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
+      <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.deep,color:"#fff",
+        boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
         <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Net worth</div>
         <span key={Math.round(netWorth)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{sar(netWorth)}</span>
         <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:P.deepHi,fontSize:14}}>
@@ -3692,34 +3802,38 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         {delta!=null&&<div className="tnum" style={{fontSize:14,marginTop:6,color:delta>=0?"#6FC6DA":"#E89B8C"}}>{delta>=0?"▲":"▼"} {sar(Math.abs(delta))} since last snapshot</div>}
       </div>
 
-      <div className="fade-up-1" style={{borderRadius:16,padding:16,marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
-        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.sub}}>Composition</h3>
-        <div style={{display:"flex",height:12,width:"100%",overflow:"hidden",borderRadius:999,marginBottom:12,background:P.sfA}}>
-          {parts.slice(0,3).map(p=>gross>0&&p.value>0&&<div key={p.label} className="bar-animated" style={{width:`${(p.value/gross)*100}%`,height:"100%",background:p.color}}/>)}
+      <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Composition</h3>
+        <div style={{...neuInset(999),height:12,width:"100%",overflow:"hidden",marginBottom:12,position:"relative"}}>
+          <div style={{display:"flex",height:"100%",width:"100%"}}>
+            {parts.slice(0,3).map(p=>gross>0&&p.value>0&&<div key={p.label} className="bar-animated liquid-fill" style={{width:`${(p.value/gross)*100}%`,height:"100%",background:liquidFillBg(p.color)}}/>)}
+          </div>
         </div>
         {parts.map(p=>(
           <div key={p.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0",fontSize:14}}>
-            <span style={{display:"flex",alignItems:"center",gap:8}}><span style={{width:10,height:10,borderRadius:999,background:p.color}}/>{p.label}</span>
-            <span className="tnum" style={{color:p.value<0?P.red:P.sub}}>{p.value<0?`− ${sar(-p.value)}`:sar(p.value)}</span>
+            <span style={{display:"flex",alignItems:"center",gap:8,color:P.neuInk}}><span style={{width:10,height:10,borderRadius:999,background:p.color}}/>{p.label}</span>
+            <span className="tnum" style={{color:p.value<0?P.wine:P.neuSub}}>{p.value<0?`− ${sar(-p.value)}`:sar(p.value)}</span>
           </div>
         ))}
       </div>
 
-      <div className="fade-up-2" style={{borderRadius:16,overflow:"hidden",marginBottom:16,background:P.sf,border:`1px solid ${P.line}`}}>
-        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,background:P.sfA,borderBottom:`1px solid ${P.line}`}}>Assets</div>
+      <div className="fade-up-2" style={{...neu(16),overflow:"hidden",marginBottom:16}}>
+        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub}}>Assets</div>
         {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
-        <button onClick={()=>addAsset("asset")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.gr,background:"transparent",border:"none"}}><I.Plus size={14}/>Add asset</button>
-        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,background:P.sfA,borderTop:`1px solid ${P.line}`,borderBottom:`1px solid ${P.line}`}}>Liabilities</div>
+        <button onClick={()=>addAsset("asset")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}><I.Plus size={14}/>Add asset</button>
+        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub,borderTop:"1px solid rgba(0,0,0,.06)"}}>Liabilities</div>
         {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
-        <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.red,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
+        <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.wine,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
       </div>
 
-      <div className="fade-up-3" style={{borderRadius:16,padding:16,background:P.sf,border:`1px solid ${P.line}`}}>
+      <div className="fade-up-3" style={{...neu(16),padding:16}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <h3 style={{fontSize:14,fontWeight:600,margin:0,color:P.sub}}>Net worth over time</h3>
+          <h3 style={{fontSize:14,fontWeight:600,margin:0,color:P.neuSub}}>Net worth over time</h3>
           <div style={{display:"flex",gap:4}}>
             {["month","year"].map(gv=>(
-              <button key={gv} onClick={()=>setGran(gv)} style={{borderRadius:999,padding:"3px 10px",fontSize:12,textTransform:"capitalize",background:gran===gv?P.ink:P.sfA,color:gran===gv?"#fff":P.sub,border:"none"}}>{gv}</button>
+              <button key={gv} onClick={()=>setGran(gv)} className={gran===gv?"":"neu-btn"}
+                style={{borderRadius:999,padding:"3px 10px",fontSize:12,textTransform:"capitalize",border:"none",
+                  ...(gran===gv?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>{gv}</button>
             ))}
           </div>
         </div>
@@ -3727,32 +3841,32 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
           <div style={{width:"100%",height:200}}>
             <ResponsiveContainer>
               <LineChart data={pts} margin={{top:8,right:8,bottom:0,left:-12}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={P.sfA}/>
-                <XAxis dataKey="label" tick={{fontSize:11,fill:P.faint}}/>
-                <YAxis tick={{fontSize:11,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
+                <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
+                <XAxis dataKey="label" tick={{fontSize:11,fill:P.neuSub}}/>
+                <YAxis tick={{fontSize:11,fill:P.neuSub}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
                 <Tooltip formatter={v=>sar(v)}/>
-                <Line type="monotone" dataKey="net" stroke={P.gr} strokeWidth={2} dot={{r:3}}/>
+                <Line type="monotone" dataKey="net" stroke={P.jade} strokeWidth={2} dot={{r:3}}/>
               </LineChart>
             </ResponsiveContainer>
           </div>
-        ):<p style={{fontSize:13,color:P.faint}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
+        ):<p style={{fontSize:13,color:P.neuSub}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginTop:12}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.gr,fontWeight:500}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.jade,fontWeight:500}}>
             <I.Check size={13}/>This month syncs automatically
           </div>
-          <button onClick={captureSnapshot} style={{borderRadius:999,padding:"6px 12px",fontSize:12,fontWeight:500,background:P.sfA,color:P.sub,border:`1px solid ${P.line}`}}>Force refresh now</button>
+          <button onClick={captureSnapshot} className="neu-btn" style={{padding:"6px 12px",fontSize:12,fontWeight:500,color:P.neuSub}}>Force refresh now</button>
         </div>
-        <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${P.sfA}`}}>
-          <div><div style={{color:P.faint,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{borderRadius:8,padding:"4px 8px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/></div>
-          <div><div style={{color:P.faint,fontSize:10}}>Net worth (SAR)</div><input type="number" value={pv} placeholder="0" onChange={e=>setPv(e.target.value)} className="tnum" style={{borderRadius:8,padding:"4px 8px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,width:120}}/></div>
-          <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} style={{borderRadius:8,padding:"6px 12px",fontSize:14,fontWeight:500,background:P.sfA,color:P.gr,border:`1px solid ${P.line}`}}>Add entry</button>
+        <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid rgba(0,0,0,.06)"}}>
+          <div><div style={{color:P.neuSub,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk}}/></div>
+          <div><div style={{color:P.neuSub,fontSize:10}}>Net worth (SAR)</div><input type="number" value={pv} placeholder="0" onChange={e=>setPv(e.target.value)} className="tnum" style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk,width:120}}/></div>
+          <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} className="neu-btn" style={{padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade}}>Add entry</button>
         </div>
         {sorted.length>0&&(
           <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:6}}>
             {sorted.map(s=>(
-              <span key={s.id} className="tnum" style={{display:"inline-flex",alignItems:"center",gap:4,borderRadius:999,padding:"4px 10px",fontSize:12,background:P.sfA,color:P.sub}}>
+              <span key={s.id} className="tnum neu-btn" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",fontSize:12,color:P.neuSub,borderRadius:999}}>
                 {fmtMo(s.month)} · {sar(s.net)}
-                <button onClick={()=>removeSnap(s.id)} style={{background:"transparent",border:"none",color:P.red}}><I.X size={11}/></button>
+                <button onClick={()=>removeSnap(s.id)} style={{background:"transparent",border:"none",color:P.wine}}><I.X size={11}/></button>
               </span>
             ))}
           </div>
@@ -3768,53 +3882,53 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
   const setAmount=setFxAmount,setFrom=setFxFrom,setTo=setFxTo;
   const result=convert(amount,from,to);
   const one=convert(1,from,to);
-  const card={background:P.sf,border:`1px solid ${P.line}`,borderRadius:16};
+  const card={background:P.neuBg,borderRadius:16,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`};
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div className="fade-up" style={{...card,padding:16,marginBottom:16}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Live converter</span>
-          <button onClick={onRefresh} disabled={ratesLoading} style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,background:P.sfA,color:P.gr,border:`1px solid ${P.line}`}}>
+          <span style={{fontSize:13,fontWeight:600,color:P.neuSub}}>Live converter</span>
+          <button onClick={onRefresh} disabled={ratesLoading} className="neu-btn" style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
             <I.Refresh size={13} style={ratesLoading?{animation:"spin .9s linear infinite"}:null}/>Refresh
           </button>
         </div>
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
           <input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))} className="tnum"
-            style={{borderRadius:10,padding:"8px 10px",fontSize:18,fontWeight:600,width:130,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
-          <select value={from} onChange={e=>setFrom(e.target.value)} style={{borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`}}>
+            style={{...neuInset(10),padding:"8px 10px",fontSize:18,fontWeight:600,width:130,border:"none",color:P.neuInk}}/>
+          <select value={from} onChange={e=>setFrom(e.target.value)} style={{...neu(10),padding:"8px 10px",fontSize:14,border:"none",color:P.neuInk}}>
             {FX_CODES.map(c=><option key={c}>{c}</option>)}
           </select>
-          <button onClick={()=>{setFrom(to);setTo(from);}} style={{borderRadius:999,padding:8,background:P.sfA,border:`1px solid ${P.line}`,color:P.sub}}><I.Swap size={16}/></button>
-          <select value={to} onChange={e=>setTo(e.target.value)} style={{borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`}}>
+          <button onClick={()=>{setFrom(to);setTo(from);}} className="neu-btn" style={{borderRadius:999,padding:8,color:P.neuSub}}><I.Swap size={16}/></button>
+          <select value={to} onChange={e=>setTo(e.target.value)} style={{...neu(10),padding:"8px 10px",fontSize:14,border:"none",color:P.neuInk}}>
             {FX_CODES.map(c=><option key={c}>{c}</option>)}
           </select>
         </div>
         <div style={{marginTop:14}}>
           {result!=null
             ?<div>
-              <div key={`${from}${to}${amount}`} className="serif tnum num-flash" style={{fontSize:30,fontWeight:600,color:P.ink}}>{result.toLocaleString("en-US",{maximumFractionDigits:2})} <span style={{fontSize:16,color:P.sub}}>{to}</span></div>
-              <div style={{fontSize:12,color:P.faint}}>1 {from} = {one.toLocaleString("en-US",{maximumFractionDigits:4})} {to}</div>
+              <div key={`${from}${to}${amount}`} className="serif tnum num-flash" style={{fontSize:30,fontWeight:600,color:P.neuInk}}>{result.toLocaleString("en-US",{maximumFractionDigits:2})} <span style={{fontSize:16,color:P.neuSub}}>{to}</span></div>
+              <div style={{fontSize:12,color:P.neuSub}}>1 {from} = {one.toLocaleString("en-US",{maximumFractionDigits:4})} {to}</div>
             </div>
-            :<div style={{fontSize:14,color:P.red}}>{ratesErr?"Rates unavailable — tap refresh.":"Loading rates…"}</div>
+            :<div style={{fontSize:14,color:P.wine}}>{ratesErr?"Rates unavailable — tap refresh.":"Loading rates…"}</div>
           }
         </div>
       </div>
       <div className="fade-up-1" style={{...card,padding:16}}>
-        <div style={{fontSize:13,fontWeight:600,color:P.sub,marginBottom:10}}>Quick rates</div>
+        <div style={{fontSize:13,fontWeight:600,color:P.neuSub,marginBottom:10}}>Quick rates</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
           {[["USD","SAR"],["SAR","PHP"],["USD","PHP"],["AED","PHP"]].map(([f,t])=>{
             const v=convert(1,f,t);
             return(
-              <div key={f+t} style={{borderRadius:12,padding:12,background:P.sfA}}>
-                <div style={{fontSize:11,color:P.faint}}>1 {f} →</div>
-                <div className="tnum" style={{fontSize:18,fontWeight:600,color:P.ink}}>
-                  {v==null?"—":v.toLocaleString("en-US",{maximumFractionDigits:t==="PHP"?2:4})} <span style={{fontSize:12,color:P.sub}}>{t}</span>
+              <div key={f+t} style={{...neuInset(12),padding:12}}>
+                <div style={{fontSize:11,color:P.neuSub}}>1 {f} →</div>
+                <div className="tnum" style={{fontSize:18,fontWeight:600,color:P.neuInk}}>
+                  {v==null?"—":v.toLocaleString("en-US",{maximumFractionDigits:t==="PHP"?2:4})} <span style={{fontSize:12,color:P.neuSub}}>{t}</span>
                 </div>
               </div>
             );
           })}
         </div>
-        {ratesAt&&<div style={{fontSize:11,color:P.faint,marginTop:10}}>Updated {new Date(ratesAt).toLocaleString()}</div>}
+        {ratesAt&&<div style={{fontSize:11,color:P.neuSub,marginTop:10}}>Updated {new Date(ratesAt).toLocaleString()}</div>}
       </div>
     </div>
   );
@@ -3828,7 +3942,7 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
   const Icon=goalIcon(g.type);
   const R=26,C=2*Math.PI*R;
   return(
-    <div style={{borderRadius:16,padding:14,background:P.sf,border:`1px solid ${P.line}`,display:"flex",flexDirection:"column",gap:8}}>
+    <div style={{borderRadius:16,padding:14,background:P.neuBg,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`,display:"flex",flexDirection:"column",gap:8}}>
       {/* top row: type icon + delete */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <button onClick={()=>openTypePicker(g.id)} title="Change goal type"
@@ -3836,28 +3950,28 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
             background:g.color+"22",color:g.color,border:"none"}}>
           <Icon size={18}/>
         </button>
-        <button onClick={()=>removeGoal(g.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,padding:2}}><I.X size={15}/></button>
+        <button onClick={()=>removeGoal(g.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4,padding:2}}><I.X size={15}/></button>
       </div>
 
       {/* name */}
       <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare"
-        style={{fontSize:14,fontWeight:600,width:"100%",minWidth:0}}/>
+        style={{fontSize:14,fontWeight:600,width:"100%",minWidth:0,color:P.neuInk}}/>
 
       {/* ring progress */}
       <div style={{display:"flex",justifyContent:"center",padding:"2px 0"}}>
         <svg width="72" height="72" viewBox="0 0 72 72">
-          <circle cx="36" cy="36" r={R} stroke={P.sfA} strokeWidth="7" fill="none"/>
+          <circle cx="36" cy="36" r={R} stroke={P.neuLo} strokeWidth="7" fill="none" opacity=".5"/>
           <circle cx="36" cy="36" r={R} stroke={g.color} strokeWidth="7" fill="none" strokeLinecap="round"
             strokeDasharray={C} strokeDashoffset={C*(1-pctDone/100)} transform="rotate(-90 36 36)"
             style={{transition:"stroke-dashoffset .5s"}}/>
-          <text x="36" y="40" textAnchor="middle" fontSize="15" fontWeight="700" fill={P.ink} className="tnum">{pctDone.toFixed(0)}%</text>
+          <text x="36" y="40" textAnchor="middle" fontSize="15" fontWeight="700" fill={P.neuInk} className="tnum">{pctDone.toFixed(0)}%</text>
         </svg>
       </div>
 
       {/* saved / target */}
       <div style={{textAlign:"center"}} className="tnum">
-        <div style={{fontSize:14,fontWeight:700,color:P.ink}}>{fmt(saved)}</div>
-        <div style={{fontSize:11,color:P.faint}}>of {fmt(g.target)}</div>
+        <div style={{fontSize:14,fontWeight:700,color:P.neuInk}}>{fmt(saved)}</div>
+        <div style={{fontSize:11,color:P.neuSub}}>of {fmt(g.target)}</div>
       </div>
 
       {/* actions */}
@@ -3866,8 +3980,8 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
           style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,borderRadius:999,padding:"6px 0",fontSize:12,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
           <I.Plus size={12}/>Add
         </button>
-        <button onClick={()=>openDetails(g.id)} title="Details"
-          style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:"6px 10px",fontSize:12,fontWeight:600,color:P.sub,background:P.sfA,border:`1px solid ${P.line}`}}>
+        <button onClick={()=>openDetails(g.id)} title="Details" className="neu-btn"
+          style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:"6px 10px",fontSize:12,fontWeight:600,color:P.neuSub}}>
           ⋯
         </button>
       </div>
@@ -3888,22 +4002,22 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
   const openTypePicker=id=>setTypePicker(id);
 
   return(
-    <div>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       {["me","wife"].map(ok=>{
         const list=goals.filter(g=>g.owner===ok);
         return(
           <section key={ok} style={{marginBottom:22}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.gr:P.br}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.grD:P.br,margin:0}}>{owners[ok]}'s goals</h2>
+              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
+              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s goals</h2>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:10}}>
               {list.map(g=>(
                 <GoalSquare key={g.id} {...{g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
               ))}
               {/* add-goal square */}
-              <button onClick={()=>addGoal(ok)}
-                style={{borderRadius:16,padding:14,minHeight:150,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr,
+              <button onClick={()=>addGoal(ok)} className="neu-btn"
+                style={{borderRadius:16,padding:14,minHeight:150,color:P.jade,
                   display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
                 <I.Plus size={20}/>Add goal
               </button>
@@ -3921,7 +4035,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
           <div className="modal-bg" onClick={()=>setTypePicker(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Goal type — {g.name}</h3>
+                <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Goal type — {g.name}</h3>
                 <button onClick={()=>setTypePicker(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
@@ -3931,8 +4045,8 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                   return(
                     <button key={key} onClick={()=>{updateGoal(g.id,{type:key});setTypePicker(null);}}
                       style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"12px 6px",borderRadius:12,
-                        background:active?g.color+"22":P.sfA,color:active?g.color:P.sub,
-                        border:`1px solid ${active?g.color:P.line}`,fontSize:11,fontWeight:600,textAlign:"center",lineHeight:1.2}}>
+                        background:active?g.color+"22":"rgba(0,0,0,.04)",color:active?g.color:P.sub,
+                        border:active?`1px solid ${g.color}`:"1px solid transparent",fontSize:11,fontWeight:600,textAlign:"center",lineHeight:1.2}}>
                       <Icon size={22}/>{label}
                     </button>
                   );
@@ -3954,12 +4068,12 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
           <div className="modal-bg" onClick={()=>setAddModal(null)}>
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                <h3 style={{margin:0,fontSize:16,fontWeight:600}}>Add money — {g.name}</h3>
+                <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Add money — {g.name}</h3>
                 <button onClick={()=>setAddModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
               </div>
-              <div style={{background:P.sfA,borderRadius:12,padding:12,marginBottom:16}}>
+              <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:16}}>
                 <div style={{fontSize:12,color:P.sub}}>Current saved</div>
-                <div className="serif tnum" style={{fontSize:24,fontWeight:600}}>{fmt(saved)}</div>
+                <div className="serif tnum" style={{fontSize:24,fontWeight:600,color:P.ink}}>{fmt(saved)}</div>
                 <div style={{fontSize:12,color:P.faint}}>Target: {fmt(g.target)} · {g.target>0?((saved/g.target)*100).toFixed(0):0}% there</div>
               </div>
               <div style={{marginBottom:12}}>
@@ -3968,12 +4082,12 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                   onBlur={e=>setAddAmount(e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(addAmount)||0)))}
                   onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
                   placeholder="0" autoFocus
-                  style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                  style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note (optional)</div>
                 <input value={addNote} onChange={e=>setAddNote(e.target.value)} placeholder="e.g. Monthly deposit"
-                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
               {addAmount&&Number(addAmount)>0&&(
                 <div style={{fontSize:13,color:P.sub,marginBottom:12}} className="tnum">
@@ -3981,7 +4095,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                 </div>
               )}
               <button onClick={()=>{if(Number(addAmount)>0){addContribution(addModal,addAmount,addNote);setAddModal(null);}}}
-                style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.gr,color:"#fff",border:"none"}}>
+                style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none"}}>
                 Add {addAmount?fmt(Number(addAmount)):"money"}
               </button>
             </div>
@@ -4004,7 +4118,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
             <div className="modal" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
                 <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,background:g.color+"22",color:g.color}}><Icon size={18}/></span>
-                <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:16,fontWeight:600,flex:1,minWidth:0}}/>
+                <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:16,fontWeight:600,flex:1,minWidth:0,color:P.ink}}/>
                 <button onClick={()=>setDetailModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
               </div>
 
@@ -4012,12 +4126,12 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                 <div style={{flex:1}}>
                   <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Target</div>
                   <input type="number" value={g.target} onChange={e=>updateGoal(g.id,{target:Number(e.target.value)})}
-                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Monthly</div>
                   <input type="number" value={g.monthly} onChange={e=>updateGoal(g.id,{monthly:Number(e.target.value)})}
-                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
               </div>
               <div style={{fontSize:12,color:P.sub,marginBottom:14}} className="tnum">
@@ -4026,11 +4140,11 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
 
               <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Contributions</div>
               {(g.contributions||[]).length>0?(
-                <div style={{borderRadius:10,overflow:"hidden",border:`1px solid ${P.line}`,marginBottom:8}}>
+                <div style={{borderRadius:10,overflow:"hidden",background:"rgba(0,0,0,.03)",marginBottom:8}}>
                   {[...(g.contributions||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
-                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:`1px solid ${P.sfA}`,fontSize:13}}>
+                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:"1px solid rgba(0,0,0,.06)",fontSize:13}}>
                       <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
-                      <span className="tnum" style={{fontWeight:600,color:P.gr}}>+{fmt(c.amount)}</span>
+                      <span className="tnum" style={{fontWeight:600,color:P.jade}}>+{fmt(c.amount)}</span>
                       {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
                       <button onClick={()=>removeContribution(g.id,c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
                     </div>
@@ -4089,8 +4203,8 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
   };
 
   return(
-    <div>
-      <div style={{fontSize:12,color:P.faint,marginBottom:14,lineHeight:1.5}}>
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
+      <div style={{fontSize:12,color:P.neuSub,marginBottom:14,lineHeight:1.5}}>
         Pick which budget categories count toward each target, and tag each one
         as going into stocks (grows at the invest rate) or cash/time deposit
         (grows at the cash rate). A GoTrade contribution and a Seabank
@@ -4104,18 +4218,18 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
           const pct=t.targetAmount>0?Math.min(100,(current/t.targetAmount)*100):0;
           return(
             <button key={t.id} onClick={()=>setOpenId(t.id)}
-              style={{textAlign:"left",borderRadius:16,padding:14,minHeight:150,background:P.sf,border:`1px solid ${P.line}`,
+              style={{textAlign:"left",padding:14,minHeight:150,...neu(16),
                 display:"flex",flexDirection:"column",gap:6}}>
               <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{width:8,height:8,borderRadius:999,background:t.color||P.gr}}/>
-                <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{t.name}</span>
+                <span style={{width:8,height:8,borderRadius:999,background:t.color||P.jade}}/>
+                <span style={{fontSize:13,fontWeight:600,color:P.neuInk}}>{t.name}</span>
               </div>
-              <div style={{fontSize:11,color:P.faint}}>Target</div>
-              <div className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmt(t.targetAmount)}</div>
-              <div style={{height:6,borderRadius:99,background:P.sfA,overflow:"hidden",marginTop:2}}>
-                <div style={{height:"100%",width:`${pct}%`,background:t.color||P.gr,borderRadius:99}}/>
+              <div style={{fontSize:11,color:P.neuSub}}>Target</div>
+              <div className="tnum" style={{fontSize:15,fontWeight:700,color:P.neuInk}}>{fmt(t.targetAmount)}</div>
+              <div style={{...neuInset(999),height:8,overflow:"hidden",marginTop:2}}>
+                <div className="liquid-fill" style={{height:"100%",width:`${pct}%`,background:liquidFillBg(t.color||P.jade)}}/>
               </div>
-              <div style={{fontSize:11,color:P.sub,marginTop:"auto"}}>
+              <div style={{fontSize:11,color:P.neuSub,marginTop:"auto"}}>
                 {count===0?"No categories selected"
                   :hitMonth===null?"30+ yrs at current pace"
                   :hitMonth===0?"Target already reached"
@@ -4124,8 +4238,8 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
             </button>
           );
         })}
-        <button onClick={addTarget}
-          style={{borderRadius:16,padding:14,minHeight:150,background:P.sf,border:`1px dashed ${P.line}`,color:P.gr,
+        <button onClick={addTarget} className="neu-btn"
+          style={{borderRadius:16,padding:14,minHeight:150,color:P.jade,
             display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
           <I.Plus size={20}/>Add target
         </button>
@@ -4141,35 +4255,35 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
               <input value={open.name} onChange={e=>updateTarget(open.id,{name:e.target.value})}
-                className="bare" style={{fontSize:17,fontWeight:700,flex:1}}/>
+                className="bare" style={{fontSize:17,fontWeight:700,flex:1,color:P.ink}}/>
               <button onClick={()=>setOpenId(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
             </div>
 
             <div style={{display:"flex",gap:12,marginBottom:12,fontSize:13}}>
               <label style={{flex:1,color:P.sub}}>Target amount (SAR)
                 <input type="number" value={open.targetAmount} onChange={e=>updateTarget(open.id,{targetAmount:Number(e.target.value)})}
-                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2}}/>
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
               <label style={{flex:1,color:P.sub}}>Target date
                 <input type="date" value={open.targetDate||""} onChange={e=>updateTarget(open.id,{targetDate:e.target.value})}
-                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:13,marginTop:2}}/>
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:13,marginTop:2,color:P.ink}}/>
               </label>
             </div>
 
             <div style={{display:"flex",gap:12,marginBottom:14,fontSize:13}}>
               <label style={{flex:1,color:P.sub}}>Invest rate %/yr
                 <input type="number" step="0.5" value={open.investRate} onChange={e=>updateTarget(open.id,{investRate:Number(e.target.value)})}
-                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2}}/>
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
               <label style={{flex:1,color:P.sub}}>Cash rate %/yr
                 <input type="number" step="0.25" value={open.cashRate} onChange={e=>updateTarget(open.id,{cashRate:Number(e.target.value)})}
-                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2}}/>
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
             </div>
 
             <div style={{marginBottom:14}}>
               <button onClick={()=>setCatPickerId(open.id)}
-                style={{width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:10,background:P.sfA,border:`1px solid ${P.line}`,fontSize:13}}>
+                style={{width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:10,background:"rgba(0,0,0,.05)",border:"none",fontSize:13}}>
                 <div style={{color:P.sub,marginBottom:6}}>Savings-rate categories ({count} selected)</div>
                 <div style={{display:"flex",gap:16}}>
                   <div>
@@ -4184,7 +4298,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
               </button>
             </div>
 
-            <div style={{borderRadius:14,padding:12,background:P.sfA,marginBottom:14}}>
+            <div style={{borderRadius:14,padding:12,background:"rgba(0,0,0,.05)",marginBottom:14}}>
               <div style={{fontSize:12,color:P.sub,marginBottom:6}}>
                 {count===0?"Select at least one category to project a timeline."
                   :hitMonth===null?"Target isn't reached within 30 years at this pace — raise the monthly rate or the growth rates."
@@ -4197,7 +4311,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
                     <XAxis dataKey="m" tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`${Math.round(v/12)}y`}/>
                     <YAxis tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
                     <Tooltip formatter={v=>fmt(v)} labelFormatter={v=>`Month ${v}`}/>
-                    <Line type="monotone" dataKey="total" stroke={open.color||P.gr} strokeWidth={2} dot={false}/>
+                    <Line type="monotone" dataKey="total" stroke={open.color||P.jade} strokeWidth={2} dot={false}/>
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -4219,7 +4333,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
         <div className="modal-bg" onClick={()=>setCatPickerId(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-              <h3 style={{margin:0,fontSize:15,fontWeight:600}}>Savings-rate categories</h3>
+              <h3 style={{margin:0,fontSize:15,fontWeight:600,color:P.ink}}>Savings-rate categories</h3>
               <button onClick={()=>setCatPickerId(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
             </div>
             <div style={{fontSize:11,color:P.faint,marginBottom:10,lineHeight:1.4}}>
@@ -4243,8 +4357,8 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
                       };
                       const segBtn=(val,label)=>(
                         <button onClick={()=>setDest(dest===val?null:val)}
-                          style={{padding:"4px 9px",borderRadius:7,fontSize:11,fontWeight:600,border:`1px solid ${dest===val?"transparent":P.line}`,
-                            background:dest===val?(val==="invest"?P.gr:P.br):"transparent",
+                          style={{padding:"4px 9px",borderRadius:7,fontSize:11,fontWeight:600,border:"none",
+                            background:dest===val?(val==="invest"?P.jade:P.br):"rgba(0,0,0,.05)",
                             color:dest===val?"#fff":P.sub}}>
                           {label}
                         </button>
