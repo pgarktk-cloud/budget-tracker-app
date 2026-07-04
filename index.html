@@ -49,12 +49,11 @@
   window.addEventListener('resize',setVV);
   setVV();
 
-  // Pilot scope: only fields inside .sheet (the add/edit transaction form).
-  // When the keyboard opens, the focused input can still end up hidden
-  // behind it for a moment before the resize settles — nudge it into view.
+  // Covers both .sheet (add/edit transaction) and .modal (everything else —
+  // trade modal, category picker, plan picker, etc.) now that both use --vvh.
   document.addEventListener('focusin',function(e){
     var t=e.target;
-    if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA')&&t.closest('.sheet')){
+    if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA')&&t.closest('.sheet, .modal')){
       setTimeout(function(){
         t.scrollIntoView({block:'center',behavior:'smooth'});
       },250);
@@ -167,9 +166,10 @@ select{font:inherit;}
   background:rgba(21,25,27,.32);
   backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
   animation:overlayIn .3s ease both;
+  height:var(--vvh, 100vh);
 }
 .modal{
-  border-radius:20px;padding:20px;width:100%;max-width:400px;max-height:88vh;overflow-y:auto;
+  border-radius:20px;padding:20px;width:100%;max-width:400px;max-height:calc(var(--vvh, 100vh) - 32px);overflow-y:auto;
   background:var(--glassBgStrong);
   border:1px solid var(--glassBorder);box-shadow:0 16px 40px var(--glassShadow),inset 0 1px 0 var(--glassHi);
   animation:scaleIn .4s cubic-bezier(.22,1,.36,1) both;
