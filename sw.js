@@ -2,7 +2,7 @@
 // so returning users pick up the new shell instead of being stuck on an old
 // cached copy. The activate step below purges any cache that doesn't match
 // the current version.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `allocation-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [

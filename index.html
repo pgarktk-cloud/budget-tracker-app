@@ -1094,7 +1094,6 @@ function App(){
   const[data,setData]=useState(defaultData);
   const[loaded,setLoaded]=useState(false);
   const[tab,setTab]=useState("budget");
-  useEffect(()=>{if(isSingle&&tab==="household")setTab("budget");},[isSingle,tab]);
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
@@ -1108,6 +1107,19 @@ function App(){
      object = signed in. access_token / user.id live on session.* and
      will be handed to the sync engine in a later phase. */
   const[session,setSession]=useState(undefined);
+  // Registration-time choice (Personal vs Shared), set at signup and stored
+  // on the Supabase user itself. The Worker uses this to seed the right
+  // template on a user's very first /sync.
+  // Phase 4: this now actually drives the root layout split. Blank/missing
+  // metadata (e.g. accounts created before this field existed) falls back
+  // to "single" per spec — NOTE: any pre-Phase-4 couple household that
+  // never got account_mode written to its metadata will render as
+  // single-profile until that field is backfilled; flag this to Jastine
+  // if that's not the intended migration behavior for existing users.
+  // Declared immediately after `session` (as early as possible in the
+  // component) so nothing above it can ever reference it before init.
+  const accountMode=(session&&session.user&&session.user.user_metadata&&session.user.user_metadata.account_mode)||"single";
+  const isSingle=accountMode==="single";
   useEffect(()=>{
     if(!supabaseClient){setSession(null);return;}
     supabaseClient.auth.getSession().then(({data})=>setSession(data.session||null));
@@ -1126,17 +1138,9 @@ function App(){
   const sessionUserId=session&&session.user&&session.user.id;
   const sessionRef=useRef(session);
   useEffect(()=>{sessionRef.current=session;},[session]);
-  // Registration-time choice (Personal vs Shared), set at signup and stored
-  // on the Supabase user itself. The Worker uses this to seed the right
-  // template on a user's very first /sync.
-  // Phase 4: this now actually drives the root layout split. Blank/missing
-  // metadata (e.g. accounts created before this field existed) falls back
-  // to "single" per spec — NOTE: any pre-Phase-4 couple household that
-  // never got account_mode written to its metadata will render as
-  // single-profile until that field is backfilled; flag this to Jastine
-  // if that's not the intended migration behavior for existing users.
-  const accountMode=(session&&session.user&&session.user.user_metadata&&session.user.user_metadata.account_mode)||"single";
-  const isSingle=accountMode==="single";
+  // Registration-time choice (Personal vs Shared) already resolved to
+  // accountMode/isSingle right after `session` above.
+  useEffect(()=>{if(isSingle&&tab==="household")setTab("budget");},[isSingle,tab]);
 
   /* ── local-first sync state ──────────────────────────────────────────── */
   const[hasUnsyncedChanges,setHasUnsyncedChanges]=useState(false);
@@ -1977,7 +1981,7 @@ function App(){
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
         pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
         preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,
-        session,onLogOut:logOut}}/>}
+        session,onLogOut:logOut,isSingle}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
       {showProfilePicker&&!isSingle&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
@@ -4749,7 +4753,7 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   );
 }
 
-function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,session,onLogOut}){
+function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,session,onLogOut,isSingle}){
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
@@ -4800,27 +4804,29 @@ function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,h
           </span>
           <span style={{fontSize:12,color:P.gr,fontWeight:600}}>Switch to {data.theme==="dark"?"light":"dark"}</span>
         </button>
-        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Who's who</div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>{isSingle?"Your name":"Who's who"}</div>
         <div style={{display:"flex",gap:8,marginBottom:16}}>
           <input value={owners.me} onChange={e=>setOwnerName("me",e.target.value)} placeholder="Your name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
-          <input value={owners.wife} onChange={e=>setOwnerName("wife",e.target.value)} placeholder="Wife's name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          {!isSingle&&
+            <input value={owners.wife} onChange={e=>setOwnerName("wife",e.target.value)} placeholder="Wife's name" style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>}
         </div>
-        <button onClick={openProfilePicker}
-          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",borderRadius:10,padding:"8px 12px",fontSize:13,fontWeight:500,marginBottom:16,
-            background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
-          <I.Users size={14}/>Change default profile for this device
-        </button>
+        {!isSingle&&
+          <button onClick={openProfilePicker}
+            style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",borderRadius:10,padding:"8px 12px",fontSize:13,fontWeight:500,marginBottom:16,
+              background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
+            <I.Users size={14}/>Change default profile for this device
+          </button>}
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Pay periods</div>
         <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           Budget and track expenses by paycheck instead of calendar month. Off by default — when off, that person's Budget and Expenses tabs work exactly as before.
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-          {["me","wife"].map(ok=>{
+          {(isSingle?["me"]:["me","wife"]).map(ok=>{
             const cfg=(data.payPeriods||{})[ok]||{enabled:false,payday:1};
             return(
               <div key={ok} style={{borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:cfg.enabled?8:0}}>
-                  <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{owners[ok]}</span>
+                  <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{isSingle?"Pay period":owners[ok]}</span>
                   <button onClick={()=>setPayPeriod(ok,{enabled:!cfg.enabled})}
                     style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
                       background:cfg.enabled?P.gr:P.sf,color:cfg.enabled?"#fff":P.sub,border:`1px solid ${cfg.enabled?P.gr:P.line}`}}>
