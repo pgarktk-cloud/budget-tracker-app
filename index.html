@@ -1094,6 +1094,7 @@ function App(){
   const[data,setData]=useState(defaultData);
   const[loaded,setLoaded]=useState(false);
   const[tab,setTab]=useState("budget");
+  useEffect(()=>{if(isSingle&&tab==="household")setTab("budget");},[isSingle,tab]);
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
@@ -1127,10 +1128,15 @@ function App(){
   useEffect(()=>{sessionRef.current=session;},[session]);
   // Registration-time choice (Personal vs Shared), set at signup and stored
   // on the Supabase user itself. The Worker uses this to seed the right
-  // template on a user's very first /sync. Layout strategy for "single"
-  // mode is a Phase 4 item — for now we keep the existing dual dashboard
-  // regardless, this just exposes the value for later use.
-  const accountMode=(session&&session.user&&session.user.user_metadata&&session.user.user_metadata.account_mode)||"couple";
+  // template on a user's very first /sync.
+  // Phase 4: this now actually drives the root layout split. Blank/missing
+  // metadata (e.g. accounts created before this field existed) falls back
+  // to "single" per spec — NOTE: any pre-Phase-4 couple household that
+  // never got account_mode written to its metadata will render as
+  // single-profile until that field is backfilled; flag this to Jastine
+  // if that's not the intended migration behavior for existing users.
+  const accountMode=(session&&session.user&&session.user.user_metadata&&session.user.user_metadata.account_mode)||"single";
+  const isSingle=accountMode==="single";
 
   /* ── local-first sync state ──────────────────────────────────────────── */
   const[hasUnsyncedChanges,setHasUnsyncedChanges]=useState(false);
@@ -1162,6 +1168,9 @@ function App(){
   const[showProfilePicker,setShowProfilePicker]=useState(()=>{
     try{return !localStorage.getItem(PROFILE_KEY);}catch(e){return false;}
   });
+  // Single-profile accounts have nothing to pick between — always "me",
+  // toggle never shown, first-run picker never surfaced.
+  const effectiveBudgetOwner=isSingle?"me":budgetOwner;
   const[profilePickerDismissable,setProfilePickerDismissable]=useState(false);
   const chooseDefaultProfile=ok=>{
     setBudgetOwner(ok);
@@ -1847,7 +1856,7 @@ function App(){
     ["networth","Net Worth",I.Gem],["goals","Goals",I.Target],
     ["targets","Forecast",I.TrendUp],
     ["currency","Currency",I.Swap],
-  ];
+  ].filter(([id])=>!(isSingle&&id==="household")); // single-profile: Shared Split has no meaning with one profile
 
   if(session===undefined){
     return(
@@ -1925,11 +1934,12 @@ function App(){
             </div>}
 
           <div style={{marginTop:16,display:"flex",flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between",gap:16}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,color:P.sub}}>
-              <I.Wallet size={13}/>
-              <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
-            </div>
-            <div style={{textAlign:"right"}}>
+            {!isSingle&&
+              <div style={{display:"flex",alignItems:"center",gap:6,color:P.sub}}>
+                <I.Wallet size={13}/>
+                <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
+              </div>}
+            <div style={{textAlign:"right",marginLeft:isSingle?"auto":0}}>
               <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>Income</div>
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
@@ -1953,14 +1963,14 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
-          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner:effectiveBudgetOwner,setBudgetOwner,isSingle,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[effectiveBudgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt:fmt2,cur,budgetOwner:effectiveBudgetOwner,setBudgetOwner,isSingle,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
-          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy:data.currency||"SAR",owners:data.owners}}/>}
+          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy:data.currency||"SAR",owners:data.owners,isSingle}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,cur,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,cur,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
-          {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
+          {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners,isSingle}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,cur,convert,fmt}}/>}
         </TabPane>
       </div>
@@ -1969,7 +1979,7 @@ function App(){
         preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,
         session,onLogOut:logOut}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
-      {showProfilePicker&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
+      {showProfilePicker&&!isSingle&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
       {tab!=="expenses"&&
         <button aria-label="Quick add transaction" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
@@ -1984,7 +1994,7 @@ function App(){
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget}){
+function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,isSingle,owners,payPeriods,investTarget,setInvestTarget}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -2064,8 +2074,8 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px",transition:"background .25s ease"}}>
-      {/* ── owner toggle ── */}
-      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+      {/* ── owner toggle (couple accounts only) ── */}
+      {!isSingle&&<OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>}
 
       {/* ── month navigator (glass — floating nav chrome) ── */}
       <div className="fade-up glass-panel" style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"10px 14px"}}>
@@ -2441,7 +2451,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}){
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt,cur,budgetOwner,setBudgetOwner,isSingle,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -2785,8 +2795,8 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px",transition:"background .25s ease"}}>
-      {/* ── owner toggle ── */}
-      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+      {/* ── owner toggle (couple accounts only) ── */}
+      {!isSingle&&<OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>}
 
       {/* ── month navigator (glass) ── */}
       <div className="glass-panel" style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"10px 14px"}}>
@@ -3500,7 +3510,7 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
 }
 
 /* ── BANKS VIEW — grid of "digital wallet pass" cards ── */
-function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy,owners}){
+function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy,owners,isSingle}){
   const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
   const ccy=mainCcy||"SAR";
   const fmtMain=n=>`${ccy} ${Math.round(n).toLocaleString("en-US")}`;
@@ -3544,7 +3554,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy,
           <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
             <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",background:accentS,color:accent}}>{b.currency}</span>
             <span style={{fontSize:10,color:P.neuSub}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
-            <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{owners[b.owner]}</span>
+            {!isSingle&&<span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{owners[b.owner]}</span>}
           </div>
         </div>
 
@@ -3600,33 +3610,36 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy,
             )}
           </div>
         </div>
-        <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
-          <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
-            <div style={{fontSize:11,color:P.deepHi}}>{owners.me}</div>
-            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{fmtMain(meTotal)}</div>
-          </div>
-          <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
-            <div style={{fontSize:11,color:P.deepHi}}>{owners.wife}</div>
-            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{fmtMain(wifeTotal)}</div>
-          </div>
-        </div>
+        {!isSingle&&
+          <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
+            <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:P.deepHi}}>{owners.me}</div>
+              <div className="tnum" style={{fontSize:16,fontWeight:700}}>{fmtMain(meTotal)}</div>
+            </div>
+            <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:P.deepHi}}>{owners.wife}</div>
+              <div className="tnum" style={{fontSize:16,fontWeight:700}}>{fmtMain(wifeTotal)}</div>
+            </div>
+          </div>}
       </div>
 
-      {/* ── card grid, per owner ── */}
-      {["me","wife"].map(ok=>{
+      {/* ── card grid — unified single grid for single-profile accounts,
+           per-owner sections preserved for couple accounts ── */}
+      {(isSingle?["me"]:["me","wife"]).map(ok=>{
         const items=banks.filter(b=>b.owner===ok);
         return(
           <section key={ok} style={{marginBottom:22}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
-            </div>
+            {!isSingle&&
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
+                <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
+              </div>}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
               {items.map(Card)}
               <button onClick={()=>addBank(ok)} className="neu-btn"
                 style={{borderRadius:18,minHeight:150,color:P.jade,
                   display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
-                <I.Plus size={20}/>Add {owners[ok]}'s account
+                <I.Plus size={20}/>{isSingle?"Add account":`Add ${owners[ok]}'s account`}
               </button>
             </div>
           </section>
@@ -4245,7 +4258,7 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
 }
 
 /* ── GOALS VIEW — square cards with type icons ── */
-function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners}){
+function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners,isSingle}){
   const[addModal,setAddModal]=useState(null);     // goalId for "add money"
   const[addAmount,setAddAmount]=useState("");
   const[addNote,setAddNote]=useState("");
@@ -4258,14 +4271,15 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
-      {["me","wife"].map(ok=>{
+      {(isSingle?["me"]:["me","wife"]).map(ok=>{
         const list=goals.filter(g=>g.owner===ok);
         return(
           <section key={ok} style={{marginBottom:22}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s goals</h2>
-            </div>
+            {!isSingle&&
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
+                <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s goals</h2>
+              </div>}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:10}}>
               {list.map(g=>(
                 <GoalSquare key={g.id} {...{g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
