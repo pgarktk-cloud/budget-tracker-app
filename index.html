@@ -37,6 +37,7 @@
 <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.10/babel.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin="anonymous"></script>
 <style>
 :root{
   --bg:#E4E7E9;--ink:#15243B;--sub:#56657E;--faint:#8A98AD;
@@ -367,6 +368,10 @@ const I={
   Calendar:Ic([<rect key="a" x="3" y="4" width="18" height="18" rx="2"/>,<line key="b" x1="16" y1="2" x2="16" y2="6"/>,<line key="c" x1="8" y1="2" x2="8" y2="6"/>,<line key="d" x1="3" y1="10" x2="21" y2="10"/>]),
   PiggyBank:Ic([<path key="a" d="M19 11a7.5 7.5 0 0 1-7.5 7.5A7.5 7.5 0 0 1 4 11v-1a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v1z"/>,<path key="b" d="M19 11c.9 0 1.8.2 2.6.5L23 9l-2-1.5"/>,<path key="c" d="M9 11v-1"/>,<path key="d" d="M8 15h8"/>]),
   Receipt:Ic([<polyline key="a" points="6 2 3 6 3 22 21 22 21 6 18 2"/>,<rect key="b" x="6" y="2" width="12" height="6"/>,<line key="c" x1="8" y1="13" x2="16" y2="13"/>,<line key="d" x1="8" y1="17" x2="16" y2="17"/>]),
+  Mail:Ic([<rect key="a" x="2" y="4" width="20" height="16" rx="2"/>,<polyline key="b" points="2 7 12 13 22 7"/>]),
+  Lock:Ic([<rect key="a" x="3" y="11" width="18" height="11" rx="2"/>,<path key="b" d="M7 11V7a5 5 0 0 1 10 0v4"/>]),
+  Eye:Ic([<path key="a" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>,<circle key="b" cx="12" cy="12" r="3"/>]),
+  LogOut:Ic([<path key="a" d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>,<polyline key="b" points="16 17 21 12 16 7"/>,<line key="c" x1="21" y1="12" x2="9" y2="12"/>]),
 };
 
 /* ── Goal-type icons (minimalist line icons) ── */
@@ -555,8 +560,19 @@ function bucketProgress(bucketKey,payPeriods,owner){
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
-const PROXY_URL="https://alloc-kv.jastinefodra21.workers.dev";
+const PROXY_URL="https://wherditgo-proxy.jastinefodra21.workers.dev";
 // e.g. "https://allocation-proxy.yourname.workers.dev"
+
+/* ── Supabase Auth ──
+   Replace with YOUR project's URL + anon (public) key from
+   Project Settings → API in the Supabase dashboard. The anon key is safe
+   to ship client-side — it's designed for exactly this. ──────────────── */
+const SUPABASE_URL="https://pnlmirqyvzeuyzujrlir.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBubG1pcnF5dnpldXl6dWpybGlyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNDY5MzQsImV4cCI6MjA5ODcyMjkzNH0.3HBgnsc9D5Mh6RnZ8g5jqmy8PmfQalWbtyKUEMShk1w";
+const supabaseReady=!SUPABASE_URL.startsWith("PASTE_")&&!SUPABASE_ANON_KEY.startsWith("PASTE_");
+const supabaseClient=supabaseReady&&window.supabase
+  ?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)
+  :null;
 
 /* ── FX rates (free, no key) ── */
 async function fetchRates(){
@@ -684,25 +700,23 @@ function liabilityBalance(liab){
 
 /* ── Default data ── */
 function defaultData(){
-  const groups=[{id:"g1",name:"Invest & Grow"},{id:"g2",name:"Savings"},{id:"g3",name:"Essentials"},{id:"g4",name:"Personal"},{id:"g5",name:"Commitments"}];
-  const UNTRACKED=new Set(["Investment (GoTrade)","Long Term Savings","Savings (Seabank)","Misc. Savings"]);
+  const groups=[{id:"g1",name:"Savings"},{id:"g2",name:"Essentials"},{id:"g3",name:"Personal"},{id:"g4",name:"Commitments"}];
+  const UNTRACKED=new Set(["Savings"]);
   const seed=[
-    ["Investment (GoTrade)",3300,"g1"],["Long Term Savings",2750,"g1"],
-    ["Savings (Seabank)",4796,"g2"],["Misc. Savings",350,"g2"],
-    ["Bills",4200,"g3"],["Subscriptions",209,"g3"],["Postpaid Bill",90,"g3"],
-    ["Allowance",1305,"g4"],["Shopping",1250,"g4"],["Gym",750,"g4"],
-    ["Charlene",750,"g4"],["Braces",150,"g4"],
-    ["Toyota Raize",1100,"g5"],["Tuition Fee Wife",1000,"g5"],
+    ["Savings",1000,"g1"],
+    ["Rent",1500,"g2"],["Utilities",200,"g2"],["Groceries",600,"g2"],
+    ["Shopping",300,"g3"],["Subscriptions",50,"g3"],
+    ["Loan Payment",400,"g4"],
   ];
   const categories=seed.map(([name,amount,groupId],i)=>({id:uid(),name,amount,groupId,color:SEG[i%SEG.length],subs:[],trackExpenses:!UNTRACKED.has(name)}));
   const buyDate=new Date().toISOString().slice(0,10);
   return{
-    currency:"SAR",owners:{me:"Me",wife:"My wife"},theme:"light",
+    currency:"USD",owners:{me:"Me",wife:"Partner"},theme:"light",
     payPeriods:{me:{enabled:false,payday:28},wife:{enabled:false,payday:1}},
     activePlanId:{me:"p1",wife:"pw1"},
     plans:[
-      {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:22000,groups,categories},
-      {id:"pw1",owner:"wife",name:"Monthly Salary",month:monthLabel(),income:0,
+      {id:"p1",owner:"me",name:"Monthly Budget",month:monthLabel(),income:5000,groups,categories},
+      {id:"pw1",owner:"wife",name:"Monthly Budget",month:monthLabel(),income:0,
        groups:[{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"}],
        categories:[
          {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[],trackExpenses:false},
@@ -711,38 +725,33 @@ function defaultData(){
        ]},
     ],
     goals:[
-      {id:uid(),owner:"me",name:"Emergency Fund",type:"emergency",target:60000,contributions:[{id:uid(),date:buyDate,amount:18500,note:"Opening balance"}],monthly:2000,color:P.gr},
-      {id:uid(),owner:"me",name:"Family Trip",type:"vacation",target:25000,contributions:[{id:uid(),date:buyDate,amount:6000,note:""}],monthly:1000,color:P.br},
-      {id:uid(),owner:"wife",name:"New Laptop",type:"tech",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
+      {id:uid(),owner:"me",name:"Emergency Fund",type:"emergency",target:10000,contributions:[{id:uid(),date:buyDate,amount:1000,note:"Opening balance"}],monthly:200,color:P.gr},
+      {id:uid(),owner:"me",name:"Vacation",type:"vacation",target:3000,contributions:[],monthly:100,color:P.br},
+      {id:uid(),owner:"wife",name:"New Laptop",type:"tech",target:1500,contributions:[],monthly:50,color:SEG[4]},
     ],
     investments:[
-      {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",
-       trades:[{id:uid(),date:buyDate,type:"buy",shares:10,price:180}]},
-      {id:uid(),ticker:"VOO",name:"Vanguard S&P 500",broker:"GoTrade",
-       trades:[{id:uid(),date:buyDate,type:"buy",shares:5,price:420}]},
-      {id:uid(),ticker:"VWRA",name:"Vanguard FTSE All-World",broker:"GoTrade",
-       trades:[{id:uid(),date:buyDate,type:"buy",shares:8,price:160}]},
+      {id:uid(),ticker:"TICK",name:"Sample Holding",broker:"Broker",
+       trades:[{id:uid(),date:buyDate,type:"buy",shares:1,price:100}]},
     ],
     livePrice:{},
-    projection:{monthly:1500,years:20,rate:8},
+    projection:{monthly:200,years:20,rate:8},
     banks:[
-      {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000},
-      {id:uid(),owner:"me",name:"Savings",bank:"BDO",country:"PH",currency:"PHP",balance:150000},
-      {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000},
+      {id:uid(),owner:"me",name:"Checking Account",bank:"Bank",country:"US",currency:"USD",balance:1000},
+      {id:uid(),owner:"wife",name:"Checking Account",bank:"Bank",country:"US",currency:"USD",balance:1000},
     ],
     assets:[
-      {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000},
-      {id:uid(),name:"Car loan",kind:"liability",currency:"SAR",value:0,
-       installment:true,monthly:1100,monthsRemaining:24,asOfDate:new Date().toISOString().slice(0,10)},
+      {id:uid(),name:"Vehicle",kind:"asset",currency:"USD",value:10000},
+      {id:uid(),name:"Loan",kind:"liability",currency:"USD",value:0,
+       installment:true,monthly:200,monthsRemaining:12,asOfDate:new Date().toISOString().slice(0,10)},
     ],
     history:[],
     targets:[],
-    investTarget:{me:{thresholdPct:20,groupNames:["Invest & Grow"]},wife:{thresholdPct:20,groupNames:[]}},
+    investTarget:{me:{thresholdPct:20,groupNames:[]},wife:{thresholdPct:20,groupNames:[]}},
     household:{splitMine:50,expenses:[
-      {id:uid(),name:"Rent",amount:2000,color:SEG[0]},
-      {id:uid(),name:"Transport",amount:500,color:SEG[3]},
-      {id:uid(),name:"Groceries",amount:1200,color:SEG[5]},
-      {id:uid(),name:"Utilities",amount:400,color:SEG[8]},
+      {id:uid(),name:"Rent",amount:1000,color:SEG[0]},
+      {id:uid(),name:"Transport",amount:200,color:SEG[3]},
+      {id:uid(),name:"Groceries",amount:400,color:SEG[5]},
+      {id:uid(),name:"Utilities",amount:150,color:SEG[8]},
     ]},
   };
 }
@@ -846,35 +855,36 @@ function migrate(d){
 }
 
 /* ── Cloudflare KV Sync ──────────────────────────────────────────────────────
-   No login ever required. Set SYNC_TOKEN to the same secret you put in worker.js.
-   The Worker URL is already set above as PROXY_URL.
+   Multi-tenant: every request is authenticated with the signed-in user's
+   Supabase JWT (session.access_token), sent as a standard bearer token.
+   The Worker verifies the signature and scopes storage to that user's id —
+   there is no shared static secret anymore. The Worker URL is set above as
+   PROXY_URL. Callers must pass the current access_token into load()/save().
    ─────────────────────────────────────────────────────────────────────────── */
-const SYNC_TOKEN="kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
-
 const KVSync={
   lastPulledAt:null,
-  _ready(){return !PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");},
-  _headers(){return{"Content-Type":"application/json","X-Sync-Token":SYNC_TOKEN};},
-  async load(){
-    if(!this._ready())return null;
-    const r=await fetch(`${PROXY_URL}/sync`,{headers:this._headers()});
+  _ready(){return !PROXY_URL.startsWith("PASTE_");},
+  _headers(token){return{"Content-Type":"application/json","Authorization":`Bearer ${token}`};},
+  async load(token){
+    if(!this._ready()||!token)return null;
+    const r=await fetch(`${PROXY_URL}/sync`,{headers:this._headers(token)});
     if(!r.ok)return null;
     const j=await r.json();
     if(j.savedAt)this.lastPulledAt=j.savedAt;
     return j.data||null;
   },
-  async save(data){
-    if(!this._ready())return{ok:false,reason:"not configured"};
+  async save(data,token){
+    if(!this._ready()||!token)return{ok:false,reason:"not configured"};
     const body=JSON.stringify({data,savedAt:new Date().toISOString(),lastPulledAt:this.lastPulledAt});
-    const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
+    const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(token),body});
     if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
     const j=await r.json();
     if(j.savedAt)this.lastPulledAt=j.savedAt;
     return j;
   },
-  async checkMeta(){
-    if(!this._ready())return null;
-    const r=await fetch(`${PROXY_URL}/sync/meta`,{headers:this._headers()});
+  async checkMeta(token){
+    if(!this._ready()||!token)return null;
+    const r=await fetch(`${PROXY_URL}/sync/meta`,{headers:this._headers(token)});
     if(!r.ok)return null;
     return await r.json();
   },
@@ -928,6 +938,153 @@ const loadSyncMeta=()=>{
 const saveSyncMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m));}catch(e){}};
 
 /* ════════════════════════════════════════════════════════════════════════
+   AUTH — liquid-glass / neumorphic login & signup screen
+   ════════════════════════════════════════════════════════════════════════ */
+function AuthScreen(){
+  const[mode,setMode]=useState("login"); // "login" | "signup"
+  const[email,setEmail]=useState("");
+  const[password,setPassword]=useState("");
+  const[showPw,setShowPw]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const[msg,setMsg]=useState("");
+  const[accountMode,setAccountMode]=useState("single"); // "single" | "couple" — signup-only choice
+  const[displayName,setDisplayName]=useState("");
+  const[baseCurrency,setBaseCurrency]=useState("SAR");
+  const SIGNUP_CURRENCIES=["SAR","USD","PHP","AED","EUR","GBP"];
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!supabaseClient){setErr("Supabase isn't configured yet — add your project URL and anon key.");return;}
+    if(!email||!password){setErr("Enter an email and password.");return;}
+    setErr("");setMsg("");setBusy(true);
+    try{
+      if(mode==="login"){
+        const{error}=await supabaseClient.auth.signInWithPassword({email,password});
+        if(error)throw error;
+      }else{
+        const{data,error}=await supabaseClient.auth.signUp({
+          email,password,
+          options:{data:{
+            account_mode:accountMode,
+            display_name:displayName.trim()||email.split("@")[0],
+            base_currency:baseCurrency,
+          }}
+        });
+        if(error)throw error;
+        if(data&&data.user&&!data.session){
+          setMsg("Check your inbox to confirm your email, then log in.");
+          setMode("login");
+        }
+      }
+    }catch(e2){
+      setErr(e2.message||"Something went wrong. Try again.");
+    }finally{
+      setBusy(false);
+    }
+  };
+
+  return(
+    <div style={{background:P.bg,color:P.ink,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
+      <div className="fade-up" style={{width:"100%",maxWidth:380}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:P.gr,marginBottom:28}}>
+          <I.Wallet size={20} sw={2.2}/>
+          <span style={{fontSize:13,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Where'dItGo</span>
+        </div>
+        <form onSubmit={submit} className="glass-panel" style={{padding:24,borderRadius:20}}>
+          <h2 style={{margin:"0 0 4px",fontSize:20,fontWeight:600,color:P.ink}}>
+            {mode==="login"?"Welcome back":"Create your account"}
+          </h2>
+          <p style={{margin:"0 0 20px",fontSize:13,color:P.sub}}>
+            {mode==="login"?"Log in to sync your budget across devices.":"Sign up to start tracking, budgeting, and syncing."}
+          </p>
+
+          <label style={{display:"block",fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Email</label>
+          <div style={{...neuInset(12),display:"flex",alignItems:"center",gap:8,padding:"10px 12px",marginBottom:14}}>
+            <I.Mail size={15} style={{color:P.faint,flexShrink:0}}/>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email"
+              placeholder="you@example.com" className="bare" style={{flex:1,fontSize:14,color:P.ink,minWidth:0}}/>
+          </div>
+
+          {mode==="signup"&&
+            <>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Display name</label>
+              <div style={{...neuInset(12),display:"flex",alignItems:"center",gap:8,padding:"10px 12px",marginBottom:14}}>
+                <I.Users size={15} style={{color:P.faint,flexShrink:0}}/>
+                <input type="text" value={displayName} onChange={e=>setDisplayName(e.target.value)} autoComplete="nickname"
+                  placeholder="What should we call you?" className="bare" style={{flex:1,fontSize:14,color:P.ink,minWidth:0}}/>
+              </div>
+            </>}
+
+          <label style={{display:"block",fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Password</label>
+          <div style={{...neuInset(12),display:"flex",alignItems:"center",gap:8,padding:"10px 12px",marginBottom:8}}>
+            <I.Lock size={15} style={{color:P.faint,flexShrink:0}}/>
+            <input type={showPw?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)}
+              autoComplete={mode==="login"?"current-password":"new-password"}
+              placeholder={mode==="signup"?"At least 6 characters":"Your password"}
+              className="bare" style={{flex:1,fontSize:14,color:P.ink,minWidth:0}}/>
+            <button type="button" onClick={()=>setShowPw(s=>!s)} style={{background:"transparent",border:"none",color:P.faint,display:"flex"}}>
+              {showPw?<I.EyeOff size={15}/>:<I.Eye size={15}/>}
+            </button>
+          </div>
+
+          {mode==="signup"&&
+            <div style={{marginBottom:14}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Account type</label>
+              <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+                {[["single","Personal (Single)"],["couple","Shared (Couple)"]].map(([val,label])=>(
+                  <button key={val} type="button" onClick={()=>setAccountMode(val)}
+                    style={{flex:1,borderRadius:999,padding:"8px 10px",fontSize:12.5,fontWeight:600,border:"none",
+                      background:accountMode===val?P.gr:"transparent",
+                      color:accountMode===val?"#fff":P.sub,
+                      transition:"background .15s,color .15s"}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p style={{margin:"6px 2px 0",fontSize:11,color:P.faint,lineHeight:1.5}}>
+                {accountMode==="couple"
+                  ?"Sets up a shared dashboard for two profiles (e.g. you and a partner)."
+                  :"Sets up a single-profile dashboard just for you."}
+              </p>
+            </div>}
+
+          {mode==="signup"&&
+            <div style={{marginBottom:14}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Base currency</label>
+              <select value={baseCurrency} onChange={e=>setBaseCurrency(e.target.value)}
+                style={{...neuInset(12),width:"100%",padding:"10px 12px",fontSize:14,border:"none",color:P.ink,background:P.sfA}}>
+                {SIGNUP_CURRENCIES.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>}
+
+          {err&&<div style={{fontSize:12,color:P.red,background:P.redS,borderRadius:10,padding:"8px 10px",marginBottom:12,lineHeight:1.5}}>{err}</div>}
+          {msg&&<div style={{fontSize:12,color:P.gr,background:P.grS,borderRadius:10,padding:"8px 10px",marginBottom:12,lineHeight:1.5}}>{msg}</div>}
+
+          <button type="submit" disabled={busy} className="glass-btn"
+            style={{width:"100%",padding:"11px 12px",fontSize:14,fontWeight:600,color:P.jade,marginTop:8,opacity:busy?.6:1}}>
+            {busy?"Please wait…":mode==="login"?"Log In":"Create Account"}
+          </button>
+
+          <div style={{textAlign:"center",marginTop:16,fontSize:13,color:P.sub}}>
+            {mode==="login"?"Don't have an account? ":"Already have an account? "}
+            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setErr("");setMsg("");}}
+              style={{background:"transparent",border:"none",color:P.jade,fontWeight:600,fontSize:13,padding:0}}>
+              {mode==="login"?"Sign up":"Log in"}
+            </button>
+          </div>
+
+          {!supabaseReady&&
+            <div style={{marginTop:16,fontSize:11,color:P.faint,background:P.sfA,borderRadius:10,padding:"8px 10px",lineHeight:1.6}}>
+              Supabase isn't configured yet. Add SUPABASE_URL and SUPABASE_ANON_KEY at the top of index.html to enable sign in.
+            </div>}
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    MAIN APP
    ════════════════════════════════════════════════════════════════════════ */
 function App(){
@@ -940,7 +1097,37 @@ function App(){
   const[syncMsg,setSyncMsg]=useState("");
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
   const skipSave=useRef(false);
-  const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
+  const kvReady=!PROXY_URL.startsWith("PASTE_");
+
+  /* ── Supabase auth session ──
+     undefined = still checking on first load, null = signed out,
+     object = signed in. access_token / user.id live on session.* and
+     will be handed to the sync engine in a later phase. */
+  const[session,setSession]=useState(undefined);
+  useEffect(()=>{
+    if(!supabaseClient){setSession(null);return;}
+    supabaseClient.auth.getSession().then(({data})=>setSession(data.session||null));
+    const{data:sub}=supabaseClient.auth.onAuthStateChange((_event,newSession)=>{
+      setSession(newSession||null);
+    });
+    return()=>sub.subscription.unsubscribe();
+  },[]);
+  const logOut=async()=>{
+    if(supabaseClient)await supabaseClient.auth.signOut();
+    setSession(null);
+  };
+  // Stable identity for effect deps — `session` itself gets a new object
+  // reference on every silent token refresh, which would otherwise
+  // re-trigger cloud sync effects every time the JWT rotates.
+  const sessionUserId=session&&session.user&&session.user.id;
+  const sessionRef=useRef(session);
+  useEffect(()=>{sessionRef.current=session;},[session]);
+  // Registration-time choice (Personal vs Shared), set at signup and stored
+  // on the Supabase user itself. The Worker uses this to seed the right
+  // template on a user's very first /sync. Layout strategy for "single"
+  // mode is a Phase 4 item — for now we keep the existing dual dashboard
+  // regardless, this just exposes the value for later use.
+  const accountMode=(session&&session.user&&session.user.user_metadata&&session.user.user_metadata.account_mode)||"couple";
 
   /* ── local-first sync state ──────────────────────────────────────────── */
   const[hasUnsyncedChanges,setHasUnsyncedChanges]=useState(false);
@@ -1010,6 +1197,10 @@ function App(){
        overwrite them. Check the cloud copy; if it's identical, mark clean;
        if it differs, keep local data and surface the conflict modal. */
   useEffect(()=>{
+    // Never make user-specific network calls before auth finishes checking
+    // (undefined) or while signed out (null) — only a real session may pull
+    // this account's cloud data. Local-only startup is handled below.
+    if(!session)return;
     let cancelled=false;
     (async()=>{
       let initial="light";
@@ -1023,7 +1214,7 @@ function App(){
       let resolved=localResolved;
       let remoteRaw=null;
       if(kvReady){
-        try{remoteRaw=await KVSync.load();}catch(e){}
+        try{remoteRaw=await KVSync.load(session.access_token);}catch(e){}
       }
 
       if(meta.hasUnsyncedChanges&&localResolved){
@@ -1094,7 +1285,7 @@ function App(){
       if(typeof window.__hideLoading==="function")window.__hideLoading();
     })();
     return()=>{cancelled=true;};
-  },[]);
+  },[sessionUserId]);
 
   const toggleTheme=()=>{
     const next=(data.theme||"light")==="dark"?"light":"dark";
@@ -1128,19 +1319,22 @@ function App(){
   const savingRef=useRef(false);
   const saveToCloud=async(fromGesture=false)=>{
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
+    const activeSession=sessionRef.current;
+    if(!activeSession){setSyncMsg("Sign in to sync to the cloud");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(savingRef.current)return;
     savingRef.current=true;
     setSyncOp("push");
     try{
+      const token=activeSession.access_token;
       const payload=dataRef.current;
-      const result=await KVSync.save(payload);
+      const result=await KVSync.save(payload,token);
       if(result&&result.conflict){
         try{
-          const remoteRaw=await KVSync.load();
+          const remoteRaw=await KVSync.load(token);
           if(remoteRaw&&Array.isArray(remoteRaw.plans)){
             const remoteMigrated=migrate(remoteRaw);
             const merged=tryAutoMergeExpenses(payload,remoteMigrated);
-            const retry=merged?await KVSync.save(merged):null;
+            const retry=merged?await KVSync.save(merged,token):null;
             if(merged&&retry&&!retry.conflict&&retry.ok!==false){
               skipSave.current=true;
               setData(merged);
@@ -1204,10 +1398,12 @@ function App(){
 
   /* ── manual Pull from Cloud — GET only, never POSTs ──────────────────── */
   const pullFromCloud=async()=>{
-    if(!kvReady){setSyncMsg("Add Worker URL + sync token first");setTimeout(()=>setSyncMsg(""),3000);return;}
+    if(!kvReady){setSyncMsg("Add Worker URL first");setTimeout(()=>setSyncMsg(""),3000);return;}
+    const activeSession=sessionRef.current;
+    if(!activeSession){setSyncMsg("Sign in to sync to the cloud");setTimeout(()=>setSyncMsg(""),3000);return;}
     setSyncOp("pull");setSyncMsg("Pulling…");
     try{
-      const remoteRaw=await KVSync.load();
+      const remoteRaw=await KVSync.load(activeSession.access_token);
       if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
         if(hasUnsyncedRef.current){
@@ -1622,6 +1818,17 @@ function App(){
     ["currency","Currency",I.Swap],
   ];
 
+  if(session===undefined){
+    return(
+      <div style={{background:P.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div className="loader"/>
+      </div>
+    );
+  }
+  if(!session){
+    return <AuthScreen/>;
+  }
+
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
       {/* pull-to-sync indicator */}
@@ -1660,13 +1867,13 @@ function App(){
                 {data.theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
               </button>
               <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"}
-                title={kvReady?"Pull from Cloud":"Configure Worker URL and sync token to enable sync"}
+                title={kvReady?"Pull from Cloud":"Configure Worker URL to enable sync"}
                 style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
                   color:P.sub,background:"transparent",border:`1px solid ${P.line}`,opacity:kvReady?1:.5}}>
                 <I.Refresh size={14} style={syncOp==="pull"?{animation:"spin .9s linear infinite"}:null}/>
               </button>
               <button onClick={()=>saveToCloud()} disabled={!kvReady||syncOp==="push"}
-                title={kvReady?(hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL and sync token to enable sync"}
+                title={kvReady?(hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL to enable sync"}
                 style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
                   background:!kvReady?P.sf:P.grS,color:!kvReady?P.sub:P.grD,border:`1px solid ${!kvReady?P.line:P.grS}`,opacity:kvReady?1:.5}}>
                 <I.Cloud size={13} style={syncOp==="push"?{animation:"spin .9s linear infinite"}:null}/>
@@ -1728,7 +1935,8 @@ function App(){
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
         pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
-        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod}}/>}
+        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,
+        session,onLogOut:logOut}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
       {showProfilePicker&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
@@ -4443,7 +4651,7 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   );
 }
 
-function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod}){
+function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,session,onLogOut}){
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
@@ -4469,6 +4677,21 @@ function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,h
           <h3 style={{margin:0,fontWeight:600}}>Settings</h3>
           <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
         </div>
+        {session&&
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Account</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"9px 12px",
+              background:P.sfA,border:`1px solid ${P.line}`}}>
+              <span style={{fontSize:13,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {session.user&&session.user.email}
+              </span>
+              <button onClick={onLogOut}
+                style={{display:"flex",alignItems:"center",gap:6,flexShrink:0,borderRadius:999,padding:"6px 12px",fontSize:12,fontWeight:600,
+                  background:P.redS,color:P.red,border:`1px solid ${P.redS}`}}>
+                <I.LogOut size={13}/>Log Out
+              </button>
+            </div>
+          </div>}
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Appearance</div>
         <button onClick={toggleTheme}
           style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:14,fontWeight:500,marginBottom:16,
@@ -4554,7 +4777,7 @@ function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,h
             </div>
           </div>
           :<div style={{marginBottom:16,fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
-            Add your Worker URL and Sync Token to <code>index.html</code> to enable sync.
+            Add your Worker URL to <code>index.html</code> and sign in to enable sync — each account's data is kept private and isolated by your login.
             See the setup guide for instructions.
           </div>
         }
