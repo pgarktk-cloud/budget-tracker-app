@@ -848,7 +848,7 @@ function migrate(d){
     delete t.categoryIds;
     if(t.investRate===undefined)t.investRate=4;   // conservative default, user-editable
     if(t.cashRate===undefined)t.cashRate=1;        // conservative default, user-editable
-    if(!t.currency)t.currency="SAR";
+    if(!t.currency)t.currency=d.currency||"SAR";
     if(!t.color)t.color=P.gr;
   });
   return d;
@@ -1675,7 +1675,7 @@ function App(){
   const targets=data.targets||[];
   const addTarget=()=>setData(d=>({...d,targets:[...(d.targets||[]),{
     id:uid(),name:"New target",targetAmount:100000,targetDate:"",
-    categoryAlloc:{},investRate:4,cashRate:1,currency:"SAR",color:SEG[(d.targets||[]).length%SEG.length],
+    categoryAlloc:{},investRate:4,cashRate:1,currency:cur,color:SEG[(d.targets||[]).length%SEG.length],
   }]}));
   const updateTarget=(id,patch)=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,...patch}:t)}));
   const removeTarget=id=>setData(d=>({...d,targets:(d.targets||[]).filter(t=>t.id!==id)}));
@@ -1723,11 +1723,37 @@ function App(){
     setRatesLoading(false);
   };
   useEffect(()=>{loadRates();},[]);
+  /* Phase 3 — one-time migration for existing local history: portHistory was
+     previously always stored as raw USD, and net-worth history snapshots were
+     always computed in SAR. Once live FX rates are available, convert any
+     pre-Phase-3 entries into the user's own base_currency exactly once
+     (flagged so it never re-converts on a later load). Pilot this on your
+     own account before assuming it's safe for Charlene's data too. */
+  useEffect(()=>{
+    if(!rates||!cur)return;
+    setData(d=>{
+      if(d.baseCurrencyMigratedV1)return d;
+      const conv=(amt,from,to)=>{
+        if(!rates[from]||!rates[to])return amt;
+        return(Number(amt)||0)/rates[from]*rates[to];
+      };
+      const newPortHistory=(d.portHistory||[]).map(h=>({...h,value:Math.round(conv(h.value,"USD",cur))}));
+      const newHistory=(d.history||[]).map(h=>({...h,
+        net:Math.round(conv(h.net,"SAR",cur)),
+        banks:Math.round(conv(h.banks,"SAR",cur)),
+        investments:Math.round(conv(h.investments,"SAR",cur)),
+        assets:Math.round(conv(h.assets,"SAR",cur)),
+        liabilities:Math.round(conv(h.liabilities,"SAR",cur)),
+      }));
+      return{...d,portHistory:newPortHistory,history:newHistory,baseCurrencyMigratedV1:true};
+    });
+  },[rates,cur]);
   const convert=(amt,from,to)=>{
     if(!rates||!rates[from]||!rates[to])return null;
     return(Number(amt)||0)/rates[from]*rates[to];
   };
   const sarRate=rates&&rates.SAR?rates.SAR:null;
+  const baseRate=rates&&rates[cur]?rates[cur]:null; // USD → user's base_currency (Phase 3)
 
   /* banks */
   const banks=data.banks||[];
@@ -1745,16 +1771,18 @@ function App(){
   const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch}:a)}));
   const removeAsset=id=>setData(d=>({...d,assets:(d.assets||[]).filter(a=>a.id!==id)}));
 
-  /* net worth */
-  const sarOf=(amt,ccy)=>{const v=convert(amt,ccy,"SAR");return v==null?0:v;};
-  const banksSar=banks.reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+  /* net worth — NOTE: despite the historical "Sar" naming, these variables
+     now total in the user's own base_currency (`cur`), not hardcoded SAR.
+     Kept the names to avoid a sweeping rename across every prop/consumer. */
+  const baseOf=(amt,ccy)=>{const v=convert(amt,ccy,cur);return v==null?0:v;};
+  const banksSar=banks.reduce((s,b)=>s+baseOf(b.balance,b.currency),0);
   const invSar=invs.reduce((s,hld)=>{
     const{shares}=holdingStats(hld.trades);
     const price=livePrice[baseKey(hld.ticker)]||0;
-    return s+shares*price*(sarRate||0);
+    return s+shares*price*(baseRate||0);
   },0);
-  const assetSar=assets.filter(a=>a.kind==="asset").reduce((s,a)=>s+sarOf(a.value,a.currency),0);
-  const liabSar=assets.filter(a=>a.kind==="liability").reduce((s,a)=>s+sarOf(liabilityBalance(a),a.currency),0);
+  const assetSar=assets.filter(a=>a.kind==="asset").reduce((s,a)=>s+baseOf(a.value,a.currency),0);
+  const liabSar=assets.filter(a=>a.kind==="liability").reduce((s,a)=>s+baseOf(liabilityBalance(a),a.currency),0);
   const netWorth=banksSar+invSar+assetSar-liabSar;
 
   /* history */
@@ -1926,11 +1954,11 @@ function App(){
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy:data.currency||"SAR",owners:data.owners}}/>}
-          {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
-          {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
+          {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,cur,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
+          {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,cur,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
-          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
+          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,cur,fmt}}/>}
         </TabPane>
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
@@ -3606,7 +3634,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,mainCcy,
 }
 
 /* ── INVESTMENTS VIEW — trade log ── */
-function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection,setProjection,portHistory,addPortSnap}){
+function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,cur,projection,setProjection,portHistory,addPortSnap}){
   const[loading,setLoading]=useState(false);
   const[err,setErr]=useState("");
   const[updatedAt,setUpdatedAt]=useState(null);
@@ -3657,6 +3685,10 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   const totCost=rows.reduce((s,r)=>s+r.totalCost,0);
   const totGain=totVal-totCost;
   const totGainPct=totCost>0?(totGain/totCost)*100:0;
+  // Phase 3: holdings/prices stay natively USD (that's how tickers quote),
+  // but the portfolio-level totals convert into the user's base_currency
+  const totValBase=convert?convert(totVal,"USD",cur):null;
+  const fmtBase=n=>`${cur} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
 
   const refresh=async()=>{
     const tickers=[...new Set(invs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean))];
@@ -3676,7 +3708,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         const p=q[baseKey(hld.ticker||"")]||livePrice[baseKey(hld.ticker||"")]||0;
         return s+shares*p;
       },0);
-      if(newTotVal>0)addPortSnap(newTotVal);
+      // convert to the user's base_currency before it hits the history array
+      const newTotValBase=convert?convert(newTotVal,"USD",cur):newTotVal;
+      if(newTotValBase>0)addPortSnap(newTotValBase);
     }catch(e){
       setErr(PROXY_URL.startsWith("PASTE_")&&FINNHUB_KEY.startsWith("PASTE_")
         ?"Set up your Cloudflare Worker (for VWRA/LSE) and/or Finnhub key (for US stocks) — see the setup guide."
@@ -3704,14 +3738,13 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       {/* hero */}
       <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.deep,color:"#fff",
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Portfolio value (USD)</div>
-        <span key={Math.round(totVal)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{usd(totVal)}</span>
-        {(sarRate||convert)&&(
-          <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:P.deepHi}}>
-            {sarRate&&<span>≈ SAR {Math.round(totVal*sarRate).toLocaleString("en-US")}</span>}
-            {(()=>{const php=convert?convert(totVal,"USD","PHP"):null;return php!=null?<span>≈ ₱{Math.round(php).toLocaleString("en-US")}</span>:null;})()}
-          </div>
-        )}
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Portfolio value ({cur})</div>
+        <span key={Math.round(totValBase??totVal)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{totValBase!=null?fmtBase(totValBase):"—"}</span>
+        <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:P.deepHi}}>
+          {cur!=="USD"&&<span>≈ {usd(totVal)}</span>}
+          {(()=>{const php=convert&&cur!=="PHP"?convert(totVal,"USD","PHP"):null;return php!=null?<span>≈ ₱{Math.round(php).toLocaleString("en-US")}</span>:null;})()}
+          {totValBase==null&&<span style={{color:"#E89B8C"}}>Loading live rates…</span>}
+        </div>
         <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:20,fontSize:14}} className="tnum">
           <span style={{color:P.deepHi}}>Cost {usd(totCost)}</span>
           <span style={{color:totGain>=0?"#6FC6DA":"#E89B8C",fontWeight:600}}>
@@ -3742,8 +3775,8 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                 <LineChart data={data} margin={{top:4,right:8,bottom:0,left:-16}}>
                   <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
                   <XAxis dataKey="label" tick={{fontSize:10,fill:P.neuSub}}/>
-                  <YAxis tick={{fontSize:10,fill:P.neuSub}} tickFormatter={v=>`$${Math.round(v/1000)}k`}/>
-                  <Tooltip formatter={v=>`$${Math.round(v).toLocaleString("en-US")}`}/>
+                  <YAxis tick={{fontSize:10,fill:P.neuSub}} tickFormatter={v=>`${cur} ${Math.round(v/1000)}k`}/>
+                  <Tooltip formatter={v=>fmtBase(v)}/>
                   <Line type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2.5} dot={{r:3,fill:chartColor}}/>
                 </LineChart>
               </ResponsiveContainer>
@@ -3981,13 +4014,17 @@ function AssetRow({a,updateAsset,removeAsset}){
 }
 
 /* ── NET WORTH VIEW — installment liabilities ── */
-function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}){
+function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,cur,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}){
   const[gran,setGran]=useState("month");
   const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
   const[pv,setPv]=useState("");
-  const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
-  const usd=sarRate?Math.round(netWorth/sarRate):null;
-  const php=convert?convert(netWorth,"SAR","PHP"):null;
+  // `netWorth` (and banksSar/invSar/assetSar/liabSar) are already totaled in
+  // the user's base_currency (`cur`) — see App-level baseOf/baseRate (Phase 3)
+  const sar=n=>`${cur} ${Math.round(n).toLocaleString("en-US")}`;
+  // secondary reference readouts — two other well-known currencies that
+  // aren't already the selected base currency (mirrors BanksView refCcys)
+  const refCcys=["USD","SAR","PHP"].filter(c=>c!==cur).slice(0,2);
+  const refTotals=refCcys.map(c=>({code:c,amount:convert?convert(netWorth,cur,c):null}));
   const parts=[{label:"Bank accounts",value:banksSar,color:SEG[0]},{label:"Investments",value:invSar,color:SEG[3]},{label:"Other assets",value:assetSar,color:SEG[5]},{label:"Liabilities",value:-liabSar,color:P.red}];
   const gross=banksSar+invSar+assetSar;
   const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
@@ -4007,10 +4044,11 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Net worth</div>
         <span key={Math.round(netWorth)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{sar(netWorth)}</span>
         <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:P.deepHi,fontSize:14}}>
-          <span>{usd!=null?`≈ $${usd.toLocaleString("en-US")}`:"USD —"}</span>
-          <span>{php!=null?`≈ ₱${Math.round(php).toLocaleString("en-US")}`:"PHP —"}</span>
+          {refTotals.map(({code,amount})=>
+            <span key={code}>{amount!=null?`≈ ${code} ${Math.round(amount).toLocaleString("en-US")}`:`${code} —`}</span>
+          )}
         </div>
-        {(usd==null||php==null)&&<div style={{fontSize:11,marginTop:6,color:"#E89B8C"}}>{ratesErr?"Couldn't load live rates — tap refresh in Currency tab.":"Loading live rates…"}</div>}
+        {refTotals.some(r=>r.amount==null)&&<div style={{fontSize:11,marginTop:6,color:"#E89B8C"}}>{ratesErr?"Couldn't load live rates — tap refresh in Currency tab.":"Loading live rates…"}</div>}
         {delta!=null&&<div className="tnum" style={{fontSize:14,marginTop:6,color:delta>=0?"#6FC6DA":"#E89B8C"}}>{delta>=0?"▲":"▼"} {sar(Math.abs(delta))} since last snapshot</div>}
       </div>
 
@@ -4070,7 +4108,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         </div>
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid rgba(0,0,0,.06)"}}>
           <div><div style={{color:P.neuSub,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk}}/></div>
-          <div><div style={{color:P.neuSub,fontSize:10}}>Net worth (SAR)</div><input type="number" value={pv} placeholder="0" onChange={e=>setPv(e.target.value)} className="tnum" style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk,width:120}}/></div>
+          <div><div style={{color:P.neuSub,fontSize:10}}>Net worth ({cur})</div><input type="number" value={pv} placeholder="0" onChange={e=>setPv(e.target.value)} className="tnum" style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk,width:120}}/></div>
           <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} className="neu-btn" style={{padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade}}>Add entry</button>
         </div>
         {sorted.length>0&&(
@@ -4383,7 +4421,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
    a Target's progress is derived live: pick which budget categories count as
    "savings rate" toward it, and it projects your current invested + cash
    balances forward at two separately-editable conservative growth rates. ── */
-function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePlanId,owners,invSar,banksSar,fmt}){
+function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePlanId,owners,invSar,banksSar,cur,fmt}){
   const[openId,setOpenId]=useState(null);
   const[catPickerId,setCatPickerId]=useState(null);
 
@@ -4472,7 +4510,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
             </div>
 
             <div style={{display:"flex",gap:12,marginBottom:12,fontSize:13}}>
-              <label style={{flex:1,color:P.sub}}>Target amount (SAR)
+              <label style={{flex:1,color:P.sub}}>Target amount ({cur})
                 <input type="number" value={open.targetAmount} onChange={e=>updateTarget(open.id,{targetAmount:Number(e.target.value)})}
                   className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
