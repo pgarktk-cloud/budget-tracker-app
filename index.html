@@ -92,6 +92,14 @@ input[type=number]{-moz-appearance:textfield;}
 button{cursor:pointer;font:inherit;}
 select{font:inherit;}
 
+/* iOS/Android zoom the whole page in when a tapped input's font-size is
+   under 16px, on the assumption the text is too small to read. Every
+   input/select/textarea in the app renders smaller than that on purpose,
+   so force 16px on touch-width viewports only — desktop is untouched. */
+@media (max-width:768px){
+  input,select,textarea{font-size:16px !important;}
+}
+
 /* ── Keyframes ── */
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
