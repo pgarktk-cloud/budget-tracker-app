@@ -1,152 +1,311 @@
-/**
- * Allocation Worker — Cloudflare Worker
- *
- * Two jobs in one Worker:
- *
- * 1. STOCK PRICE PROXY  GET /quote?symbols=AAPL,VWRA.L,VOO
- *    Fetches Yahoo Finance server-side (no CORS issue), returns JSON.
- *
- * 2. KV DATA SYNC  (replaces Google Drive — no login ever required)
- *    GET  /sync          → returns { data, savedAt } from KV
- *    POST /sync          → body: { data, savedAt } — saves to KV
- *    GET  /sync/meta     → returns { savedAt } only (cheap conflict check)
- *
- * Setup:
- *   In Cloudflare dashboard → Workers & Pages → your Worker → Settings → Bindings
- *   Add KV Namespace binding:  Variable name = ALLOC_KV  (create the namespace first)
- *
- * Security:
- *   Requests to /sync must include header  X-Sync-Token: <your secret>
- *   Set SYNC_TOKEN below to any long random string you choose.
- *   Paste the same token into index.html where it says PASTE_YOUR_SYNC_TOKEN_HERE.
- */
+/* ════════════════════════════════════════════════════════════════════════
+   Where'dItGo — Cloudflare Worker sync backend (Phase 2 + Provisioning)
 
-// ── Your secret sync token — change this to anything long and random ──────────
-// e.g. "xK9mP2qL8nR4vT6wY1cZ3bA5jE7hU0s"  (just mash your keyboard)
-const SYNC_TOKEN = "kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
-// ─────────────────────────────────────────────────────────────────────────────
+   Multi-tenant KV sync gated by Supabase JWT verification. Every request to
+   /sync must carry `Authorization: Bearer <supabase access_token>`. The
+   Worker verifies the token's signature against your Supabase project's
+   JWT secret, extracts the user id from the verified payload, and reads /
+   writes that user's data under an isolated KV key. No client can read or
+   overwrite another user's data — the key is derived only from the verified
+   token, never from anything the client sends directly.
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token",
-};
+   On a user's very first GET /sync (nothing yet in KV for their id), the
+   Worker also reads `account_mode` ("single" | "couple") off the verified
+   token's user_metadata — set at signup — and seeds their KV record with a
+   matching starter template before returning it. This never overwrites an
+   account that already has data; it only fires once, on first touch.
 
-function json(body, status = 200) {
+   ── Setup ──────────────────────────────────────────────────────────────
+   1. Create a KV namespace and bind it to this Worker as `SYNC_KV`
+      (wrangler.toml: kv_namespaces = [{ binding = "SYNC_KV", id = "..." }]).
+   2. Set a secret with your Supabase project's JWT secret:
+        wrangler secret put SUPABASE_JWT_SECRET
+      (Find it in Supabase Dashboard → Project Settings → API → JWT Secret.)
+   3. Optionally set ALLOWED_ORIGIN as a var/secret to lock CORS down to your
+      app's origin instead of "*".
+   ════════════════════════════════════════════════════════════════════════ */
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+function corsHeaders(env) {
+  return {
+    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+function json(body, status, env) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: { ...JSON_HEADERS, ...corsHeaders(env) },
   });
 }
 
-function authOk(request) {
-  return request.headers.get("X-Sync-Token") === SYNC_TOKEN;
+/* ── base64url helpers ──────────────────────────────────────────────── */
+function b64urlToUint8Array(b64url) {
+  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+  const raw = atob(b64 + pad);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+function b64urlToJson(b64url) {
+  return JSON.parse(new TextDecoder().decode(b64urlToUint8Array(b64url)));
 }
 
+/* ── JWT verification (HS256, Supabase's default) ───────────────────────
+   Supabase issues HS256-signed JWTs by default, symmetric-keyed with the
+   project's JWT secret. We recompute the HMAC over "<header>.<payload>"
+   and compare it — constant-time, via WebCrypto — against the signature
+   on the token. Also validates alg, exp, and the standard "authenticated"
+   role Supabase sets on user sessions. Throws on any failure; callers
+   should treat a thrown error as "reject the request as unauthenticated".
+   ─────────────────────────────────────────────────────────────────────── */
+async function verifySupabaseJWT(token, secret) {
+  if (!token) throw new Error("missing token");
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("malformed token");
+  const [headerB64, payloadB64, sigB64] = parts;
+
+  const header = b64urlToJson(headerB64);
+  if (header.alg !== "HS256") throw new Error("unsupported alg");
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"]
+  );
+
+  const signature = b64urlToUint8Array(sigB64);
+  const data = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+  const valid = await crypto.subtle.verify("HMAC", key, signature, data);
+  if (!valid) throw new Error("bad signature");
+
+  const payload = b64urlToJson(payloadB64);
+  if (typeof payload.exp === "number" && Date.now() / 1000 >= payload.exp) {
+    throw new Error("expired token");
+  }
+
+  const userId = payload.sub || payload.user_id;
+  if (!userId) throw new Error("token missing user id");
+
+  // Supabase mirrors the signUp() options.data payload onto the token as
+  // user_metadata. These are only ever read here — the client can't send
+  // them directly to the Worker, so a user can't spoof different values
+  // after the fact by editing a request body.
+  const meta = payload.user_metadata || {};
+  const accountMode = meta.account_mode || "single";
+  const displayName = (typeof meta.display_name === "string" && meta.display_name.trim()) || null;
+  const baseCurrency = (typeof meta.base_currency === "string" && meta.base_currency.trim()) || null;
+
+  return { userId, accountMode, displayName, baseCurrency, payload };
+}
+
+async function authenticate(request, env) {
+  const authHeader = request.headers.get("Authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    const err = new Error("missing bearer token");
+    err.status = 401;
+    throw err;
+  }
+  if (!env.SUPABASE_JWT_SECRET) {
+    const err = new Error("worker misconfigured: no SUPABASE_JWT_SECRET set");
+    err.status = 500;
+    throw err;
+  }
+  try {
+    const { userId, accountMode, displayName, baseCurrency } = await verifySupabaseJWT(match[1], env.SUPABASE_JWT_SECRET);
+    return { userId, accountMode, displayName, baseCurrency };
+  } catch (e) {
+    const err = new Error(`invalid token: ${e.message}`);
+    err.status = 401;
+    throw err;
+  }
+}
+
+/* Storage isolation: every user's data lives under its own key, derived
+   only from the verified JWT — never from a client-supplied id. */
+const userDataKey = (userId) => `user:data:${userId}`;
+
+/* ── First-time provisioning templates ──────────────────────────────────
+   Deliberately generic/neutral placeholder data — NOT anyone's real
+   financial figures — since every new signup gets a copy of this. Shape
+   matches what the frontend's migrate() expects; fields migrate() already
+   backfills (owners, activePlanId, theme, payPeriods, investTarget, etc.)
+   are omitted here and left for it to fill in on load.
+   ─────────────────────────────────────────────────────────────────────── */
+function starterCategories(names) {
+  const palette = ["#3FBF9E", "#C97177", "#7BAFD4", "#E0B354", "#9B8AC4", "#6FBF73"];
+  return names.map((name, i) => ({
+    id: `cat_${i}_${Math.random().toString(36).slice(2, 8)}`,
+    name, amount: 0, groupId: "g1", color: palette[i % palette.length],
+    subs: [], trackExpenses: true,
+  }));
+}
+
+function templateSingle(displayName, baseCurrency) {
+  return {
+    currency: baseCurrency || "SAR",
+    owners: { me: displayName || "Me", wife: "Partner" },
+    plans: [{
+      id: "p1", owner: "me", name: "Monthly Budget",
+      month: new Date().toLocaleString("en-US", { month: "long", year: "numeric" }),
+      income: 0,
+      groups: [{ id: "g1", name: "Essentials" }, { id: "g2", name: "Savings" }, { id: "g3", name: "Personal" }],
+      categories: starterCategories(["Rent/Housing", "Groceries", "Savings", "Personal"]),
+    }],
+    goals: [],
+    investments: [],
+    banks: [],
+    assets: [],
+    expenses: [],
+    targets: [],
+    household: { splitMine: 50, expenses: [] },
+  };
+}
+
+function templateCouple(displayName, baseCurrency) {
+  return {
+    currency: baseCurrency || "SAR",
+    owners: { me: displayName || "Me", wife: "Partner" },
+    plans: [
+      {
+        id: "p1", owner: "me", name: "Monthly Budget",
+        month: new Date().toLocaleString("en-US", { month: "long", year: "numeric" }),
+        income: 0,
+        groups: [{ id: "g1", name: "Essentials" }, { id: "g2", name: "Savings" }, { id: "g3", name: "Personal" }],
+        categories: starterCategories(["Rent/Housing", "Groceries", "Savings", "Personal"]),
+      },
+      {
+        id: "pw1", owner: "wife", name: "Monthly Budget",
+        month: new Date().toLocaleString("en-US", { month: "long", year: "numeric" }),
+        income: 0,
+        groups: [{ id: "wg1", name: "Essentials" }, { id: "wg2", name: "Savings" }, { id: "wg3", name: "Personal" }],
+        categories: starterCategories(["Groceries", "Savings", "Personal"]),
+      },
+    ],
+    goals: [],
+    investments: [],
+    banks: [],
+    assets: [],
+    expenses: [],
+    targets: [],
+    household: { splitMine: 50, expenses: [] },
+  };
+}
+
+function starterTemplateFor(accountMode, displayName, baseCurrency) {
+  return accountMode === "couple"
+    ? templateCouple(displayName, baseCurrency)
+    : templateSingle(displayName, baseCurrency);
+}
+
+/* ── route handlers ─────────────────────────────────────────────────── */
+async function handleGetSync(request, env, userId, accountMode, displayName, baseCurrency) {
+  const key = userDataKey(userId);
+  const raw = await env.SYNC_KV.get(key);
+  if (!raw) {
+    // First-time provisioning: nothing exists yet for this verified user,
+    // so seed their KV record with the starter template matching the
+    // account_mode/display_name/base_currency they chose at signup, then
+    // hand it back. This only ever runs once — subsequent requests find a
+    // real record and skip straight to the branch below.
+    const template = starterTemplateFor(accountMode, displayName, baseCurrency);
+    const savedAt = new Date().toISOString();
+    await env.SYNC_KV.put(key, JSON.stringify({ data: template, savedAt }));
+    return json({ ok: true, isNew: true, provisioned: accountMode, data: template, savedAt }, 200, env);
+  }
+  let stored;
+  try {
+    stored = JSON.parse(raw);
+  } catch (e) {
+    return json({ ok: true, isNew: true, data: null, savedAt: null }, 200, env);
+  }
+  return json({ ok: true, data: stored.data ?? null, savedAt: stored.savedAt ?? null }, 200, env);
+}
+
+async function handlePostSync(request, env, userId) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return json({ ok: false, reason: "invalid JSON body" }, 400, env);
+  }
+  const { data, savedAt, lastPulledAt } = body || {};
+  if (data === undefined) {
+    return json({ ok: false, reason: "missing data" }, 400, env);
+  }
+
+  const key = userDataKey(userId);
+  const existingRaw = await env.SYNC_KV.get(key);
+  const existing = existingRaw ? JSON.parse(existingRaw) : null;
+
+  // Optimistic-concurrency check: if the cloud copy has moved on since this
+  // client last pulled it, don't blindly clobber it — surface a conflict
+  // so the frontend can offer to merge/reconcile instead.
+  if (existing && existing.savedAt && existing.savedAt !== lastPulledAt) {
+    return json({ ok: false, conflict: true, savedAt: existing.savedAt }, 200, env);
+  }
+
+  const record = { data, savedAt: savedAt || new Date().toISOString() };
+  await env.SYNC_KV.put(key, JSON.stringify(record));
+  return json({ ok: true, savedAt: record.savedAt }, 200, env);
+}
+
+async function handleMeta(request, env, userId) {
+  const raw = await env.SYNC_KV.get(userDataKey(userId));
+  if (!raw) return json({ ok: true, isNew: true, savedAt: null }, 200, env);
+  let stored;
+  try {
+    stored = JSON.parse(raw);
+  } catch (e) {
+    return json({ ok: true, isNew: true, savedAt: null }, 200, env);
+  }
+  return json({ ok: true, savedAt: stored.savedAt ?? null }, 200, env);
+}
+
+/* ── entrypoint ──────────────────────────────────────────────────────── */
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const path = url.pathname;
 
-    // ── CORS preflight ──────────────────────────────────────────────────────
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: CORS });
+      return new Response(null, { status: 204, headers: corsHeaders(env) });
     }
 
-    // ── KV SYNC ─────────────────────────────────────────────────────────────
-    if (path === "/sync" || path === "/sync/meta") {
-
-      // Auth check for all sync endpoints
-      if (!authOk(request)) {
-        return json({ error: "Unauthorized" }, 401);
-      }
-
-      const KV = env.ALLOC_KV;
-      if (!KV) return json({ error: "KV not bound — add ALLOC_KV binding in Worker settings" }, 500);
-
-      // GET /sync/meta — cheap timestamp-only check (used for conflict detection)
-      if (path === "/sync/meta" && request.method === "GET") {
-        const savedAt = await KV.get("savedAt");
-        return json({ savedAt: savedAt || null });
-      }
-
-      // GET /sync — load full data
-      if (request.method === "GET") {
-        const raw = await KV.get("data");
-        const savedAt = await KV.get("savedAt");
-        if (!raw) return json({ data: null, savedAt: null });
-        try {
-          return json({ data: JSON.parse(raw), savedAt });
-        } catch {
-          return json({ data: null, savedAt: null });
-        }
-      }
-
-      // POST /sync — save full data
-      if (request.method === "POST") {
-        let body;
-        try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-
-        const incoming = body.savedAt || new Date().toISOString();
-
-        // Conflict check: if KV has a newer timestamp than what the client
-        // thinks it last synced from, warn (but still save — client decides)
-        const kvSavedAt = await KV.get("savedAt");
-        const conflict = kvSavedAt && body.lastPulledAt && kvSavedAt > body.lastPulledAt;
-
-        await KV.put("data",    JSON.stringify(body.data));
-        await KV.put("savedAt", incoming);
-
-        return json({ ok: true, savedAt: incoming, conflict: conflict || false });
-      }
+    if (url.pathname !== "/sync" && url.pathname !== "/sync/meta") {
+      return json({ ok: false, reason: "not found" }, 404, env);
+    }
+    if (!env.SYNC_KV) {
+      return json({ ok: false, reason: "worker misconfigured: no SYNC_KV binding" }, 500, env);
     }
 
-    // ── STOCK PRICE PROXY ────────────────────────────────────────────────────
-    if (path === "/quote") {
-      const symbolsParam = url.searchParams.get("symbols") || "";
-      if (!symbolsParam) return json({ error: "No symbols" }, 400);
-
-      const symbols = symbolsParam.split(",").map(s => s.trim()).filter(Boolean);
-      const results = {};
-
-      await Promise.all(symbols.map(async (sym) => {
-        try {
-          const r = await fetch(
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`,
-            { headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-              "Accept": "application/json",
-            }}
-          );
-          if (!r.ok) return;
-          const data = await r.json();
-          const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-          if (price && price > 0) results[sym] = price;
-        } catch (e) { /* skip */ }
-      }));
-
-      return json(results);
+    let userId, accountMode, displayName, baseCurrency;
+    try {
+      ({ userId, accountMode, displayName, baseCurrency } = await authenticate(request, env));
+    } catch (e) {
+      return json({ ok: false, reason: e.message }, e.status || 401, env);
     }
 
-    // ── Ticker name lookup (for auto-fill) ───────────────────────────────────
-    if (path === "/name") {
-      const symbol = url.searchParams.get("symbol") || "";
-      if (!symbol) return json({ name: null });
-      try {
-        const r = await fetch(
-          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`,
-          { headers: { "User-Agent": "Mozilla/5.0" } }
-        );
-        if (r.ok) {
-          const data = await r.json();
-          const name = data?.chart?.result?.[0]?.meta?.longName ||
-                       data?.chart?.result?.[0]?.meta?.shortName || null;
-          return json({ name });
-        }
-      } catch (e) { /* skip */ }
-      return json({ name: null });
+    try {
+      if (url.pathname === "/sync/meta" && request.method === "GET") {
+        return await handleMeta(request, env, userId);
+      }
+      if (url.pathname === "/sync" && request.method === "GET") {
+        return await handleGetSync(request, env, userId, accountMode, displayName, baseCurrency);
+      }
+      if (url.pathname === "/sync" && request.method === "POST") {
+        return await handlePostSync(request, env, userId);
+      }
+      return json({ ok: false, reason: "method not allowed" }, 405, env);
+    } catch (e) {
+      return json({ ok: false, reason: `internal error: ${e.message}` }, 500, env);
     }
-
-    return json({ error: "Not found" }, 404);
   },
 };
