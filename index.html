@@ -800,6 +800,9 @@ function migrate(d){
       delete g.saved;
     }
     if(!g.contributions)g.contributions=[];
+    // Phase 3.1 — which currency this goal is saved *in*; existing goals
+    // default to the account's base currency (no conversion, just a label)
+    if(!g.currency)g.currency=d.currency||"SAR";
   });
   (d.plans||[]).forEach(plan=>{
     (plan.categories||[]).forEach(c=>{
@@ -1649,7 +1652,7 @@ function App(){
   }));
 
   /* goals */
-  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length]}]}));
+  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,currency:cur,color:SEG[d.goals.length%SEG.length]}]}));
   const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch}:g)}));
   const removeGoal=id=>setData(d=>({...d,goals:d.goals.filter(g=>g.id!==id)}));
   const addContribution=(goalId,amount,note="")=>{
@@ -1958,7 +1961,7 @@ function App(){
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,cur,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
-          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,cur,fmt}}/>}
+          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,cur,convert,fmt}}/>}
         </TabPane>
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
@@ -4191,6 +4194,8 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
   const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
   const Icon=goalIcon(g.type);
   const R=26,C=2*Math.PI*R;
+  // amounts are entered natively in whichever currency this goal is saved in
+  const fmtG=n=>`${g.currency||"SAR"} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
   return(
     <div style={{borderRadius:16,padding:14,background:P.neuBg,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`,display:"flex",flexDirection:"column",gap:8}}>
       {/* top row: type icon + delete */}
@@ -4220,8 +4225,8 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
 
       {/* saved / target */}
       <div style={{textAlign:"center"}} className="tnum">
-        <div style={{fontSize:14,fontWeight:700,color:P.neuInk}}>{fmt(saved)}</div>
-        <div style={{fontSize:11,color:P.neuSub}}>of {fmt(g.target)}</div>
+        <div style={{fontSize:14,fontWeight:700,color:P.neuInk}}>{fmtG(saved)}</div>
+        <div style={{fontSize:11,color:P.neuSub}}>of {fmtG(g.target)}</div>
       </div>
 
       {/* actions */}
@@ -4313,6 +4318,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         const g=goals.find(x=>x.id===addModal);
         if(!g)return null;
         const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const fmtG=n=>`${g.currency||"SAR"} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
         return(
           <Portal>
           <div className="modal-bg" onClick={()=>setAddModal(null)}>
@@ -4323,11 +4329,11 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </div>
               <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:16}}>
                 <div style={{fontSize:12,color:P.sub}}>Current saved</div>
-                <div className="serif tnum" style={{fontSize:24,fontWeight:600,color:P.ink}}>{fmt(saved)}</div>
-                <div style={{fontSize:12,color:P.faint}}>Target: {fmt(g.target)} · {g.target>0?((saved/g.target)*100).toFixed(0):0}% there</div>
+                <div className="serif tnum" style={{fontSize:24,fontWeight:600,color:P.ink}}>{fmtG(saved)}</div>
+                <div style={{fontSize:12,color:P.faint}}>Target: {fmtG(g.target)} · {g.target>0?((saved/g.target)*100).toFixed(0):0}% there</div>
               </div>
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount to add</div>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount to add ({g.currency||"SAR"})</div>
                 <input type="text" inputMode="decimal" value={addAmount} onChange={e=>setAddAmount(e.target.value)}
                   onBlur={e=>setAddAmount(e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(addAmount)||0)))}
                   onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
@@ -4341,12 +4347,12 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </div>
               {addAmount&&Number(addAmount)>0&&(
                 <div style={{fontSize:13,color:P.sub,marginBottom:12}} className="tnum">
-                  New total: {fmt(saved+Number(addAmount))} ({g.target>0?(((saved+Number(addAmount))/g.target)*100).toFixed(0):0}%)
+                  New total: {fmtG(saved+Number(addAmount))} ({g.target>0?(((saved+Number(addAmount))/g.target)*100).toFixed(0):0}%)
                 </div>
               )}
               <button onClick={()=>{if(Number(addAmount)>0){addContribution(addModal,addAmount,addNote);setAddModal(null);}}}
                 style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none"}}>
-                Add {addAmount?fmt(Number(addAmount)):"money"}
+                Add {addAmount?fmtG(Number(addAmount)):"money"}
               </button>
             </div>
           </div>
@@ -4362,6 +4368,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
         const remain=Math.max(0,g.target-saved);
         const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
         const Icon=goalIcon(g.type);
+        const fmtG=n=>`${g.currency||"SAR"} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
         return(
           <Portal>
           <div className="modal-bg" onClick={()=>setDetailModal(null)}>
@@ -4379,13 +4386,20 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                     className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
                 <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Saving in</div>
+                  <select value={g.currency||"SAR"} onChange={e=>updateGoal(g.id,{currency:e.target.value})}
+                    style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}>
+                    {FX_CODES.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div style={{flex:1}}>
                   <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Monthly</div>
                   <input type="number" value={g.monthly} onChange={e=>updateGoal(g.id,{monthly:Number(e.target.value)})}
                     className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
               </div>
               <div style={{fontSize:12,color:P.sub,marginBottom:14}} className="tnum">
-                Saved {fmt(saved)} · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
+                Saved {fmtG(saved)} · {fmtG(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
               </div>
 
               <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Contributions</div>
@@ -4394,7 +4408,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                   {[...(g.contributions||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
                     <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:"1px solid rgba(0,0,0,.06)",fontSize:13}}>
                       <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
-                      <span className="tnum" style={{fontWeight:600,color:P.jade}}>+{fmt(c.amount)}</span>
+                      <span className="tnum" style={{fontWeight:600,color:P.jade}}>+{fmtG(c.amount)}</span>
                       {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
                       <button onClick={()=>removeContribution(g.id,c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
                     </div>
@@ -4421,9 +4435,20 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
    a Target's progress is derived live: pick which budget categories count as
    "savings rate" toward it, and it projects your current invested + cash
    balances forward at two separately-editable conservative growth rates. ── */
-function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePlanId,owners,invSar,banksSar,cur,fmt}){
+function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePlanId,owners,invSar,banksSar,cur,convert,fmt}){
   const[openId,setOpenId]=useState(null);
   const[catPickerId,setCatPickerId]=useState(null);
+
+  // invSar/banksSar arrive totaled in the account's base currency (`cur`).
+  // Each target can be saved *in* a different currency (e.g. a USD brokerage
+  // target while your base currency is SAR) — convert the current invested
+  // + cash balances into that target's own currency before comparing/forecasting.
+  const toTargetCcy=(t,amtInBase)=>{
+    const tc=t.currency||cur;
+    if(tc===cur)return amtInBase;
+    const v=convert?convert(amtInBase,cur,tc):null;
+    return v==null?amtInBase:v;
+  };
 
   // only the CURRENT plan per owner — `plans` holds one entry per month
   // (carry-forward history), so looping over all of them would repeat
@@ -4463,9 +4488,12 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
         {targets.map(t=>{
           const{monthlyInvest,monthlyCash,count}=splitMonthly(t);
-          const{hitMonth}=computeTargetForecast(invSar,banksSar,monthlyInvest,monthlyCash,t.investRate,t.cashRate,t.targetAmount);
-          const current=invSar+banksSar;
+          const invT=toTargetCcy(t,invSar),banksT=toTargetCcy(t,banksSar);
+          const monthlyInvestT=toTargetCcy(t,monthlyInvest),monthlyCashT=toTargetCcy(t,monthlyCash);
+          const{hitMonth}=computeTargetForecast(invT,banksT,monthlyInvestT,monthlyCashT,t.investRate,t.cashRate,t.targetAmount);
+          const current=invT+banksT;
           const pct=t.targetAmount>0?Math.min(100,(current/t.targetAmount)*100):0;
+          const fmtT=n=>`${t.currency||cur} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
           return(
             <button key={t.id} onClick={()=>setOpenId(t.id)}
               style={{textAlign:"left",padding:14,minHeight:150,...neu(16),
@@ -4475,7 +4503,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
                 <span style={{fontSize:13,fontWeight:600,color:P.neuInk}}>{t.name}</span>
               </div>
               <div style={{fontSize:11,color:P.neuSub}}>Target</div>
-              <div className="tnum" style={{fontSize:15,fontWeight:700,color:P.neuInk}}>{fmt(t.targetAmount)}</div>
+              <div className="tnum" style={{fontSize:15,fontWeight:700,color:P.neuInk}}>{fmtT(t.targetAmount)}</div>
               <div style={{...neuInset(999),height:8,overflow:"hidden",marginTop:2}}>
                 <div className="liquid-fill" style={{height:"100%",width:`${pct}%`,background:liquidFillBg(t.color||P.jade)}}/>
               </div>
@@ -4498,7 +4526,10 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
       {/* ── Detail / edit modal ── */}
       {open&&(()=>{
         const{monthlyInvest,monthlyCash,count}=splitMonthly(open);
-        const{series,hitMonth}=computeTargetForecast(invSar,banksSar,monthlyInvest,monthlyCash,open.investRate,open.cashRate,open.targetAmount);
+        const invT=toTargetCcy(open,invSar),banksT=toTargetCcy(open,banksSar);
+        const monthlyInvestT=toTargetCcy(open,monthlyInvest),monthlyCashT=toTargetCcy(open,monthlyCash);
+        const{series,hitMonth}=computeTargetForecast(invT,banksT,monthlyInvestT,monthlyCashT,open.investRate,open.cashRate,open.targetAmount);
+        const fmtT=n=>`${open.currency||cur} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
         return(
         <Portal>
         <div className="modal-bg" onClick={()=>setOpenId(null)}>
@@ -4510,9 +4541,15 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
             </div>
 
             <div style={{display:"flex",gap:12,marginBottom:12,fontSize:13}}>
-              <label style={{flex:1,color:P.sub}}>Target amount ({cur})
+              <label style={{flex:1,color:P.sub}}>Target amount ({open.currency||cur})
                 <input type="number" value={open.targetAmount} onChange={e=>updateTarget(open.id,{targetAmount:Number(e.target.value)})}
                   className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
+              </label>
+              <label style={{flex:1,color:P.sub}}>Saving in
+                <select value={open.currency||cur} onChange={e=>updateTarget(open.id,{currency:e.target.value})}
+                  className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}>
+                  {FX_CODES.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
               </label>
               <label style={{flex:1,color:P.sub}}>Target date
                 <input type="date" value={open.targetDate||""} onChange={e=>updateTarget(open.id,{targetDate:e.target.value})}
@@ -4545,6 +4582,11 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
                     <div className="tnum" style={{fontWeight:600,color:P.ink}}>{fmt(monthlyCash)}/mo</div>
                   </div>
                 </div>
+                {(open.currency||cur)!==cur&&(
+                  <div className="tnum" style={{fontSize:10,color:P.faint,marginTop:6}}>
+                    ≈ {fmtT(monthlyInvestT)} + {fmtT(monthlyCashT)} /mo once converted to {open.currency}
+                  </div>
+                )}
               </button>
             </div>
 
@@ -4560,7 +4602,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
                     <CartesianGrid strokeDasharray="3 3" stroke={P.line}/>
                     <XAxis dataKey="m" tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`${Math.round(v/12)}y`}/>
                     <YAxis tick={{fontSize:10,fill:P.faint}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
-                    <Tooltip formatter={v=>fmt(v)} labelFormatter={v=>`Month ${v}`}/>
+                    <Tooltip formatter={v=>fmtT(v)} labelFormatter={v=>`Month ${v}`}/>
                     <Line type="monotone" dataKey="total" stroke={open.color||P.jade} strokeWidth={2} dot={false}/>
                   </LineChart>
                 </ResponsiveContainer>
