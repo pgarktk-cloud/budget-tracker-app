@@ -1731,7 +1731,7 @@ function App(){
 
   /* banks */
   const banks=data.banks||[];
-  const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0}]}));
+  const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:d.currency||"SAR",balance:0}]}));
   const updateBank=(id,patch)=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,...patch}:b)}));
   const removeBank=id=>setData(d=>({...d,banks:(d.banks||[]).filter(b=>b.id!==id)}));
 
@@ -1739,8 +1739,8 @@ function App(){
   const assets=data.assets||[];
   const addAsset=kind=>setData(d=>({...d,assets:[...(d.assets||[]),
     kind==="liability"
-      ?{id:uid(),name:"New liability",kind:"liability",currency:"SAR",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10)}
-      :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",value:0}
+      ?{id:uid(),name:"New liability",kind:"liability",currency:d.currency||"SAR",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10)}
+      :{id:uid(),name:"New asset",kind:"asset",currency:d.currency||"SAR",value:0}
   ]}));
   const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch}:a)}));
   const removeAsset=id=>setData(d=>({...d,assets:(d.assets||[]).filter(a=>a.id!==id)}));
@@ -3484,7 +3484,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
     const accent=b.owner==="me"?P.jade:P.br;
     const accentS=b.owner==="me"?P.jadeS:P.brS;
     return(
-      <div key={b.id} style={{...neu(18),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
+      <div key={b.id} style={{...neu(18),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column",minWidth:0}}>
         {/* accent strip — reads as the "card network" band of a wallet pass */}
         <div style={{height:5,background:accent}}/>
         <div style={{padding:16,flex:1,display:"flex",flexDirection:"column",gap:10}}>
@@ -3516,20 +3516,20 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
 
         {/* ── settings panel — edit fields, collapsed by default ── */}
         {isOpen&&(
-          <div style={{...neuInset(0),borderRadius:0,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
-            <div style={{display:"flex",gap:8}}>
+          <div style={{...neuInset(0),borderRadius:0,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8,width:"100%",boxSizing:"border-box"}}>
+            <div style={{display:"flex",gap:8,width:"100%",boxSizing:"border-box"}}>
               <input value={b.name} placeholder="Account name" onChange={e=>updateBank(b.id,{name:e.target.value})}
-                className="bare" style={{...neu(8),flex:1,fontSize:13,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
+                className="bare" style={{...neu(8),flex:1,minWidth:0,fontSize:13,fontWeight:600,padding:"6px 8px",color:P.neuInk,boxSizing:"border-box"}}/>
               <input value={b.bank} placeholder="Bank name" onChange={e=>updateBank(b.id,{bank:e.target.value})}
-                className="bare" style={{...neu(8),flex:1,fontSize:13,padding:"6px 8px",color:P.neuInk}}/>
+                className="bare" style={{...neu(8),flex:1,minWidth:0,fontSize:13,padding:"6px 8px",color:P.neuInk,boxSizing:"border-box"}}/>
             </div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",width:"100%",boxSizing:"border-box"}}>
               <select value={b.country} onChange={e=>updateBank(b.id,{country:e.target.value})}
-                style={{...neu(8),flex:1,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                style={{...neu(8),flex:1,minWidth:0,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub,boxSizing:"border-box"}}>
                 {COUNTRIES.map(([c,l])=><option key={c} value={c}>{l}</option>)}
               </select>
               <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})}
-                style={{...neu(8),padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                style={{...neu(8),flex:1,minWidth:0,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub,boxSizing:"border-box"}}>
                 {BANK_CCY.map(c=><option key={c}>{c}</option>)}
               </select>
             </div>
@@ -4742,8 +4742,11 @@ function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,h
             );
           })}
         </div>
-        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Currency label</div>
-        <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Base currency</div>
+        <select value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))}
+          style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
+          {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Cloudflare KV Sync</div>
         {kvReady
           ?<div style={{marginBottom:16}}>
