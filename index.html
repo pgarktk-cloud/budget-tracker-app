@@ -32,6 +32,36 @@
   }catch(e){}
 })();
 </script>
+<script>
+(function(){
+  // Keep --vvh in sync with the real visual viewport (shrinks when the
+  // on-screen keyboard opens on iOS/Android), so .sheet-bg/.sheet can size
+  // against it instead of a 100vh that ignores the keyboard.
+  function setVV(){
+    var vv=window.visualViewport;
+    var h=vv?vv.height:window.innerHeight;
+    document.documentElement.style.setProperty('--vvh',h+'px');
+  }
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',setVV);
+    window.visualViewport.addEventListener('scroll',setVV);
+  }
+  window.addEventListener('resize',setVV);
+  setVV();
+
+  // Pilot scope: only fields inside .sheet (the add/edit transaction form).
+  // When the keyboard opens, the focused input can still end up hidden
+  // behind it for a moment before the resize settles — nudge it into view.
+  document.addEventListener('focusin',function(e){
+    var t=e.target;
+    if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA')&&t.closest('.sheet')){
+      setTimeout(function(){
+        t.scrollIntoView({block:'center',behavior:'smooth'});
+      },250);
+    }
+  });
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
@@ -85,10 +115,15 @@ select{font:inherit;}
   animation:sheetBgIn .25s ease both;
   overflow-y:auto;
   padding:calc(env(safe-area-inset-top) + 16px) 12px 16px;
+  /* --vvh is the live visualViewport height (set in JS below), which
+     actually shrinks when the on-screen keyboard opens — unlike 100vh,
+     which iOS Safari leaves untouched and lets the keyboard cover. */
+  height:var(--vvh, 100vh);
 }
 .sheet{
   border-radius:20px;padding:18px;
-  width:100%;max-width:480px;max-height:calc(100vh - env(safe-area-inset-top) - 32px);overflow-y:auto;
+  width:100%;max-width:480px;
+  max-height:calc(var(--vvh, 100vh) - env(safe-area-inset-top) - 32px);overflow-y:auto;
   background:var(--glassBgStrong);
   border:1px solid var(--glassBorder);box-shadow:0 16px 40px var(--glassShadow),inset 0 1px 0 var(--glassHi);
   animation:sheetDown .28s cubic-bezier(.22,1,.36,1) both;
@@ -700,9 +735,10 @@ function liabilityBalance(liab){
 
 /* ── Default data ── */
 function defaultData(){
-  const groups=[{id:"g1",name:"Savings"},{id:"g2",name:"Essentials"},{id:"g3",name:"Personal"},{id:"g4",name:"Commitments"}];
-  const UNTRACKED=new Set(["Savings"]);
+  const groups=[{id:"g0",name:"Invest & Grow"},{id:"g1",name:"Savings"},{id:"g2",name:"Essentials"},{id:"g3",name:"Personal"},{id:"g4",name:"Commitments"}];
+  const UNTRACKED=new Set(["Savings","Investments"]);
   const seed=[
+    ["Investments",200,"g0"],
     ["Savings",1000,"g1"],
     ["Rent",1500,"g2"],["Utilities",200,"g2"],["Groceries",600,"g2"],
     ["Shopping",300,"g3"],["Subscriptions",50,"g3"],
@@ -717,7 +753,7 @@ function defaultData(){
     plans:[
       {id:"p1",owner:"me",name:"Monthly Budget",month:monthLabel(),income:5000,groups,categories},
       {id:"pw1",owner:"wife",name:"Monthly Budget",month:monthLabel(),income:0,
-       groups:[{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"}],
+       groups:[{id:"wg0",name:"Invest & Grow"},{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"},{id:"wg4",name:"Commitments"}],
        categories:[
          {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[],trackExpenses:false},
          {id:uid(),name:"Bills",amount:0,groupId:"wg2",color:SEG[3],subs:[],trackExpenses:true},
