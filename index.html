@@ -78,18 +78,26 @@
   --jade:#1E6E5C;--jadeS:#DCEAE5;--wine:#9B4A4E;--wineS:#F3E2E1;
   --glassBg:rgba(255,255,255,.5);--glassBgStrong:rgba(255,255,255,.68);--glassBorder:rgba(255,255,255,.85);--glassShadow:rgba(34,41,44,.16);--glassHi:rgba(255,255,255,.6);
 }
-*{box-sizing:border-box;}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation;}
 html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;}
 .serif{font-family:"Iowan Old Style",Georgia,serif;}
 .tnum{font-variant-numeric:tabular-nums;}
 input.bare{background:transparent;border:none;outline:none;padding:1px 2px;border-radius:4px;transition:background .12s,box-shadow .12s;font:inherit;color:inherit;}
-input.bare:hover{background:rgba(127,143,168,.12);}
+/* Scope :hover to devices that actually have a hovering pointer (a mouse) —
+   otherwise a tap on touchscreens leaves the hover style "stuck" until the
+   next unrelated tap, since there's no mouse to trigger :hover's exit. */
+@media (hover:hover) and (pointer:fine){
+  input.bare:hover{background:rgba(127,143,168,.12);}
+}
 input.bare:focus{background:rgba(91,143,217,.12);box-shadow:0 0 0 1px rgba(91,143,217,.4);}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
 input[type=number]{-moz-appearance:textfield;}
 button{cursor:pointer;font:inherit;}
 select{font:inherit;}
+/* Tactile feedback on tap, since touch devices don't get a hover state to
+   signal "this is clickable" the way a mouse cursor does. */
+button:active{transform:scale(.96);transition:transform .08s ease;}
 
 /* iOS/Android zoom the whole page in when a tapped input's font-size is
    under 16px, on the assumption the text is too small to read. Every
@@ -631,9 +639,8 @@ async function fetchRates(){
 }
 
 /* ── Stock quotes via Cloudflare Worker proxy ──
-   Worker fetches Yahoo Finance server-side (no CORS), returns JSON.
-   Finnhub handles US stocks directly as a fast fallback.                 */
-const FINNHUB_KEY="d8v0c6hr01qrt65ul4k0d8v0c6hr01qrt65ul4kg";
+   Worker fetches Yahoo Finance AND Finnhub server-side (no CORS, and the
+   Finnhub key never touches the browser). See SETUP-GUIDE.md. ── */
 
 /* Map tickers to the right Yahoo symbol.
    VWRA → VWRA.L (LSE), bare US tickers stay as-is.                      */
@@ -661,12 +668,12 @@ async function fetchQuotes(tickers){
     }catch(e){}
   }
 
-  /* ── 2. Finnhub direct (US, real-time, no proxy needed) ── */
-  if(!FINNHUB_KEY.startsWith("PASTE_")){
+  /* ── 2. Finnhub via Worker (US, real-time, key stays server-side) ── */
+  if(!PROXY_URL.startsWith("PASTE_")){
     const missing=tickers.filter(t=>!out[baseKey(t)]);
     await Promise.all(missing.map(async t=>{
       try{
-        const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(baseKey(t))}&token=${FINNHUB_KEY}`);
+        const r=await fetch(`${PROXY_URL}/finnhub-quote?symbol=${encodeURIComponent(baseKey(t))}`);
         if(!r.ok)return;
         const j=await r.json();
         const p=j.c>0?j.c:(j.pc>0?j.pc:null);
@@ -3722,9 +3729,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         if(res.ok){const j=await res.json();if(j&&j.name)name=j.name;}
       }catch(e){}
     }
-    if(!name&&!FINNHUB_KEY.startsWith("PASTE_")){
+    if(!name&&!PROXY_URL.startsWith("PASTE_")){
       try{
-        const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`);
+        const res=await fetch(`${PROXY_URL}/finnhub-search?q=${encodeURIComponent(t)}`);
         const j=await res.json();
         const list=j.result||[];
         const match=list.find(x=>x.symbol===t)||list.find(x=>x.symbol===t+".US")||list.find(x=>x.symbol===baseKey(t))||list[0];
@@ -3776,9 +3783,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       const newTotValBase=convert?convert(newTotVal,"USD",cur):newTotVal;
       if(newTotValBase>0)addPortSnap(newTotValBase);
     }catch(e){
-      setErr(PROXY_URL.startsWith("PASTE_")&&FINNHUB_KEY.startsWith("PASTE_")
-        ?"Set up your Cloudflare Worker (for VWRA/LSE) and/or Finnhub key (for US stocks) — see the setup guide."
-        :"Price fetch failed — check your Worker URL or Finnhub key.");
+      setErr(PROXY_URL.startsWith("PASTE_")
+        ?"Set up your Cloudflare Worker — see the setup guide."
+        :"Price fetch failed — check your Worker URL, or the Worker's Finnhub secret.");
     }
     setLoading(false);
   };
