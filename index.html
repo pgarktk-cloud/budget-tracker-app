@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1.0,user-scalable=no,viewport-fit=cover"/>
 <title>Where'dItGo — Salary &amp; Net Worth</title>
 <link rel="manifest" href="manifest.webmanifest"/>
 <meta name="theme-color" content="#15243B"/>
@@ -195,6 +195,41 @@ select{transition:background .22s;}
 /* ── Reduced motion override ── */
 @media(prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important;}
+}
+
+/* ── Mobile viewport hardening ──
+   iOS Safari auto-zooms the whole page when a focused form control computes
+   to under 16px. That zoom also shifts the layout off-center in the PWA
+   standalone shell. Forcing 16px on every interactive control (while keeping
+   the *visual* size the same via padding/line-height tweaks) stops the zoom
+   without changing how anything looks above 768px. ── */
+@media(max-width:768px){
+  input,select,textarea,input.bare,input.bare.tnum{
+    font-size:16px!important;
+  }
+  /* the tighter/narrower numeric fields need a touch more padding at 16px
+     so they don't visually balloon relative to their neighbors */
+  input.bare.tnum{padding:1px 2px;}
+}
+
+/* ── Budget tab: category/sub rows reflow on narrow screens ──
+   Desktop: name | %  | currency+amount | action icons, all on one line.
+   Mobile: name gets its own full-width line (it's the thing that was
+   getting clipped); % + amount + action icons wrap to a second line,
+   indented to roughly align under the name text. ── */
+.cat-row{display:flex;align-items:center;gap:8px;padding:10px 16px;flex-wrap:wrap;}
+.cat-row-name{display:flex;align-items:center;gap:8px;flex:1 1 160px;min-width:0;}
+.cat-row-meta{display:flex;align-items:center;gap:10px;flex-shrink:0;justify-content:space-between;}
+.cat-row-figures{display:flex;align-items:center;gap:10px;}
+.cat-row-actions{display:flex;align-items:center;gap:2px;flex-shrink:0;}
+.sub-row{display:flex;align-items:center;gap:8px;padding:7px 16px 7px 36px;flex-wrap:wrap;}
+.sub-row-name{display:flex;align-items:center;gap:8px;flex:1 1 140px;min-width:0;}
+.sub-row-meta{display:flex;align-items:center;gap:8px;flex-shrink:0;justify-content:space-between;}
+@media(max-width:768px){
+  .cat-row-name{flex-basis:100%;}
+  .cat-row-meta{flex-basis:100%;padding-left:18px;}
+  .sub-row-name{flex-basis:100%;}
+  .sub-row-meta{flex-basis:100%;padding-left:14px;}
 }
 
 #root{padding-top:env(safe-area-inset-top);}
@@ -574,7 +609,7 @@ async function fetchRates(){
 /* ── Stock quotes via Cloudflare Worker proxy ──
    Worker fetches Yahoo Finance server-side (no CORS), returns JSON.
    Finnhub handles US stocks directly as a fast fallback.                 */
-const FINNHUB_KEY="d8v0c6hr01qrt65ul4k0d8v0c6hr01qrt65ul4kg";
+const FINNHUB_KEY="d94h0p9r01qib64ang9gd94h0p9r01qib64anga0";
 
 /* Map tickers to the right Yahoo symbol.
    VWRA → VWRA.L (LSE), bare US tickers stay as-is.                      */
@@ -889,7 +924,15 @@ const SYNC_META_KEY="salaryPlanner:v3:syncMeta";
 const PRE_CLOUD_BACKUP_KEY="salaryPlanner:v3:preCloudRestore";
 const PROFILE_KEY="allocation:preferredProfile";
 
-const fingerprint=d=>{try{return JSON.stringify(d);}catch(e){return "";}};
+/* theme is a per-device UI preference (see PROFILE_KEY / allocation:theme in
+   localStorage) that also happens to ride along inside the shared `data`
+   object. It must never count toward "is my copy different from the
+   cloud's" — two devices with different light/dark preferences would
+   otherwise permanently disagree on everything, defeating auto-merge and
+   re-triggering the conflict modal on every save. Fingerprints used for
+   dirty-checking / conflict-detection strip it out; the actual payload
+   sent to the cloud still includes theme as normal. */
+const fingerprint=d=>{try{const{theme,...rest}=d||{};return JSON.stringify(rest);}catch(e){return "";}};
 
 /* union transactions by id; on overlap, newer updatedAt wins. Deletes are
    tombstones (deletedAt set on the record), so they merge like any other
@@ -2044,55 +2087,67 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               return(
                 <div key={c.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
                   {/* Category row */}
-                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 16px"}}>
-                    <span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>
-                    <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare"
-                      style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400,
-                        color:c.trackExpenses===false?P.neuSub:P.neuInk,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
-                    <span className="tnum" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>{pct(effAmt).toFixed(2)}%</span>
-                    <div style={{display:"flex",alignItems:"center",gap:4}}>
-                      <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
-                      {hasSubs
-                        /* when subs exist, show computed total (read-only style) */
-                        ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.jade}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
-                        /* no subs — manual input as before */
-                        :<input type="text" inputMode="decimal" value={c.amount} onChange={e=>updateCat(c.id,{amount:e.target.value})}
-                          onBlur={e=>updateCat(c.id,{amount:evalMathExpr(e.target.value,0)})}
-                          onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
-                          className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
-                      }
+                  <div className="cat-row">
+                    <div className="cat-row-name">
+                      <span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>
+                      <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare"
+                        style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400,
+                          color:c.trackExpenses===false?P.neuSub:P.neuInk,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
                     </div>
-                    {/* tracking toggle */}
-                    <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
-                      title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
-                      style={{background:"transparent",border:"none",color:c.trackExpenses===false?P.br:P.neuSub,padding:2,display:"flex",alignItems:"center",opacity:c.trackExpenses===false?1:.5}}>
-                      {c.trackExpenses===false?<I.EyeOff size={14}/>:<I.Receipt size={14}/>}
-                    </button>
-                    {/* sub-toggle button */}
-                    <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
-                      style={{background:"transparent",border:"none",color:subsOpen?P.jade:P.neuSub,padding:2,display:"flex",alignItems:"center"}}>
-                      <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
-                    </button>
-                    <button onClick={()=>removeCat(c.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+                    <div className="cat-row-meta">
+                      <div className="cat-row-figures">
+                        <span className="tnum" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>{pct(effAmt).toFixed(2)}%</span>
+                        <div style={{display:"flex",alignItems:"center",gap:4}}>
+                          <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
+                          {hasSubs
+                            /* when subs exist, show computed total (read-only style) */
+                            ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.jade}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                            /* no subs — manual input as before */
+                            :<input type="text" inputMode="decimal" value={c.amount} onChange={e=>updateCat(c.id,{amount:e.target.value})}
+                              onBlur={e=>updateCat(c.id,{amount:evalMathExpr(e.target.value,0)})}
+                              onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                              className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
+                          }
+                        </div>
+                      </div>
+                      <div className="cat-row-actions">
+                        {/* tracking toggle */}
+                        <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
+                          title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
+                          style={{background:"transparent",border:"none",color:c.trackExpenses===false?P.br:P.neuSub,padding:2,display:"flex",alignItems:"center",opacity:c.trackExpenses===false?1:.5}}>
+                          {c.trackExpenses===false?<I.EyeOff size={14}/>:<I.Receipt size={14}/>}
+                        </button>
+                        {/* sub-toggle button */}
+                        <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
+                          style={{background:"transparent",border:"none",color:subsOpen?P.jade:P.neuSub,padding:2,display:"flex",alignItems:"center"}}>
+                          <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+                        </button>
+                        <button onClick={()=>removeCat(c.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Sub-items panel */}
                   {subsOpen&&(
                     <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
                       {subs.map(sub=>(
-                        <div key={sub.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 16px 7px 36px",borderBottom:"1px solid rgba(0,0,0,.05)"}}>
-                          {/* indent indicator */}
-                          <span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>
-                          <input value={sub.name} onChange={e=>handleSubChange(c.id,sub.id,{name:e.target.value})}
-                            className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.neuInk}}/>
-                          <div style={{display:"flex",alignItems:"center",gap:4}}>
-                            <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
-                            <input type="text" inputMode="decimal" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:e.target.value})}
-                              onBlur={e=>handleSubChange(c.id,sub.id,{amount:evalMathExpr(e.target.value,0)})}
-                              onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
-                              className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
+                        <div key={sub.id} className="sub-row" style={{borderBottom:"1px solid rgba(0,0,0,.05)"}}>
+                          <div className="sub-row-name">
+                            {/* indent indicator */}
+                            <span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>
+                            <input value={sub.name} onChange={e=>handleSubChange(c.id,sub.id,{name:e.target.value})}
+                              className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.neuInk}}/>
                           </div>
-                          <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={13}/></button>
+                          <div className="sub-row-meta">
+                            <div style={{display:"flex",alignItems:"center",gap:4}}>
+                              <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
+                              <input type="text" inputMode="decimal" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:e.target.value})}
+                                onBlur={e=>handleSubChange(c.id,sub.id,{amount:evalMathExpr(e.target.value,0)})}
+                                onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                                className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
+                            </div>
+                            <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={13}/></button>
+                          </div>
                         </div>
                       ))}
                       {/* sub total when multiple subs */}
@@ -2214,8 +2269,8 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const[addMode,setAddMode]=useState("tracked"); // "tracked" | "untracked" | "goals" — unified add-transaction modal routing
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
-  const[logGrouping,setLogGrouping]=useState("category"); // "month" | "category"
-  const[collapsedCats,setCollapsedCats]=useState({});
+  const[expandedEnvelopes,setExpandedEnvelopes]=useState({}); // envelope card inline transaction expansion
+  const toggleEnvelope=id=>setExpandedEnvelopes(s=>({...s,[id]:!s[id]}));
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
   const[showReorder,setShowReorder]=useState(false);
@@ -2646,13 +2701,22 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       </div>
 
       {/* ── envelopes ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
         <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Envelopes</h2>
-        <button onClick={()=>openAdd()} className="neu-btn"
-          style={{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",
-            fontSize:14,fontWeight:500,color:isFuture?P.br:P.jade}}>
-          <I.Plus size={14}/>{isFuture?"Plan transaction":"Add transaction"}
-        </button>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {(monthPlan.categories||[]).length>1&&(
+            <button onClick={()=>setShowReorder(true)} className="neu-btn"
+              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 10px",
+                fontSize:12,fontWeight:600,color:P.neuSub}}>
+              <I.ArrowUp size={10}/><I.ArrowDown size={10}/>Reorder
+            </button>
+          )}
+          <button onClick={()=>openAdd()} className="neu-btn"
+            style={{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",
+              fontSize:14,fontWeight:500,color:isFuture?P.br:P.jade}}>
+            <I.Plus size={14}/>{isFuture?"Plan transaction":"Add transaction"}
+          </button>
+        </div>
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
@@ -2670,6 +2734,9 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             const pacing=paceHot(spent,env.budget,expectedRatio);
             const color=pacing?P.amber:statusColor(spent,env.budget);
             const bg=pacing?P.amberS:statusBg(spent,env.budget);
+            const catGroup=categoryGroups.find(g=>g.name===env.name);
+            const envTxs=catGroup?[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date)):[];
+            const envOpen=!!expandedEnvelopes[env.id];
             return(
               <div key={env.id} style={{...neu(14),padding:"12px 16px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
@@ -2690,6 +2757,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                     </span>
                   )}
                   <span style={{fontSize:11,color:P.neuSub}}>{env.group}</span>
+                  <button onClick={()=>toggleEnvelope(env.id)} title={envOpen?"Hide transactions":"Show transactions"}
+                    style={{background:"transparent",border:"none",color:envOpen?P.jade:P.neuSub,padding:2,display:"flex",alignItems:"center",flexShrink:0}}>
+                    <I.Chevron size={14} style={{transform:envOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+                  </button>
                 </div>
                 {/* liquid-glass fill in a neumorphic inset trough */}
                 <div style={{...neuInset(999),height:8,marginBottom:6,position:"relative",overflow:"hidden"}}>
@@ -2717,6 +2788,19 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                   style={{marginTop:8,display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.jade,background:"transparent",border:"none",padding:0}}>
                   <I.Plus size={12}/>Add to {env.name}
                 </button>
+                {/* ── inline transactions for this envelope, tap the chevron above to reveal ── */}
+                {envOpen&&(
+                  <div style={{marginTop:10,paddingTop:8,borderTop:`1px solid rgba(0,0,0,.06)`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:P.neuSub,marginBottom:4}}>
+                      <span>{envTxs.length} transaction{envTxs.length===1?"":"s"}</span>
+                      {envTxs.length>0&&<span className="tnum" style={{fontWeight:600}}>{fmt(catGroup.total)}</span>}
+                    </div>
+                    {envTxs.length===0
+                      ?<div style={{fontSize:12,color:P.neuSub,padding:"8px 0"}}>No transactions logged for {env.name} yet.</div>
+                      :envTxs.map((tx,idx)=>renderTxRow(tx,idx,envTxs.length))
+                    }
+                  </div>
+                )}
               </div>
             );
           })
@@ -2772,22 +2856,6 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       {logExpanded&&(
         <>
           <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8,flexWrap:"wrap",gap:8}}>
-            {logGrouping==="category"&&(monthPlan.categories||[]).length>1&&(
-              <button onClick={()=>setShowReorder(true)} className="neu-btn"
-                style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",
-                  fontSize:12,fontWeight:600,color:P.neuSub}}>
-                <I.ArrowUp size={10}/><I.ArrowDown size={10}/>Reorder
-              </button>
-            )}
-            <div style={{display:"flex",gap:4,...neuInset(999),padding:3}}>
-              {[["month","Month"],["category","Category"]].map(([gv,label])=>(
-                <button key={gv} onClick={()=>setLogGrouping(gv)}
-                  style={{borderRadius:999,padding:"3px 10px",fontSize:12,fontWeight:600,border:"none",
-                    background:logGrouping===gv?P.jade:"transparent",color:logGrouping===gv?"#fff":P.neuSub}}>
-                  {label}
-                </button>
-              ))}
-            </div>
             <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
               style={{...neu(999),padding:"4px 10px",fontSize:12,border:"none",color:P.neuSub}}>
               <option value="all">All categories</option>
@@ -2800,32 +2868,6 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             ?<div style={{...neuInset(16),padding:"24px 16px",textAlign:"center",fontSize:13,color:P.neuSub,marginBottom:20}}>
                 No transactions yet. Tap "Add transaction" to start tracking.
               </div>
-            :logGrouping==="category"
-            ?categoryGroups.map(catGroup=>{
-              const isOpen=collapsedCats[catGroup.name]===undefined?false:!collapsedCats[catGroup.name];
-              const txs=[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date));
-              return(
-                <div key={catGroup.name} style={{...neu(16),overflow:"hidden",marginBottom:10}}>
-                  <button
-                    onClick={()=>setCollapsedCats(c=>({...c,[catGroup.name]:isOpen}))}
-                    style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-                      padding:"12px 16px",background:"transparent",border:"none",cursor:"pointer",
-                      borderBottom:isOpen?"1px solid rgba(0,0,0,.06)":"none",textAlign:"left"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <I.Chevron size={14} style={{color:P.neuSub,transform:isOpen?"rotate(180deg)":"rotate(0deg)",
-                        transition:"transform .2s",flexShrink:0}}/>
-                      <span style={{width:8,height:8,borderRadius:999,background:catGroup.color,flexShrink:0}}/>
-                      <span style={{fontSize:14,fontWeight:700,color:P.neuInk}}>{catGroup.name}</span>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span className="tnum" style={{fontSize:12,color:P.neuSub}}>{txs.length} tx</span>
-                      <span className="tnum" style={{fontSize:13,fontWeight:700,color:P.neuInk}}>{fmt(catGroup.total)}</span>
-                    </div>
-                  </button>
-                  {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length))}
-                </div>
-              );
-            })
             :allMonths.map(mo=>{
               const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
               const isCurrent=mo===nowMonth;
@@ -3035,7 +3077,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner);setTransferModal(null);}}
         fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/></Portal>}
 
-      {/* ── reorder categories modal — controls both this log's grouping order and the envelope order above ── */}
+      {/* ── reorder categories modal — controls the envelope card order above ── */}
       {showReorder&&(
         <Portal>
         <div className="modal-bg" onClick={()=>setShowReorder(false)}>
@@ -3046,7 +3088,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
             </div>
             <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
-              Move categories up or down. This controls the order they appear in below, both here and in the envelope list above.
+              Move categories up or down. This controls the order they appear in the Envelopes list above.
             </div>
             <div style={{borderRadius:12,overflow:"hidden",background:"rgba(0,0,0,.03)"}}>
               <div style={{maxHeight:"60vh",overflowY:"auto"}}>
