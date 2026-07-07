@@ -1010,6 +1010,15 @@ function App(){
   const hasUnsyncedRef=useRef(false);
   useEffect(()=>{hasUnsyncedRef.current=hasUnsyncedChanges;},[hasUnsyncedChanges]);
 
+  /* ── device-local theme (light/dark) ──────────────────────────────────────
+     Purely a per-device UI preference, same treatment as budgetOwner below —
+     never synced to the cloud, never part of `data`. Two people sharing one
+     dataset can each keep their own light/dark choice without it fighting
+     over what gets pushed/pulled. ────────────────────────────────────────── */
+  const[theme,setThemeState]=useState(()=>{
+    try{return localStorage.getItem("allocation:theme")||"light";}catch(e){return "light";}
+  });
+
   /* ── device-remembered default profile (Me / Wife) ───────────────────────
      Asked once per device on first open, then remembered locally. Never
      synced to the cloud — purely a per-device UI preference. The in-session
@@ -1062,7 +1071,6 @@ function App(){
   useEffect(()=>{
     let cancelled=false;
     (async()=>{
-      let initial="light";
       const meta=loadSyncMeta();
       let localResolved=null;
       try{
@@ -1124,21 +1132,16 @@ function App(){
         // re-trigger a dirty-marking round-trip
         skipSave.current=true;
         setData(resolved);
-        initial=resolved.theme||"light";
         try{localStorage.setItem(STORAGE_KEY,JSON.stringify(resolved));}catch(e){}
       }
-      try{
-        const savedTheme=localStorage.getItem("allocation:theme");
-        if(savedTheme)initial=savedTheme;
-      }catch(e){}
 
       setHasUnsyncedChanges(!!meta.hasUnsyncedChanges);
       setChangesSinceSave(meta.changesSinceSave||0);
       if(meta.lastCloudSavedAt)setLastCloudSavedAt(new Date(meta.lastCloudSavedAt));
       if(meta.lastCloudPulledAt)setLastCloudPulledAt(new Date(meta.lastCloudPulledAt));
 
-      applyTheme(initial);
-      applySegTheme(initial);
+      applyTheme(theme);
+      applySegTheme(theme);
       setThemeTick(t=>t+1);
       setLoaded(true);
       if(typeof window.__hideLoading==="function")window.__hideLoading();
@@ -1147,12 +1150,12 @@ function App(){
   },[]);
 
   const toggleTheme=()=>{
-    const next=(data.theme||"light")==="dark"?"light":"dark";
+    const next=theme==="dark"?"light":"dark";
     applyTheme(next);
     applySegTheme(next);
     try{localStorage.setItem("allocation:theme",next);}catch(e){}
     setThemeTick(t=>t+1);
-    setData(d=>({...d,theme:next}));
+    setThemeState(next);
   };
 
   /* persist — LOCAL ONLY. Never calls KVSync.save(). Marks the app dirty
@@ -1705,9 +1708,9 @@ function App(){
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
-              <button onClick={toggleTheme} title={data.theme==="dark"?"Switch to light mode":"Switch to dark mode"}
+              <button onClick={toggleTheme} title={theme==="dark"?"Switch to light mode":"Switch to dark mode"}
                 style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
-                {data.theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
+                {theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
               </button>
               <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"}
                 title={kvReady?"Pull from Cloud":"Configure Worker URL and sync token to enable sync"}
@@ -1776,7 +1779,7 @@ function App(){
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
         </TabPane>
       </div>
-      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),
+      {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
         preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
@@ -4492,7 +4495,7 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   );
 }
 
-function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod}){
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
@@ -4523,10 +4526,10 @@ function SettingsModal({data,setData,onClose,pullFromCloud,saveToCloud,kvReady,h
           style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:14,fontWeight:500,marginBottom:16,
             background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
           <span style={{display:"flex",alignItems:"center",gap:8}}>
-            {data.theme==="dark"?<I.Moon size={15}/>:<I.Sun size={15}/>}
-            {data.theme==="dark"?"Dark mode":"Light mode"}
+            {theme==="dark"?<I.Moon size={15}/>:<I.Sun size={15}/>}
+            {theme==="dark"?"Dark mode":"Light mode"}
           </span>
-          <span style={{fontSize:12,color:P.gr,fontWeight:600}}>Switch to {data.theme==="dark"?"light":"dark"}</span>
+          <span style={{fontSize:12,color:P.gr,fontWeight:600}}>Switch to {theme==="dark"?"light":"dark"}</span>
         </button>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Who's who</div>
         <div style={{display:"flex",gap:8,marginBottom:16}}>
