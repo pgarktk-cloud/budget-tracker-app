@@ -50,6 +50,12 @@
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;overflow-x:hidden;width:100%;}
+/* whenever any sheet/modal overlay is mounted anywhere in the document
+   (including Portal-rendered ones attached directly to body), freeze the
+   page behind it — otherwise a touch-drag that starts inside the sheet can
+   hand off to the underlying page scroll once it hits the sheet's own
+   scroll edge, which on iOS feels like "the page behind is scrolling". */
+body:has(.sheet-bg){overflow:hidden;height:100vh;}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;overscroll-behavior-x:none;}
 .serif{font-family:"Iowan Old Style",Georgia,serif;}
 .tnum{font-variant-numeric:tabular-nums;}
@@ -82,12 +88,13 @@ select{font:inherit;}
   background:rgba(21,25,27,.32);
   backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
   animation:sheetBgIn .25s ease both;
-  overflow-y:auto;
+  overflow-y:auto;overscroll-behavior:contain;
   padding:calc(env(safe-area-inset-top) + 16px) 12px 16px;
 }
 .sheet{
   border-radius:20px;padding:18px;
   width:100%;max-width:480px;max-height:calc(100vh - env(safe-area-inset-top) - 32px);overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:contain;
   background:var(--glassBgStrong);
   border:1px solid var(--glassBorder);box-shadow:0 16px 40px var(--glassShadow),inset 0 1px 0 var(--glassHi);
   animation:sheetDown .28s cubic-bezier(.22,1,.36,1) both;
