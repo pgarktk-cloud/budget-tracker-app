@@ -47,6 +47,16 @@
   --neuBg:#E4E7E9;--neuHi:#FFFFFF;--neuLo:#B8C1C5;--neuInk:#22292C;--neuSub:#5C6B70;
   --jade:#1E6E5C;--jadeS:#DCEAE5;--wine:#9B4A4E;--wineS:#F3E2E1;
   --glassBg:rgba(255,255,255,.5);--glassBgStrong:rgba(255,255,255,.68);--glassBorder:rgba(255,255,255,.85);--glassShadow:rgba(34,41,44,.16);--glassHi:rgba(255,255,255,.6);
+  --fab-bottom:calc(env(safe-area-inset-bottom) + 24px);
+  --content-bottom-pad:80px;
+  --bottom-nav-h:0px;
+}
+@media(max-width:768px){
+  :root{
+    --fab-bottom:calc(env(safe-area-inset-bottom) + 78px);
+    --content-bottom-pad:96px;
+    --bottom-nav-h:calc(env(safe-area-inset-bottom) + 60px);
+  }
 }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;overflow-x:hidden;width:100%;}
@@ -55,7 +65,12 @@ html,body{margin:0;padding:0;background:var(--bg);transition:background .25s eas
    page behind it — otherwise a touch-drag that starts inside the sheet can
    hand off to the underlying page scroll once it hits the sheet's own
    scroll edge, which on iOS feels like "the page behind is scrolling". */
-body:has(.sheet-bg){overflow:hidden;height:100vh;}
+/* NOTE: body scroll-lock while a sheet/modal is open is handled in JS
+   (see useScrollLock in App) — a pure-CSS "overflow:hidden;height:100vh"
+   lock collapses the document's scrollable height while open, which makes
+   the browser clamp window.scrollY to 0; there's nothing to restore it
+   afterward, so the page silently jumps to the top every time a sheet
+   closes. See body:has(.sheet-bg) removal. */
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;overscroll-behavior-x:none;}
 .serif{font-family:"Iowan Old Style",Georgia,serif;}
 .tnum{font-variant-numeric:tabular-nums;}
@@ -239,6 +254,60 @@ select{transition:background .22s;}
   .sub-row-meta{flex-basis:100%;padding-left:14px;}
 }
 
+/* ── Budget pilot: accordion groups + mobile progress bar ── */
+.grp-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;}
+.grp-header:active{background:rgba(0,0,0,.03);}
+.grp-chevron{transition:transform .25s cubic-bezier(.22,1,.36,1);display:flex;color:var(--neuSub);flex-shrink:0;}
+.grp-chevron.is-open{transform:rotate(180deg);}
+.grp-body-enter{animation:fadeUp .3s cubic-bezier(.22,1,.36,1) both;}
+/* icon buttons meet the 44x44 touch target via padding, not visual size */
+.icon-btn-sm{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:999px;background:transparent;border:none;flex-shrink:0;}
+.seg-bar{display:flex;width:100%;height:16px;border-radius:999px;overflow:hidden;}
+.seg-bar>span{height:100%;transition:width .8s cubic-bezier(.22,1,.36,1);}
+.seg-legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:10px;}
+.seg-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--neuSub);}
+.seg-legend-dot{width:8px;height:8px;border-radius:999px;flex-shrink:0;}
+.mobile-only{display:none!important;}
+.desktop-only{display:block!important;}
+.mobile-only-flex{display:none!important;}
+.desktop-only-flex{display:flex!important;}
+@media(max-width:768px){
+  .mobile-only{display:block!important;}
+  .desktop-only{display:none!important;}
+  .mobile-only-flex{display:flex!important;}
+  .desktop-only-flex{display:none!important;}
+}
+
+/* ── Bottom navigation shell (mobile only — hidden by default, shown
+   only under the mobile breakpoint; self-gated so it doesn't depend on
+   an inline display value from JS that could win the cascade). ── */
+.bottom-nav{
+  display:none;
+  position:fixed;left:0;right:0;bottom:0;z-index:65;
+  align-items:stretch;justify-content:space-around;
+  padding:6px 4px calc(env(safe-area-inset-bottom) + 4px);
+  background:var(--glassBgStrong);
+  backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);
+  border-top:1px solid var(--glassBorder);
+  box-shadow:0 -6px 20px var(--glassShadow);
+}
+@media(max-width:768px){
+  .bottom-nav{display:flex!important;}
+}
+.bottom-nav-item{
+  flex:1 1 0;min-width:44px;min-height:52px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:transparent;border:none;color:var(--neuSub);padding:4px 2px;
+}
+.bottom-nav-item.is-active{color:var(--jade);}
+.bottom-nav-item span{font-size:10.5px;font-weight:600;}
+.subnav-pills{display:none;gap:6px;overflow-x:auto;padding:2px 2px 10px;-webkit-overflow-scrolling:touch;}
+@media(max-width:768px){
+  .subnav-pills{display:flex!important;}
+}
+.subnav-pill{flex-shrink:0;min-height:36px;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600;border:none;white-space:nowrap;background:var(--sfA);}
+.subnav-pill.is-active{background:var(--jadeS);}
+
 #root{padding-top:env(safe-area-inset-top);}
 #loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;transition:background .25s;}
 .loader{width:32px;height:32px;border:3px solid #DADEE0;border-top-color:#1E6E5C;border-radius:50%;animation:spin .8s linear infinite;}
@@ -409,6 +478,7 @@ const I={
   Calendar:Ic([<rect key="a" x="3" y="4" width="18" height="18" rx="2"/>,<line key="b" x1="16" y1="2" x2="16" y2="6"/>,<line key="c" x1="8" y1="2" x2="8" y2="6"/>,<line key="d" x1="3" y1="10" x2="21" y2="10"/>]),
   PiggyBank:Ic([<path key="a" d="M19 11a7.5 7.5 0 0 1-7.5 7.5A7.5 7.5 0 0 1 4 11v-1a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v1z"/>,<path key="b" d="M19 11c.9 0 1.8.2 2.6.5L23 9l-2-1.5"/>,<path key="c" d="M9 11v-1"/>,<path key="d" d="M8 15h8"/>]),
   Receipt:Ic([<polyline key="a" points="6 2 3 6 3 22 21 22 21 6 18 2"/>,<rect key="b" x="6" y="2" width="12" height="6"/>,<line key="c" x1="8" y1="13" x2="16" y2="13"/>,<line key="d" x1="8" y1="17" x2="16" y2="17"/>]),
+  Info:Ic([<circle key="a" cx="12" cy="12" r="10"/>,<line key="b" x1="12" y1="16" x2="12" y2="11"/>,<line key="c" x1="12" y1="8" x2="12.01" y2="8"/>]),
 };
 
 /* ── Goal-type icons (minimalist line icons) ── */
@@ -977,10 +1047,57 @@ const loadSyncMeta=()=>{
 };
 const saveSyncMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m));}catch(e){}};
 
+/* ── Global scroll lock for sheets/modals ──────────────────────────────────
+   Every add/edit sheet in the app (Portal + .sheet-bg or .modal-bg) needs the
+   page frozen behind it. The old approach was a pure-CSS body:has() rule
+   forcing overflow:hidden + height:100vh — simple, but it collapses the
+   document's scrollable height while open, so the browser clamps
+   window.scrollY to 0 for the duration; nothing then restores it, so the
+   page silently jumps to the top every time ANY sheet closes (this is what
+   was happening when adding a transaction from a category's own "+" button
+   mid-scroll). Fix: capture scrollY before locking, hold the body in place
+   with position:fixed + a negative top offset (so it visually doesn't move
+   and can't be scrolled), then explicitly scrollTo() the saved position on
+   unlock. A MutationObserver means every sheet/modal in the app gets this
+   for free without each one needing its own lock/unlock code. ── */
+function useScrollLock(){
+  useEffect(()=>{
+    let locked=false;
+    let savedY=0;
+    const isOpen=()=>!!document.querySelector(".sheet-bg,.modal-bg");
+    const lock=()=>{
+      if(locked)return;
+      savedY=window.scrollY||document.documentElement.scrollTop||0;
+      const body=document.body.style;
+      body.position="fixed";
+      body.top=`-${savedY}px`;
+      body.left="0";
+      body.right="0";
+      locked=true;
+    };
+    const unlock=()=>{
+      if(!locked)return;
+      const body=document.body.style;
+      body.position="";
+      body.top="";
+      body.left="";
+      body.right="";
+      locked=false;
+      window.scrollTo(0,savedY);
+    };
+    const sync=()=>{if(isOpen())lock();else unlock();};
+    sync();
+    const obs=new MutationObserver(sync);
+    obs.observe(document.body,{childList:true,subtree:true});
+    return()=>{obs.disconnect();unlock();};
+  },[]);
+}
+
 /* ════════════════════════════════════════════════════════════════════════
    MAIN APP
    ════════════════════════════════════════════════════════════════════════ */
 function App(){
+  useScrollLock();
   const[data,setData]=useState(defaultData);
   const[loaded,setLoaded]=useState(false);
   const[tab,setTab]=useState("budget");
@@ -1674,6 +1791,22 @@ function App(){
     ["targets","Forecast",I.TrendUp],
     ["currency","Currency",I.Swap],
   ];
+  const tabLabel=id=>(TABS.find(t=>t[0]===id)||[])[1]||id;
+
+  /* Bottom-nav groups (mobile). Household stays its own tap target;
+     Banks/Investments/Net Worth collapse under "Accounts", Goals/Forecast
+     under "Plan". Groups with >1 tab show a secondary pill row to switch
+     between their sub-views once selected. */
+  const NAV_GROUPS=[
+    ["budget","Budget",I.Wallet,["budget"]],
+    ["expenses","Expenses",I.Receipt,["expenses"]],
+    ["household","Household",I.Users,["household"]],
+    ["accounts","Accounts",I.Bank,["banks","investments","networth"]],
+    ["plan","Plan",I.Target,["goals","targets"]],
+    ["converter","Converter",I.Swap,["currency"]],
+  ];
+  const activeGroup=NAV_GROUPS.find(([,,,tabs])=>tabs.includes(tab))||NAV_GROUPS[0];
+  const goToGroup=g=>{if(!g[3].includes(tab))setTab(g[3][0]);};
 
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
@@ -1697,35 +1830,53 @@ function App(){
               :(hasUnsyncedChanges?"Pull to save & sync":"Pull to check cloud")}
           </div>}
       </div>
-      <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px 80px"}}>
+      <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px",paddingBottom:"var(--content-bottom-pad)"}}>
 
         {/* header */}
         <header style={{paddingTop:28,paddingBottom:16}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,color:P.gr}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,color:P.gr,minWidth:0}}>
               <I.Wallet size={18} sw={2.2}/>
-              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Where'dItGo</span>
+              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase",whiteSpace:"nowrap"}}>Where'dItGo</span>
+              {/* mobile: owner names ride right next to the title instead of their own row below */}
+              <span className="mobile-only" style={{fontSize:11,color:P.sub,fontWeight:400,letterSpacing:0,textTransform:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                · {data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}
+              </span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+              {syncMsg&&<span className="desktop-only" style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
               <button onClick={toggleTheme} title={theme==="dark"?"Switch to light mode":"Switch to dark mode"}
                 style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
                 {theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
               </button>
               <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"}
                 title={kvReady?"Pull from Cloud":"Configure Worker URL and sync token to enable sync"}
-                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
+                className="desktop-only-flex"
+                style={{alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
                   color:P.sub,background:"transparent",border:`1px solid ${P.line}`,opacity:kvReady?1:.5}}>
                 <I.Refresh size={14} style={syncOp==="pull"?{animation:"spin .9s linear infinite"}:null}/>
               </button>
+              {/* desktop: full "Save to Cloud" button with label + change count */}
               <button onClick={()=>saveToCloud()} disabled={!kvReady||syncOp==="push"}
                 title={kvReady?(hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL and sync token to enable sync"}
-                style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
+                className="desktop-only-flex"
+                style={{position:"relative",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
                   background:!kvReady?P.sf:P.grS,color:!kvReady?P.sub:P.grD,border:`1px solid ${!kvReady?P.line:P.grS}`,opacity:kvReady?1:.5}}>
                 <I.Cloud size={13} style={syncOp==="push"?{animation:"spin .9s linear infinite"}:null}/>
                 {syncOp==="push"?"Saving…":hasUnsyncedChanges?`Save to Cloud${changesSinceSave?` (${changesSinceSave})`:""}`:"Cloud saved"}
                 {hasUnsyncedChanges&&kvReady&&syncOp!=="push"&&
                   <span style={{position:"absolute",top:-2,right:-2,width:7,height:7,borderRadius:999,background:P.red,border:`1px solid ${P.bg}`}}/>}
+              </button>
+              {/* mobile: single icon — combines pull + push + status into one tap target
+                 (tap = save/pull depending on state), with a dot badge instead of banner text */}
+              <button onClick={()=>{if(hasUnsyncedChanges)saveToCloud();else pullFromCloud();}}
+                disabled={!kvReady||syncOp==="push"||syncOp==="pull"}
+                title={!kvReady?"Configure Worker URL and sync token to enable sync":hasUnsyncedChanges?"Save to Cloud":"Cloud saved — tap to check for updates"}
+                className="mobile-only-flex icon-btn-sm"
+                style={{position:"relative",color:hasUnsyncedChanges?P.grD:P.sub,opacity:kvReady?1:.5}}>
+                <I.Cloud size={18} style={(syncOp==="push"||syncOp==="pull")?{animation:"spin .9s linear infinite"}:null}/>
+                {hasUnsyncedChanges&&kvReady&&syncOp!=="push"&&
+                  <span style={{position:"absolute",top:8,right:8,width:7,height:7,borderRadius:999,background:P.red,border:`1px solid ${P.bg}`}}/>}
               </button>
               <button onClick={()=>setShowSettings(true)} style={{borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
                 <I.Settings size={18}/>
@@ -1734,17 +1885,18 @@ function App(){
           </div>
 
           {kvReady&&
-            <div style={{marginTop:8,fontSize:11,color:P.faint}}>
+            <div className="desktop-only" style={{marginTop:8,fontSize:11,color:P.faint}}>
               {hasUnsyncedChanges?"Saved on this device — not yet in the cloud. ":"Saved on this device. "}
               Pull before editing on another device; Save to Cloud when finished.
             </div>}
 
           <div style={{marginTop:16,display:"flex",flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between",gap:16}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,color:P.sub}}>
+            {/* desktop: owners get their own row here; on mobile this is folded into the title row above */}
+            <div className="desktop-only-flex" style={{alignItems:"center",gap:6,color:P.sub}}>
               <I.Wallet size={13}/>
               <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
             </div>
-            <div style={{textAlign:"right"}}>
+            <div style={{textAlign:"right",marginLeft:"auto"}}>
               <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>Income</div>
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
@@ -1755,8 +1907,10 @@ function App(){
           </div>
         </header>
 
-        {/* tabs */}
-        <nav style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:20}}>
+        {/* tabs — desktop: full flat strip. Mobile: bottom nav handles primary
+           navigation; this becomes a small pill row for switching between
+           sub-views within the active bottom-nav group (Accounts, Plan). */}
+        <nav className="desktop-only-flex" style={{flexWrap:"wrap",gap:6,marginBottom:20}}>
           {TABS.map(([id,label,Icon])=>(
             <button key={id} onClick={()=>setTab(id)} className="glass-btn"
               style={tab===id
@@ -1766,6 +1920,15 @@ function App(){
             </button>
           ))}
         </nav>
+        {activeGroup[3].length>1&&
+          <div className="subnav-pills">
+            {activeGroup[3].map(id=>(
+              <button key={id} onClick={()=>setTab(id)} className={`subnav-pill${tab===id?" is-active":""}`}
+                style={{color:tab===id?P.jade:P.neuSub}}>
+                {tabLabel(id)}
+              </button>
+            ))}
+          </div>}
 
         <TabPane tab={tab}>
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
@@ -1787,12 +1950,26 @@ function App(){
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
       {tab!=="expenses"&&
         <button aria-label="Quick add transaction" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
-          style={{position:"fixed",right:16,bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:70,
+          style={{position:"fixed",right:16,bottom:"var(--fab-bottom)",zIndex:70,
             width:56,height:56,borderRadius:999,background:P.gr,color:"#fff",border:"none",
             display:"flex",alignItems:"center",justifyContent:"center",
             boxShadow:"0 6px 20px rgba(12,22,40,.35)",cursor:"pointer"}}>
           <I.Plus size={24}/>
         </button>}
+      {/* bottom nav — mobile only (self-gated in CSS); replaces the flat
+         desktop tab strip with 6 primary tap targets */}
+      <nav className="bottom-nav">
+        {NAV_GROUPS.map(g=>{
+          const[id,label,Icon]=g;
+          const active=activeGroup[0]===id;
+          return(
+            <button key={id} onClick={()=>goToGroup(g)} className={`bottom-nav-item${active?" is-active":""}`}>
+              <Icon size={20}/>
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
@@ -1811,6 +1988,11 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
   const[showInvestSettings,setShowInvestSettings]=useState(false);
+  /* accordion state for groups — undefined/true means collapsed by default
+     (spec: show only high-level categories + totals on load, expand on tap) */
+  const[collapsedGroups,setCollapsedGroups]=useState({});
+  const isGroupCollapsed=gid=>collapsedGroups[gid]!==false;
+  const toggleGroup=gid=>setCollapsedGroups(s=>({...s,[gid]:isGroupCollapsed(gid)?false:true}));
   /* neumorphic + glass helpers, scoped to this view */
   const card={background:P.neuBg,borderRadius:18,boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`};
   const neu=(r=18)=>({background:P.neuBg,borderRadius:r,boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`});
@@ -1971,30 +2153,50 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           color:SEG[i%SEG.length],
         })).filter(d=>d.value>0);
         return(
-          <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
-            <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200}}>
-              <div style={{width:"100%",height:190}}>
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie data={groupData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={78} innerRadius={44} paddingAngle={2}>
-                      {groupData.map((d,i)=><Cell key={i} fill={d.color}/>)}
-                    </Pie>
-                    <Tooltip formatter={v=>fmt(v)}/>
-                  </PieChart>
-                </ResponsiveContainer>
+          <>
+            {/* desktop: donut + legend, side by side */}
+            <div className="desktop-only-flex" style={{gap:16,marginBottom:16,flexWrap:"wrap"}}>
+              <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200}}>
+                <div style={{width:"100%",height:190}}>
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie data={groupData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={78} innerRadius={44} paddingAngle={2}>
+                        {groupData.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                      </Pie>
+                      <Tooltip formatter={v=>fmt(v)}/>
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                <div style={{fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Where {fmt(income)} goes</div>
+                {groupData.map(d=>(
+                  <div key={d.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,padding:"4px 0"}}>
+                    <span style={{width:9,height:9,borderRadius:999,background:d.color,flexShrink:0}}/>
+                    <span style={{flex:1,color:P.neuSub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+                    <span className="tnum" style={{color:P.neuSub,fontSize:12,opacity:.75}}>{pct(d.value).toFixed(2)}%</span>
+                  </div>
+                ))}
               </div>
             </div>
-            <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-              <div style={{fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Where {fmt(income)} goes</div>
-              {groupData.map(d=>(
-                <div key={d.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,padding:"4px 0"}}>
-                  <span style={{width:9,height:9,borderRadius:999,background:d.color,flexShrink:0}}/>
-                  <span style={{flex:1,color:P.neuSub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
-                  <span className="tnum" style={{color:P.neuSub,fontSize:12,opacity:.75}}>{pct(d.value).toFixed(2)}%</span>
-                </div>
-              ))}
+
+            {/* mobile: single-row segmented progress bar instead of donut+list */}
+            <div className="mobile-only" style={{...neu(16),padding:16,marginBottom:16}}>
+              <div style={{fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Where {fmt(income)} goes</div>
+              <div className="seg-bar" style={{...neuInset(999)}}>
+                {groupData.map((d,i)=><span key={i} style={{width:`${pct(d.value)}%`,background:d.color}}/>)}
+              </div>
+              <div className="seg-legend">
+                {groupData.map(d=>(
+                  <div key={d.name} className="seg-legend-item">
+                    <span className="seg-legend-dot" style={{background:d.color}}/>
+                    <span>{d.name}</span>
+                    <span className="tnum" style={{opacity:.7}}>{pct(d.value).toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         );
       })()}
 
@@ -2078,17 +2280,24 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
       {editable&&(monthPlan.groups||[]).map(g=>{
         const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
         const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
+        const collapsed=isGroupCollapsed(g.id);
         return(
           <section key={g.id} style={{...neu(16),overflow:"hidden",marginBottom:16}}>
-            {/* Group header */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px"}}>
-              <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600,color:P.neuInk}}/>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {/* Group header — tap anywhere to expand/collapse; name edit + delete stop propagation */}
+            <div className="grp-header" onClick={()=>toggleGroup(g.id)}>
+              <div style={{display:"flex",alignItems:"center",gap:2,flex:1,minWidth:0}}>
+                <span className={`grp-chevron${collapsed?"":" is-open"}`}><I.Chevron size={15}/></span>
+                <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} onClick={e=>e.stopPropagation()}
+                  className="bare" style={{fontSize:14,fontWeight:600,color:P.neuInk,minWidth:0,flex:1}}/>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
                 <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(groupTotal)}</span>
-                <button onClick={()=>removeGroup(g.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.5}}><I.Trash size={14}/></button>
+                <button onClick={e=>{e.stopPropagation();removeGroup(g.id);}} className="icon-btn-sm" title="Delete group"
+                  style={{color:P.wine,opacity:.5}}><I.Trash size={14}/></button>
               </div>
             </div>
 
+            {!collapsed&&<div className="grp-body-enter">
             {items.map(c=>{
               const subs=c.subs||[];
               const hasSubs=subs.length>0;
@@ -2124,15 +2333,15 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                         {/* tracking toggle */}
                         <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
                           title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
-                          style={{background:"transparent",border:"none",color:c.trackExpenses===false?P.br:P.neuSub,padding:2,display:"flex",alignItems:"center",opacity:c.trackExpenses===false?1:.5}}>
+                          className="icon-btn-sm" style={{color:c.trackExpenses===false?P.br:P.neuSub,opacity:c.trackExpenses===false?1:.5}}>
                           {c.trackExpenses===false?<I.EyeOff size={14}/>:<I.Receipt size={14}/>}
                         </button>
                         {/* sub-toggle button */}
                         <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
-                          style={{background:"transparent",border:"none",color:subsOpen?P.jade:P.neuSub,padding:2,display:"flex",alignItems:"center"}}>
+                          className="icon-btn-sm" style={{color:subsOpen?P.jade:P.neuSub}}>
                           <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
                         </button>
-                        <button onClick={()=>removeCat(c.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+                        <button onClick={()=>removeCat(c.id)} className="icon-btn-sm" style={{color:P.wine,opacity:.4}}><I.X size={15}/></button>
                       </div>
                     </div>
                   </div>
@@ -2156,7 +2365,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                                 onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
                                 className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
                             </div>
-                            <button onClick={()=>handleRemoveSub(c.id,sub.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={13}/></button>
+                            <button onClick={()=>handleRemoveSub(c.id,sub.id)} className="icon-btn-sm" style={{color:P.wine,opacity:.4}}><I.X size={13}/></button>
                           </div>
                         </div>
                       ))}
@@ -2186,22 +2395,59 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               );
             })}
 
-            <button onClick={()=>addCat(g.id)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
-              <I.Plus size={14}/>Add category
-            </button>
+            <div style={{display:"flex",alignItems:"center",padding:"2px 8px 6px"}}>
+              <button onClick={()=>addCat(g.id)} className="icon-btn-sm" title="Add category" aria-label="Add category"
+                style={{color:P.jade}}>
+                <I.Plus size={16}/>
+              </button>
+              <span style={{fontSize:13,fontWeight:500,color:P.jade}}>Add category</span>
+            </div>
+            </div>}
           </section>
         );
       })}
       {editable&&(
-        <button onClick={addGroup} className="neu-btn" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",fontSize:14,fontWeight:500,color:P.jade}}>
-          <I.Plus size={14}/>Add group
-        </button>
+        <div style={{display:"flex",alignItems:"center"}}>
+          <button onClick={addGroup} className="neu-btn icon-btn-sm" title="Add group" aria-label="Add group" style={{color:P.jade}}>
+            <I.Plus size={14}/>
+          </button>
+          <span style={{fontSize:13,fontWeight:500,color:P.jade}}>Add group</span>
+        </div>
       )}
     </div>
   );
 }
 
 
+
+/* ── SHARED: tap-to-reveal info dot — replaces a permanent explanatory
+   sentence with a small icon; the sentence only appears when tapped.
+   Touch target is the full 44px icon-btn-sm, the glyph just renders small. ── */
+function InfoDot({text,align="left"}){
+  const[open,setOpen]=useState(false);
+  return(
+    <span style={{position:"relative",display:"inline-flex",flexShrink:0}}>
+      <button onClick={e=>{e.stopPropagation();setOpen(o=>!o);}} className="icon-btn-sm"
+        aria-label="More info" style={{color:P.neuSub,opacity:.6}}>
+        <I.Info size={13}/>
+      </button>
+      {open&&(
+        <>
+          {/* tap-away backdrop */}
+          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:29}}/>
+          <div onClick={e=>e.stopPropagation()} style={{position:"absolute",top:"110%",[align]:0,zIndex:30,
+            width:220,maxWidth:"calc(100vw - 48px)",boxSizing:"border-box",
+            ...neuP(12),padding:"10px 12px",fontSize:11.5,lineHeight:1.4,color:P.neuSub}}>
+            {text}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+/* module-scope neumorphic helper for InfoDot (component-scoped `neu()`
+   helpers inside each view aren't visible here, so this is self-contained) */
+const neuP=(r=14)=>({background:"var(--neuBg)",borderRadius:r,boxShadow:"7px 7px 15px var(--neuLo),-7px -7px 15px var(--neuHi)"});
 
 /* ── SHARED: Owner toggle pill (Me / Wife) ── */
 function OwnerToggle({owner,setOwner,owners}){
@@ -2635,42 +2881,51 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         )}
       </div>
 
-      {/* ── monthly plan banner ── */}
-      <div style={{...neu(14),padding:"12px 14px",marginBottom:12,
-        display:"flex",alignItems:"center",gap:10}}>
-        <div style={{flex:1}}>
-          <div style={{fontSize:12,fontWeight:600,color:hasOwnPlan?P.jade:P.neuSub}}>
+      {/* ── primary "add transaction" CTA — moved up here (was buried below
+         the hero tile, next to Reorder) so it's the first actionable thing
+         you see after picking the month ── */}
+      <button onClick={()=>openAdd()}
+        style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,width:"100%",
+          padding:"13px 0",marginBottom:12,borderRadius:16,border:"none",fontSize:15,fontWeight:600,
+          color:"#fff",background:isFuture?P.br:P.gr,boxShadow:`0 4px 14px ${isFuture?P.br:P.gr}55`}}>
+        <I.Plus size={17}/>{isFuture?"Plan transaction":"Add transaction"}
+      </button>
+
+      {/* ── monthly plan banner — slimmed to a plain caption row (no card
+         chrome) since it's secondary info, not a primary stat ── */}
+      <div style={{padding:"2px 4px 10px",display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1,display:"flex",alignItems:"center",gap:2,minWidth:0}}>
+          <span style={{fontSize:12,fontWeight:600,color:hasOwnPlan?P.jade:P.neuSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
             {hasOwnPlan?`📋 ${monthPlan.name}`:"📋 Using default plan"}
-          </div>
-          <div style={{fontSize:11,color:hasOwnPlan?P.jade:P.neuSub,marginTop:2,opacity:.85}}>
-            {hasOwnPlan
-              ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · Custom budget for ${fmtMonth(viewMonth)}`
-              :`Showing allocations from "${monthPlan.name}". Create a custom plan for ${fmtMonth(viewMonth)} to set a different income or allocation.`
-            }
-          </div>
+          </span>
+          <InfoDot text={hasOwnPlan
+            ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · Custom budget for ${fmtMonth(viewMonth)}`
+            :`Showing allocations from "${monthPlan.name}". Create a custom plan for ${fmtMonth(viewMonth)} to set a different income or allocation.`}/>
         </div>
         <div style={{display:"flex",gap:6,flexShrink:0}}>
           {hasOwnPlan
-            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)} className="neu-btn"
-                style={{fontSize:11,padding:"5px 12px",color:P.wine,fontWeight:500}}>
+            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)}
+                style={{fontSize:11,padding:"3px 8px",color:P.wine,fontWeight:500,background:"transparent",border:"none"}}>
                 Remove
               </button>
-            :<button onClick={()=>{setCloneSource(plans[0]?.id||"");setShowPlanPicker(true);}} className="neu-btn"
-                style={{fontSize:11,padding:"5px 12px",color:P.jade,fontWeight:600}}>
+            :<button onClick={()=>{setCloneSource(plans[0]?.id||"");setShowPlanPicker(true);}}
+                style={{fontSize:11,padding:"3px 8px",color:P.jade,fontWeight:600,background:"transparent",border:"none"}}>
                 + Create plan
               </button>
           }
         </div>
       </div>
 
-      {/* ── remaining-to-allocate / untransferred salary ── */}
-      <div className="fade-up" style={{...neu(14),padding:"12px 14px",marginBottom:12,
-        display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-        <div>
-          <div style={{fontSize:11,fontWeight:600,color:totalUnallocatedOrUntransferred<0?P.wine:P.br,textTransform:"uppercase",letterSpacing:".06em"}}>
+      {/* ── remaining-to-allocate / untransferred salary — desktop keeps its
+         own card; mobile folds this into the hero tile below instead (one
+         less stacked card + one less permanent sentence) ── */}
+      <div className="fade-up desktop-only-flex" style={{...neu(14),padding:"12px 14px",marginBottom:12,
+        alignItems:"center",justifyContent:"space-between",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:2}}>
+          <span style={{fontSize:11,fontWeight:600,color:totalUnallocatedOrUntransferred<0?P.wine:P.br,textTransform:"uppercase",letterSpacing:".06em"}}>
             {totalUnallocatedOrUntransferred<0?"Over-transferred":"Salary not yet spent or transferred"}
-          </div>
-          <div style={{fontSize:11,color:P.neuSub,marginTop:1}}>Income minus every logged transaction, tracked or not</div>
+          </span>
+          <InfoDot text="Income minus every logged transaction, tracked or not."/>
         </div>
         <span className="tnum" key={totalUnallocatedOrUntransferred} style={{fontSize:18,fontWeight:700,color:totalUnallocatedOrUntransferred<0?P.wine:P.br}}>
           {fmt(Math.abs(totalUnallocatedOrUntransferred))}
@@ -2708,25 +2963,31 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               background:`linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.05) 45%, ${fc}CC 45%, ${fc} 100%)`}}/>;
           })()}
         </div>
+        {/* mobile: salary-not-yet-spent folded in here instead of its own card above */}
+        <div className="mobile-only-flex" style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.14)",
+          alignItems:"center",justifyContent:"space-between",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:2,minWidth:0}}>
+            <span style={{fontSize:10.5,fontWeight:600,color:totalUnallocatedOrUntransferred<0?"#F87171":P.deepHi,textTransform:"uppercase",letterSpacing:".05em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+              {totalUnallocatedOrUntransferred<0?"Over-transferred":"Unspent salary"}
+            </span>
+            <InfoDot text="Income minus every logged transaction, tracked or not."/>
+          </div>
+          <span className="tnum" style={{fontSize:14,fontWeight:700,color:totalUnallocatedOrUntransferred<0?"#F87171":"#fff",flexShrink:0}}>
+            {fmt(Math.abs(totalUnallocatedOrUntransferred))}
+          </span>
+        </div>
       </div>
 
       {/* ── envelopes ── */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
         <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Envelopes</h2>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          {(monthPlan.categories||[]).length>1&&(
-            <button onClick={()=>setShowReorder(true)} className="neu-btn"
-              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 10px",
-                fontSize:12,fontWeight:600,color:P.neuSub}}>
-              <I.ArrowUp size={10}/><I.ArrowDown size={10}/>Reorder
-            </button>
-          )}
-          <button onClick={()=>openAdd()} className="neu-btn"
-            style={{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",
-              fontSize:14,fontWeight:500,color:isFuture?P.br:P.jade}}>
-            <I.Plus size={14}/>{isFuture?"Plan transaction":"Add transaction"}
+        {(monthPlan.categories||[]).length>1&&(
+          <button onClick={()=>setShowReorder(true)} className="neu-btn"
+            style={{display:"flex",alignItems:"center",gap:5,padding:"6px 10px",
+              fontSize:12,fontWeight:600,color:P.neuSub}}>
+            <I.ArrowUp size={10}/><I.ArrowDown size={10}/>Reorder
           </button>
-        </div>
+        )}
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
@@ -3338,8 +3599,8 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
               <div style={{fontSize:16,fontWeight:700,color:P.neuInk,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.name||"Account"}</div>
             </div>
             <button onClick={()=>setOpenId(isOpen?null:b.id)}
-              title="Account settings" className="neu-btn"
-              style={{flexShrink:0,borderRadius:10,padding:6,color:isOpen?accent:P.neuSub}}>
+              title="Account settings" className="neu-btn icon-btn-sm"
+              style={{flexShrink:0,borderRadius:10,color:isOpen?accent:P.neuSub}}>
               <I.Settings size={14}/>
             </button>
           </div>
@@ -3624,7 +3885,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                   className="bare" style={{fontSize:14,fontWeight:700,width:80,letterSpacing:".03em",color:P.neuInk}}/>
                 <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.neuSub,flex:1,minWidth:0}}/>
                 <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{usd(r.value)}</span>
-                <button onClick={()=>removeInv(r.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+                <button onClick={()=>removeInv(r.id)} className="icon-btn-sm" style={{color:P.wine,opacity:.4}}><I.X size={15}/></button>
               </div>
               <div style={{marginTop:6,display:"flex",flexWrap:"wrap",alignItems:"center",gap:14,fontSize:13,color:P.neuSub}} className="tnum">
                 <span>{r.shares.toFixed(4)} shares</span>
@@ -3661,7 +3922,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                     <span style={{textAlign:"right",fontWeight:600,color:tr.type==="buy"?P.jade:P.wine,textTransform:"uppercase",fontSize:11}}>{tr.type}</span>
                     <span className="tnum" style={{textAlign:"right",color:P.neuInk}}>{(Number(tr.shares)||0).toFixed(4)}</span>
                     <span className="tnum" style={{textAlign:"right",color:P.neuInk}}>{usd(tr.price)}</span>
-                    <button onClick={()=>removeTrade(r.id,tr.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4,padding:4}}><I.X size={12}/></button>
+                    <button onClick={()=>removeTrade(r.id,tr.id)} className="icon-btn-sm" style={{color:P.wine,opacity:.4}}><I.X size={12}/></button>
                   </div>
                 ))}
               </div>
@@ -3704,7 +3965,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
               <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>
                 Add trade — {invs.find(x=>x.id===tradeModal)?.ticker||""}
               </h3>
-              <button onClick={()=>setTradeModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+              <button onClick={()=>setTradeModal(null)} className="icon-btn-sm" style={{color:P.sub}}><I.X size={18}/></button>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:16}}>
               {["buy","sell"].map(t=>(
@@ -3751,7 +4012,7 @@ function AssetRow({a,updateAsset,removeAsset}){
         <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
           {BANK_CCY.map(c=><option key={c}>{c}</option>)}
         </select>
-        <button onClick={()=>removeAsset(a.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+        <button onClick={()=>removeAsset(a.id)} className="icon-btn-sm" style={{color:P.wine,opacity:.4}}><I.X size={15}/></button>
       </div>
       {a.kind==="asset"?(
         <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -3918,7 +4179,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
             {sorted.map(s=>(
               <span key={s.id} className="tnum neu-btn" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",fontSize:12,color:P.neuSub,borderRadius:999}}>
                 {fmtMo(s.month)} · {sar(s.net)}
-                <button onClick={()=>removeSnap(s.id)} style={{background:"transparent",border:"none",color:P.wine}}><I.X size={11}/></button>
+                <button onClick={()=>removeSnap(s.id)} className="icon-btn-sm" style={{color:P.wine}}><I.X size={11}/></button>
               </span>
             ))}
           </div>
@@ -4002,7 +4263,7 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
             background:g.color+"22",color:g.color,border:"none"}}>
           <Icon size={18}/>
         </button>
-        <button onClick={()=>removeGoal(g.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4,padding:2}}><I.X size={15}/></button>
+        <button onClick={()=>removeGoal(g.id)} className="icon-btn-sm" style={{color:P.wine,opacity:.4}}><I.X size={15}/></button>
       </div>
 
       {/* name */}
@@ -4088,7 +4349,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
             <div className="sheet" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                 <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Goal type — {g.name}</h3>
-                <button onClick={()=>setTypePicker(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+                <button onClick={()=>setTypePicker(null)} className="icon-btn-sm" style={{color:P.sub}}><I.X size={18}/></button>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                 {GOAL_TYPES.map(([key,label])=>{
@@ -4121,7 +4382,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
             <div className="sheet" onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                 <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Add money — {g.name}</h3>
-                <button onClick={()=>setAddModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+                <button onClick={()=>setAddModal(null)} className="icon-btn-sm" style={{color:P.sub}}><I.X size={18}/></button>
               </div>
               <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:16}}>
                 <div style={{fontSize:12,color:P.sub}}>Current saved</div>
@@ -4171,7 +4432,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
                 <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,background:g.color+"22",color:g.color}}><Icon size={18}/></span>
                 <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:16,fontWeight:600,flex:1,minWidth:0,color:P.ink}}/>
-                <button onClick={()=>setDetailModal(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+                <button onClick={()=>setDetailModal(null)} className="icon-btn-sm" style={{color:P.sub}}><I.X size={18}/></button>
               </div>
 
               <div style={{display:"flex",gap:10,marginBottom:14}}>
@@ -4198,7 +4459,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                       <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
                       <span className="tnum" style={{fontWeight:600,color:P.jade}}>+{fmt(c.amount)}</span>
                       {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
-                      <button onClick={()=>removeContribution(g.id,c.id)} style={{background:"transparent",border:"none",color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
+                      <button onClick={()=>removeContribution(g.id,c.id)} className="icon-btn-sm" style={{color:P.red,opacity:.4,marginLeft:"auto"}}><I.X size={12}/></button>
                     </div>
                   ))}
                 </div>
@@ -4308,7 +4569,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
               <input value={open.name} onChange={e=>updateTarget(open.id,{name:e.target.value})}
                 className="bare" style={{fontSize:17,fontWeight:700,flex:1,color:P.ink}}/>
-              <button onClick={()=>setOpenId(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+              <button onClick={()=>setOpenId(null)} className="icon-btn-sm" style={{color:P.sub}}><I.X size={18}/></button>
             </div>
 
             <div style={{display:"flex",gap:12,marginBottom:12,fontSize:13}}>
@@ -4386,7 +4647,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
           <div className="sheet" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
               <h3 style={{margin:0,fontSize:15,fontWeight:600,color:P.ink}}>Savings-rate categories</h3>
-              <button onClick={()=>setCatPickerId(null)} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+              <button onClick={()=>setCatPickerId(null)} className="icon-btn-sm" style={{color:P.sub}}><I.X size={18}/></button>
             </div>
             <div style={{fontSize:11,color:P.faint,marginBottom:10,lineHeight:1.4}}>
               Tag each category as going into stocks or cash — it changes which
