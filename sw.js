@@ -2,7 +2,7 @@
 // so returning users pick up the new shell instead of being stuck on an old
 // cached copy. The activate step below purges any cache that doesn't match
 // the current version.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `allocation-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -41,12 +41,44 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// The HTML shell is what actually changes on every deploy (features, bug
+// fixes). Serving it stale-while-revalidate means you're always looking at
+// last deploy's version and only catch up on the *next* load - which is how
+// the scroll-lock fix appeared to "not work" even after being pushed. Treat
+// it as network-first instead: try the network for the current bytes, and
+// only fall back to cache if you're offline.
+function isAppShellRequest(request) {
+  const url = new URL(request.url);
+  return url.origin === self.location.origin &&
+    (url.pathname === '/' || url.pathname.endsWith('/index.html'));
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
   // Only handle safe, cacheable GET requests over http(s).
   if (request.method !== 'GET' || !request.url.startsWith('http')) return;
 
+  if (isAppShellRequest(request)) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(async (cache) => {
+        try {
+          const response = await fetch(request);
+          if (response && response.ok) cache.put(request, response.clone());
+          return response;
+        } catch (err) {
+          // Offline: fall back to whatever shell we have cached.
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          throw err;
+        }
+      })
+    );
+    return;
+  }
+
+  // Everything else (pinned CDN libs, manifest, etc.) keeps
+  // stale-while-revalidate: serve cache instantly, refresh in background.
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
       const cached = await cache.match(request);
