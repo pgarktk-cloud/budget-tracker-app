@@ -55,7 +55,11 @@ html,body{margin:0;padding:0;background:var(--bg);transition:background .25s eas
    page behind it — otherwise a touch-drag that starts inside the sheet can
    hand off to the underlying page scroll once it hits the sheet's own
    scroll edge, which on iOS feels like "the page behind is scrolling". */
-body:has(.sheet-bg){overflow:hidden;height:100vh;}
+/* body scroll lock now handled entirely by the useScrollLock hook (JS,
+   position:fixed + top offset) — the old CSS-only body:has() rule below
+   was removed because it applied overflow:hidden/height:100vh instantly
+   at paint time, snapping the background to the top before the JS fix
+   could take over, causing a visible jump on iOS. */
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;overscroll-behavior-x:none;}
 .serif{font-family:"Iowan Old Style",Georgia,serif;}
 .tnum{font-variant-numeric:tabular-nums;}
@@ -288,8 +292,8 @@ function useFlash(val,ref){
    page can snap back to the top when the sheet closes (or even while open,
    if the keyboard toggles). Pinning the body with position:fixed and a
    negative top offset, then restoring scrollTo on close, is the fix that
-   actually holds on iOS. PILOT: wired to the Add/Edit Transaction sheet only
-   for now — roll out to other .sheet-bg instances once confirmed on device. */
+   actually holds on iOS. Wired to every .sheet-bg instance in the app —
+   confirmed working on the Add/Edit Transaction sheet, then rolled out. */
 function useScrollLock(active){
   const savedY=useRef(0);
   useEffect(()=>{
@@ -2317,7 +2321,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   // depends on payPeriods, not just budgetOwner.
   useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[showAdd,setShowAdd]=useState(false);
-  useScrollLock(showAdd); // PILOT — see useScrollLock definition for why the CSS-only lock isn't enough on iOS
+  useScrollLock(showAdd);
   const[addMode,setAddMode]=useState("tracked"); // "tracked" | "untracked" | "goals" — unified add-transaction modal routing
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
@@ -2325,7 +2329,9 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const toggleEnvelope=id=>setExpandedEnvelopes(s=>({...s,[id]:!s[id]}));
   const[collapsedMonths,setCollapsedMonths]=useState({});
   const[showPlanPicker,setShowPlanPicker]=useState(false);
+  useScrollLock(showPlanPicker);
   const[showReorder,setShowReorder]=useState(false);
+  useScrollLock(showReorder);
   const[untrackedOpen,setUntrackedOpen]=useState(false);
   const[logExpanded,setLogExpanded]=useState(false);
   const[cloneSource,setCloneSource]=useState("");
@@ -3271,6 +3277,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
    (e.g. Savings, Investment) and remembers the actual amount transferred,
    since it doesn't always match the budgeted figure exactly. ── */
 function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,isNow,usesPayPeriod}){
+  useScrollLock(true); // only ever mounted while open
   const[amount,setAmount]=useState(String(transferModal.suggested||transferModal.budget||""));
   const[date,setDate]=useState(isNow?new Date().toISOString().slice(0,10):(usesPayPeriod?viewMonth:viewMonth+"-01"));
   return(
@@ -3329,6 +3336,7 @@ function QuickTransferSheet({transferModal,onClose,onConfirm,fmt,cur,viewMonth,i
 /* ── extra funds sheet — logs a one-off top-up to a category's spending
    room for the viewed month only. Never touches the Budget tab. ── */
 function ExtraFundsSheet({extraFundsModal,onClose,onConfirm,fmt,cur,viewMonth,isNow,usesPayPeriod}){
+  useScrollLock(true); // only ever mounted while open
   const[amount,setAmount]=useState("");
   const[note,setNote]=useState("");
   const[date,setDate]=useState(isNow?new Date().toISOString().slice(0,10):(usesPayPeriod?viewMonth:viewMonth+"-01"));
@@ -3579,6 +3587,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   const[err,setErr]=useState("");
   const[updatedAt,setUpdatedAt]=useState(null);
   const[tradeModal,setTradeModal]=useState(null); // invId
+  useScrollLock(!!tradeModal);
   const[tradeForm,setTradeForm]=useState({type:"buy",shares:"",price:"",date:new Date().toISOString().slice(0,10)});
   const[expandedId,setExpandedId]=useState(null);
   const[fetchingName,setFetchingName]=useState({});
@@ -4172,10 +4181,13 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
 /* ── GOALS VIEW — square cards with type icons ── */
 function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners}){
   const[addModal,setAddModal]=useState(null);     // goalId for "add money"
+  useScrollLock(!!addModal);
   const[addAmount,setAddAmount]=useState("");
   const[addNote,setAddNote]=useState("");
   const[detailModal,setDetailModal]=useState(null); // goalId for details
+  useScrollLock(!!detailModal);
   const[typePicker,setTypePicker]=useState(null);    // goalId for type picker
+  useScrollLock(!!typePicker);
 
   const openAdd=id=>{setAddModal(id);setAddAmount("");setAddNote("");};
   const openDetails=id=>setDetailModal(id);
@@ -4353,7 +4365,9 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
    balances forward at two separately-editable conservative growth rates. ── */
 function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePlanId,owners,invSar,banksSar,fmt}){
   const[openId,setOpenId]=useState(null);
+  useScrollLock(!!openId);
   const[catPickerId,setCatPickerId]=useState(null);
+  useScrollLock(!!catPickerId);
 
   // only the CURRENT plan per owner — `plans` holds one entry per month
   // (carry-forward history), so looping over all of them would repeat
@@ -4571,6 +4585,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
    device has unsynced changes. Blocking modal by design: the person must
    pick a side rather than risk either copy being silently lost. ── */
 function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
+  useScrollLock(true); // only ever mounted while open
   const remoteWhen=conflict.remoteSavedAt?new Date(conflict.remoteSavedAt).toLocaleString():"an unknown time";
   const choiceBtn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",display:"block"};
   return(
@@ -4599,6 +4614,7 @@ function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
 /* ── Device profile picker — asked once per device, then remembered locally
    (never synced) so Budget/Expenses default to the right person. ── */
 function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
+  useScrollLock(true); // only ever mounted while open
   return(
     <div className="sheet-bg" onClick={dismissable?onClose:undefined}>
       <div className="sheet" style={{maxWidth:340,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
@@ -4624,6 +4640,7 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
 }
 
 function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod}){
+  useScrollLock(true); // only ever mounted while open
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
