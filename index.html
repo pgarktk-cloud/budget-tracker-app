@@ -282,6 +282,36 @@ function useFlash(val,ref){
   },[val]);
 }
 
+/* Locks background scroll while a modal/sheet is open, in a way that
+   actually survives iOS Safari. The CSS-only `body:has(.sheet-bg){overflow:
+   hidden}` approach doesn't reliably hold the scroll position on iOS — the
+   page can snap back to the top when the sheet closes (or even while open,
+   if the keyboard toggles). Pinning the body with position:fixed and a
+   negative top offset, then restoring scrollTo on close, is the fix that
+   actually holds on iOS. PILOT: wired to the Add/Edit Transaction sheet only
+   for now — roll out to other .sheet-bg instances once confirmed on device. */
+function useScrollLock(active){
+  const savedY=useRef(0);
+  useEffect(()=>{
+    if(!active)return;
+    savedY.current=window.scrollY||document.documentElement.scrollTop||0;
+    const{body}=document;
+    body.style.position="fixed";
+    body.style.top=`-${savedY.current}px`;
+    body.style.left="0";
+    body.style.right="0";
+    body.style.width="100%";
+    return()=>{
+      body.style.position="";
+      body.style.top="";
+      body.style.left="";
+      body.style.right="";
+      body.style.width="";
+      window.scrollTo(0,savedY.current);
+    };
+  },[active]);
+}
+
 /* Tab direction tracker so we can slide left or right */
 const TAB_ORDER=["budget","expenses","household","banks","investments","networth","goals","targets","currency"];
 function TabPane({tab,children}){
@@ -2287,6 +2317,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   // depends on payPeriods, not just budgetOwner.
   useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[showAdd,setShowAdd]=useState(false);
+  useScrollLock(showAdd); // PILOT — see useScrollLock definition for why the CSS-only lock isn't enough on iOS
   const[addMode,setAddMode]=useState("tracked"); // "tracked" | "untracked" | "goals" — unified add-transaction modal routing
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
