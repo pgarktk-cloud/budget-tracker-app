@@ -733,7 +733,7 @@ function computeTargetForecast(startInvest,startCash,monthlyInvest,monthlyCash,i
 /* ── Compute holding stats from trade log ── */
 function holdingStats(trades=[]){
   let shares=0,cost=0;
-  (trades||[]).forEach(tr=>{
+  (trades||[]).filter(tr=>!tr.deletedAt).forEach(tr=>{
     const s=Number(tr.shares)||0,p=Number(tr.price)||0;
     if(tr.type==="buy"){shares+=s;cost+=s*p;}
     else if(tr.type==="sell"){
@@ -856,8 +856,8 @@ function migrate(d){
     if(!e.updatedAt)e.updatedAt=e.date?`${e.date}T00:00:00.000Z`:new Date().toISOString();
   });
   // ensure monthlyPlans have owner
-  (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";});
-  (d.banks||[]).forEach(b=>{if(!b.owner)b.owner="me";});
+  (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";if(!m.updatedAt)m.updatedAt="2000-01-01T00:00:00.000Z";});
+  (d.banks||[]).forEach(b=>{if(!b.owner)b.owner="me";if(!b.updatedAt)b.updatedAt="2000-01-01T00:00:00.000Z";});
   (d.goals||[]).forEach(g=>{
     if(!g.owner)g.owner="me";
     if(!g.type)g.type="savings";
@@ -867,6 +867,7 @@ function migrate(d){
       delete g.saved;
     }
     if(!g.contributions)g.contributions=[];
+    if(!g.updatedAt)g.updatedAt="2000-01-01T00:00:00.000Z";
   });
   (d.plans||[]).forEach(plan=>{
     (plan.categories||[]).forEach(c=>{
@@ -875,6 +876,7 @@ function migrate(d){
       // so existing budgets behave exactly as before this feature shipped
       if(c.trackExpenses===undefined)c.trackExpenses=true;
     });
+    if(!plan.updatedAt)plan.updatedAt="2000-01-01T00:00:00.000Z";
   });
   (d.investments||[]).forEach(inv=>{
     // migrate old shares/avgCost→trades
@@ -883,9 +885,11 @@ function migrate(d){
       inv.trades=s>0?[{id:uid(),date:new Date().toISOString().slice(0,10),type:"buy",shares:s,price:a}]:[];
       delete inv.shares;delete inv.avgCost;
     }
+    if(!inv.updatedAt)inv.updatedAt="2000-01-01T00:00:00.000Z";
   });
   (d.assets||[]).forEach(a=>{
     if(a.kind==="liability"&&!a.installment){a.installment=false;}
+    if(!a.updatedAt)a.updatedAt="2000-01-01T00:00:00.000Z";
   });
   if(!d.livePrice)d.livePrice={};
   if(!d.portHistory)d.portHistory=[];
@@ -917,7 +921,13 @@ function migrate(d){
     if(t.cashRate===undefined)t.cashRate=1;        // conservative default, user-editable
     if(!t.currency)t.currency="SAR";
     if(!t.color)t.color=P.gr;
+    if(!t.updatedAt)t.updatedAt="2000-01-01T00:00:00.000Z";
   });
+  // per-device edit clock used purely for cross-device merge tiebreaking on
+  // settings that aren't record arrays (currency, projection, owners names,
+  // payPeriods, investTarget, activePlanId, quickTransferLast, household
+  // split %). Never shown in UI, never a source of truth for anything else.
+  if(!d.dataUpdatedAt)d.dataUpdatedAt="2000-01-01T00:00:00.000Z";
   return d;
 }
 
@@ -973,33 +983,86 @@ const PROFILE_KEY="allocation:preferredProfile";
    re-triggering the conflict modal on every save. Fingerprints used for
    dirty-checking / conflict-detection strip it out; the actual payload
    sent to the cloud still includes theme as normal. */
-const fingerprint=d=>{try{const{theme,...rest}=d||{};return JSON.stringify(rest);}catch(e){return "";}};
+const fingerprint=d=>{try{const{theme,dataUpdatedAt,...rest}=d||{};return JSON.stringify(rest);}catch(e){return "";}};
 
-/* union transactions by id; on overlap, newer updatedAt wins. Deletes are
-   tombstones (deletedAt set on the record), so they merge like any other
-   edit — no separate delete-handling needed. */
-function mergeExpenseArrays(localExp,remoteExp){
+/* union records by id; on overlap, whichever has the newer updatedAt (or
+   date, as a fallback for records that don't track updatedAt) wins outright.
+   Deletes are tombstones (deletedAt set on the record, filtered out at read
+   time), so a delete on one device merges cleanly instead of a stale copy
+   on the other device silently resurrecting it. This is the same pattern
+   originally used only for expenses, now shared by every collection. */
+function mergeArrayById(localArr,remoteArr,tsOf=r=>r.updatedAt||r.date||""){
   const map=new Map();
-  (localExp||[]).forEach(e=>map.set(e.id,e));
-  (remoteExp||[]).forEach(re=>{
-    const le=map.get(re.id);
-    if(!le){map.set(re.id,re);return;}
-    const lt=le.updatedAt||le.date||"";
-    const rt=re.updatedAt||re.date||"";
-    map.set(re.id,rt>lt?re:le);
+  (localArr||[]).forEach(x=>map.set(x.id,x));
+  (remoteArr||[]).forEach(rx=>{
+    const lx=map.get(rx.id);
+    if(!lx){map.set(rx.id,rx);return;}
+    map.set(rx.id,tsOf(rx)>tsOf(lx)?rx:lx);
   });
   return Array.from(map.values());
 }
-/* Auto-reconcile local vs remote when ONLY the expenses array differs.
-   Returns the merged data (no modal needed) or null if something else
-   (plans/goals/settings) also diverged, so the caller falls back to
-   the conflict modal — with expenses already merged either way. */
-function tryAutoMergeExpenses(local,remote){
-  const merged=mergeExpenseArrays(local.expenses,remote.expenses);
-  if(fingerprint({...local,expenses:[]})===fingerprint({...remote,expenses:[]})){
-    return{...local,expenses:merged};
-  }
-  return null;
+/* Same idea, but for parent records that own a nested child array (goals→
+   contributions, investments→trades). The parent's own scalar fields still
+   go to whichever side is newer, but the child array is separately unioned
+   so e.g. two different contributions added on two different devices to
+   the same goal both survive, even though only one device's edit to the
+   goal record itself "won". */
+function mergeArrayByIdWithChild(localArr,remoteArr,childKey,childTsOf){
+  const lm=new Map((localArr||[]).map(x=>[x.id,x]));
+  const rm=new Map((remoteArr||[]).map(x=>[x.id,x]));
+  const ids=new Set([...lm.keys(),...rm.keys()]);
+  return Array.from(ids).map(id=>{
+    const l=lm.get(id),r=rm.get(id);
+    if(l&&r){
+      const winner=(r.updatedAt||"")>(l.updatedAt||"")?r:l;
+      return{...winner,[childKey]:mergeArrayById(l[childKey]||[],r[childKey]||[],childTsOf)};
+    }
+    return l||r;
+  });
+}
+/* Records with no id, keyed some other way (monthlyPlans by month+owner,
+   portHistory/history by month). No independent per-record timestamp, so a
+   genuine same-key conflict falls back to whichever whole dataset was
+   edited more recently overall. */
+function mergeKeyed(localArr,remoteArr,keyOf,preferLocal){
+  const map=new Map();
+  (preferLocal?(remoteArr||[]):(localArr||[])).forEach(x=>map.set(keyOf(x),x));
+  (preferLocal?(localArr||[]):(remoteArr||[])).forEach(x=>map.set(keyOf(x),x));
+  return Array.from(map.values());
+}
+
+/* Full cross-field auto-merge. Every record-bearing collection is merged by
+   id (or by month/owner key where there's no id), so additions made on both
+   devices always survive together — not just expenses. Anything left over
+   that's a plain setting rather than a record (currency, projection, owner
+   names, payPeriods, investTarget, activePlanId, quickTransferLast, live
+   price cache, household split %) is seeded from whichever whole dataset
+   carries the newer `dataUpdatedAt` stamp, since those aren't "add"
+   operations the way transactions/goals/trades are — there's no
+   union to take, just a most-recent-edit-wins call. Returns null (falling
+   back to the conflict modal) only if something is structurally malformed. */
+function tryAutoMergeAll(local,remote){
+  try{
+    const preferLocal=(local.dataUpdatedAt||"")>=(remote.dataUpdatedAt||"");
+    const base=preferLocal?local:remote;
+    return{
+      ...base,
+      expenses:mergeArrayById(local.expenses,remote.expenses),
+      goals:mergeArrayByIdWithChild(local.goals,remote.goals,"contributions",c=>c.date||""),
+      investments:mergeArrayByIdWithChild(local.investments,remote.investments,"trades",t=>t.date||""),
+      banks:mergeArrayById(local.banks,remote.banks),
+      assets:mergeArrayById(local.assets,remote.assets),
+      targets:mergeArrayById(local.targets,remote.targets),
+      plans:mergeArrayById(local.plans,remote.plans),
+      monthlyPlans:mergeKeyed(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
+      portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
+      history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
+      household:{
+        ...(base.household||{splitMine:50,expenses:[]}),
+        expenses:mergeArrayById((local.household||{}).expenses,(remote.household||{}).expenses,()=>""),
+      },
+    };
+  }catch(e){return null;}
 }
 
 const loadSyncMeta=()=>{
@@ -1015,7 +1078,20 @@ const saveSyncMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m))
    MAIN APP
    ════════════════════════════════════════════════════════════════════════ */
 function App(){
-  const[data,setData]=useState(defaultData);
+  const[data,setDataRaw]=useState(()=>migrate(defaultData()));
+  const skipSave=useRef(false);
+  /* every mutator in this file calls setData(updater). Wrapping it here (once)
+     means none of those ~45 call sites need to know about dataUpdatedAt.
+     skipSave.current is already set to true, right before setData, by every
+     code path that's loading/merging/resolving cloud data rather than
+     applying a real local edit — so we read (without consuming) that same
+     flag to skip the stamp in those cases. */
+  const setData=updater=>setDataRaw(d=>{
+    const next=typeof updater==="function"?updater(d):updater;
+    if(next===d)return d;
+    if(skipSave.current)return next;
+    return{...next,dataUpdatedAt:new Date().toISOString()};
+  });
   const[loaded,setLoaded]=useState(false);
   const[tab,setTab]=useState("budget");
   const[planMenu,setPlanMenu]=useState(false);
@@ -1023,7 +1099,6 @@ function App(){
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
   const[syncMsg,setSyncMsg]=useState("");
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
-  const skipSave=useRef(false);
   const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
 
   /* ── local-first sync state ──────────────────────────────────────────── */
@@ -1130,7 +1205,7 @@ function App(){
             meta.lastCloudPulledAt=new Date().toISOString();
             saveSyncMeta(meta);
           }else{
-            const merged=tryAutoMergeExpenses(localResolved,remoteMigrated);
+            const merged=tryAutoMergeAll(localResolved,remoteMigrated);
             if(merged){
               resolved=merged;
               lastCloudSnapshotRef.current=remoteFP;
@@ -1226,7 +1301,7 @@ function App(){
           const remoteRaw=await KVSync.load();
           if(remoteRaw&&Array.isArray(remoteRaw.plans)){
             const remoteMigrated=migrate(remoteRaw);
-            const merged=tryAutoMergeExpenses(payload,remoteMigrated);
+            const merged=tryAutoMergeAll(payload,remoteMigrated);
             const retry=merged?await KVSync.save(merged):null;
             if(merged&&retry&&!retry.conflict&&retry.ok!==false){
               skipSave.current=true;
@@ -1308,7 +1383,7 @@ function App(){
             setLastCloudPulledAt(now);
             setSyncMsg("Already up to date ✓");
           }else{
-            const merged=tryAutoMergeExpenses(dataRef.current,remoteMigrated);
+            const merged=tryAutoMergeAll(dataRef.current,remoteMigrated);
             if(merged){
               skipSave.current=true;
               setData(merged);
@@ -1441,7 +1516,7 @@ function App(){
   const cur=data.currency;
 
   /* plan mutators — always operate on current budgetOwner's plan */
-  const patchPlan=patch=>setData(d=>({...d,plans:d.plans.map(p=>p.id===plan.id?{...p,...patch}:p)}));
+  const patchPlan=patch=>setData(d=>({...d,plans:d.plans.map(p=>p.id===plan.id?{...p,...patch,updatedAt:new Date().toISOString()}:p)}));
   const setCats=cats=>patchPlan({categories:cats});
   const setGrps=gs=>patchPlan({groups:gs});
   const updateCat=(id,patch)=>setCats(plan.categories.map(c=>c.id===id?{...c,...patch}:c));
@@ -1460,7 +1535,7 @@ function App(){
     setData(d=>({...d,
       activePlanId:{...activePlanId,[budgetOwner]:id},
       plans:[...d.plans,{id,owner:budgetOwner,name:"New plan",month:monthLabel(),
-        income:0,groups:[{id:uid(),name:"General"}],categories:[]}]
+        income:0,groups:[{id:uid(),name:"General"}],categories:[],updatedAt:new Date().toISOString()}]
     }));
     setPlanMenu(false);
   };
@@ -1471,15 +1546,15 @@ function App(){
     const fallback=plans.find(p=>p.owner===budgetOwner)?.id||plans[0]?.id;
     return{...d,plans,activePlanId:{...activePlanId,[budgetOwner]:fallback}};
   });
-  const renamePlan=(id,name)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===id?{...p,name}:p)}));
+  const renamePlan=(id,name)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===id?{...p,name,updatedAt:new Date().toISOString()}:p)}));
   const switchPlan=id=>setData(d=>({...d,activePlanId:{...activePlanId,[budgetOwner]:id}}));
 
   /* ── generic plan-by-id mutators (used by month-aware Budget tab) ──
      These let the Budget tab edit whichever plan maps to the viewed month,
      rather than only the active plan. */
-  const patchPlanById=(pid,patch)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,...patch}:p)}));
-  const setCatsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,categories:typeof updater==="function"?updater(p.categories||[]):updater}:p)}));
-  const setGrpsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,groups:typeof updater==="function"?updater(p.groups||[]):updater}:p)}));
+  const patchPlanById=(pid,patch)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,...patch,updatedAt:new Date().toISOString()}:p)}));
+  const setCatsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,categories:typeof updater==="function"?updater(p.categories||[]):updater,updatedAt:new Date().toISOString()}:p)}));
+  const setGrpsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,groups:typeof updater==="function"?updater(p.groups||[]):updater,updatedAt:new Date().toISOString()}:p)}));
 
   /* ── monthly budget plans ──
      monthlyPlans: [{ month:"2026-06", planId:"p1" }]
@@ -1496,7 +1571,7 @@ function App(){
 
   const assignPlanToMonth=(mo,planId,owner=budgetOwner)=>setData(d=>({
     ...d,
-    monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId}]
+    monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId,updatedAt:new Date().toISOString()}]
   }));
 
   const clonePlanForMonth=(mo,sourcePlanId,owner=budgetOwner,label)=>{
@@ -1527,10 +1602,11 @@ function App(){
     cloned.categories=cloned.categories.map(c=>({...c,groupId:groupIdMap[c.groupId]||c.groupId}));
 
     cloned.owner=owner;
+    cloned.updatedAt=new Date().toISOString();
     setData(d=>({
       ...d,
       plans:[...d.plans,cloned],
-      monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:newId}]
+      monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:newId,updatedAt:new Date().toISOString()}]
     }));
     return newId;
   };
@@ -1540,22 +1616,23 @@ function App(){
   }));
 
   /* goals */
-  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length]}]}));
-  const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch}:g)}));
-  const removeGoal=id=>setData(d=>({...d,goals:d.goals.filter(g=>g.id!==id)}));
+  const goals=(data.goals||[]).filter(g=>!g.deletedAt);
+  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length],updatedAt:new Date().toISOString()}]}));
+  const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch,updatedAt:new Date().toISOString()}:g)}));
+  const removeGoal=id=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:g)}));
   const addContribution=(goalId,amount,note="")=>{
     const contrib={id:uid(),date:new Date().toISOString().slice(0,10),amount:Number(amount),note};
-    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib]}:g)}));
+    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib],updatedAt:new Date().toISOString()}:g)}));
   };
-  const removeContribution=(goalId,cid)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).filter(c=>c.id!==cid)}:g)}));
+  const removeContribution=(goalId,cid)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:g)}));
 
   /* investments */
-  const invs=data.investments||[];
-  const addInv=()=>setData(d=>({...d,investments:[...(d.investments||[]),{id:uid(),ticker:"",name:"",broker:"",trades:[]}]}));
-  const updateInv=(id,patch)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,...patch}:x)}));
-  const removeInv=id=>setData(d=>({...d,investments:(d.investments||[]).filter(x=>x.id!==id)}));
-  const addTrade=(invId,trade)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}]}:x)}));
-  const removeTrade=(invId,tid)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).filter(t=>t.id!==tid)}:x)}));
+  const invs=(data.investments||[]).filter(x=>!x.deletedAt);
+  const addInv=()=>setData(d=>({...d,investments:[...(d.investments||[]),{id:uid(),ticker:"",name:"",broker:"",trades:[],updatedAt:new Date().toISOString()}]}));
+  const updateInv=(id,patch)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,...patch,updatedAt:new Date().toISOString()}:x)}));
+  const removeInv=id=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:x)}));
+  const addTrade=(invId,trade)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}],updatedAt:new Date().toISOString()}:x)}));
+  const removeTrade=(invId,tid)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:new Date().toISOString()}:t),updatedAt:new Date().toISOString()}:x)}));
   const setProjection=patch=>setData(d=>({...d,projection:{...(d.projection||{monthly:1500,years:20,rate:8}),...patch}}));
 
   /* runway/capital targets — trend-based forecasting toward a custom goal.
@@ -1563,13 +1640,14 @@ function App(){
      derived live from (a) the budget categories you tag as counting toward it
      and (b) your current invested/cash balances, projected forward at two
      separately-editable conservative rates. */
-  const targets=data.targets||[];
+  const targets=(data.targets||[]).filter(t=>!t.deletedAt);
   const addTarget=()=>setData(d=>({...d,targets:[...(d.targets||[]),{
     id:uid(),name:"New target",targetAmount:100000,targetDate:"",
     categoryAlloc:{},investRate:4,cashRate:1,currency:"SAR",color:SEG[(d.targets||[]).length%SEG.length],
+    updatedAt:new Date().toISOString(),
   }]}));
-  const updateTarget=(id,patch)=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,...patch}:t)}));
-  const removeTarget=id=>setData(d=>({...d,targets:(d.targets||[]).filter(t=>t.id!==id)}));
+  const updateTarget=(id,patch)=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,...patch,updatedAt:new Date().toISOString()}:t)}));
+  const removeTarget=id=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:t)}));
   const livePrice=data.livePrice||{};
   const setLivePrice=prices=>setData(d=>({...d,livePrice:{...(d.livePrice||{}),...prices}}));
 
@@ -1632,20 +1710,20 @@ function App(){
   const sarRate=rates&&rates.SAR?rates.SAR:null;
 
   /* banks */
-  const banks=data.banks||[];
-  const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0}]}));
-  const updateBank=(id,patch)=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,...patch}:b)}));
-  const removeBank=id=>setData(d=>({...d,banks:(d.banks||[]).filter(b=>b.id!==id)}));
+  const banks=(data.banks||[]).filter(b=>!b.deletedAt);
+  const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0,updatedAt:new Date().toISOString()}]}));
+  const updateBank=(id,patch)=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,...patch,updatedAt:new Date().toISOString()}:b)}));
+  const removeBank=id=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:b)}));
 
   /* assets */
-  const assets=data.assets||[];
+  const assets=(data.assets||[]).filter(a=>!a.deletedAt);
   const addAsset=kind=>setData(d=>({...d,assets:[...(d.assets||[]),
     kind==="liability"
-      ?{id:uid(),name:"New liability",kind:"liability",currency:"SAR",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10)}
-      :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",value:0}
+      ?{id:uid(),name:"New liability",kind:"liability",currency:"SAR",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10),updatedAt:new Date().toISOString()}
+      :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",value:0,updatedAt:new Date().toISOString()}
   ]}));
-  const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch}:a)}));
-  const removeAsset=id=>setData(d=>({...d,assets:(d.assets||[]).filter(a=>a.id!==id)}));
+  const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch,updatedAt:new Date().toISOString()}:a)}));
+  const removeAsset=id=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:a)}));
 
   /* net worth */
   const sarOf=(amt,ccy)=>{const v=convert(amt,ccy,"SAR");return v==null?0:v;};
@@ -1814,13 +1892,13 @@ function App(){
 
         <TabPane tab={tab}>
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals:data.goals,addContribution,setCatsFor,globalAddTrigger}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
-          {tab==="goals"&&<GoalsView {...{goals:data.goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
+          {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
         </TabPane>
       </div>
@@ -3777,22 +3855,22 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                   style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
                   <I.Plus size={12}/>Add trade
                 </button>
-                {(r.trades||[]).length>0&&(
+                {(r.trades||[]).filter(t=>!t.deletedAt).length>0&&(
                   <button onClick={()=>setExpandedId(expandedId===r.id?null:r.id)} className="neu-btn"
                     style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
-                    {expandedId===r.id?"Hide":"Show"} {r.trades.length} trade{r.trades.length!==1?"s":""}
+                    {expandedId===r.id?"Hide":"Show"} {(r.trades||[]).filter(t=>!t.deletedAt).length} trade{(r.trades||[]).filter(t=>!t.deletedAt).length!==1?"s":""}
                   </button>
                 )}
               </div>
             </div>
 
             {/* trade history */}
-            {expandedId===r.id&&(r.trades||[]).length>0&&(
+            {expandedId===r.id&&(r.trades||[]).filter(t=>!t.deletedAt).length>0&&(
               <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em"}}>
                   <span>Date</span><span style={{textAlign:"right"}}>Type</span><span style={{textAlign:"right"}}>Shares</span><span style={{textAlign:"right"}}>Price</span><span/>
                 </div>
-                {[...(r.trades||[])].sort((a,b)=>a.date.localeCompare(b.date)).map(tr=>(
+                {[...(r.trades||[])].filter(tr=>!tr.deletedAt).sort((a,b)=>a.date.localeCompare(b.date)).map(tr=>(
                   <div key={tr.id} style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:13,alignItems:"center",borderTop:"1px solid rgba(0,0,0,.05)"}}>
                     <span className="tnum" style={{color:P.neuSub}}>{tr.date}</span>
                     <span style={{textAlign:"right",fontWeight:600,color:tr.type==="buy"?P.jade:P.wine,textTransform:"uppercase",fontSize:11}}>{tr.type}</span>
@@ -4126,7 +4204,7 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
 
 /* ── GOAL SQUARE CARD (top-level so inputs keep focus) ── */
 function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}){
-  const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+  const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
   const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
   const Icon=goalIcon(g.type);
   const R=26,C=2*Math.PI*R;
@@ -4254,7 +4332,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
       {addModal&&(()=>{
         const g=goals.find(x=>x.id===addModal);
         if(!g)return null;
-        const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
         return(
           <Portal>
           <div className="sheet-bg" onClick={()=>setAddModal(null)}>
@@ -4300,7 +4378,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
       {detailModal&&(()=>{
         const g=goals.find(x=>x.id===detailModal);
         if(!g)return null;
-        const saved=(g.contributions||[]).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
         const remain=Math.max(0,g.target-saved);
         const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
         const Icon=goalIcon(g.type);
@@ -4331,9 +4409,9 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               </div>
 
               <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Contributions</div>
-              {(g.contributions||[]).length>0?(
+              {(g.contributions||[]).filter(c=>!c.deletedAt).length>0?(
                 <div style={{borderRadius:10,overflow:"hidden",background:"rgba(0,0,0,.03)",marginBottom:8}}>
-                  {[...(g.contributions||[])].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
+                  {[...(g.contributions||[]).filter(c=>!c.deletedAt)].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
                     <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:"1px solid rgba(0,0,0,.06)",fontSize:13}}>
                       <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
                       <span className="tnum" style={{fontWeight:600,color:P.jade}}>+{fmt(c.amount)}</span>
@@ -4762,7 +4840,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         </div>
         <input ref={fileRef} type="file" accept=".json" onChange={onFile} style={{display:"none"}}/>
         {msg&&<div style={{fontSize:12,color:P.gr,marginBottom:12}}>{msg}</div>}
-        <button onClick={()=>confirm?(setData(defaultData()),flash("Reset done")):setConfirm(true)}
+        <button onClick={()=>confirm?(setData(migrate(defaultData())),flash("Reset done")):setConfirm(true)}
           style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
             background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
           <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to sample data"}
