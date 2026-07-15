@@ -1193,12 +1193,13 @@ function App(){
         try{remoteRaw=await KVSync.load();}catch(e){}
       }
 
-      if(meta.hasUnsyncedChanges&&localResolved){
-        if(remoteRaw&&Array.isArray(remoteRaw.plans)){
-          const remoteMigrated=migrate(remoteRaw);
+      if(remoteRaw&&Array.isArray(remoteRaw.plans)){
+        const remoteMigrated=migrate(remoteRaw);
+        const remoteFP=fingerprint(remoteMigrated);
+        if(localResolved){
           const localFP=fingerprint(localResolved);
-          const remoteFP=fingerprint(remoteMigrated);
           if(localFP===remoteFP){
+            resolved=localResolved;
             lastCloudSnapshotRef.current=remoteFP;
             meta.hasUnsyncedChanges=false;
             meta.lastCloudSnapshot=remoteFP;
@@ -1208,27 +1209,29 @@ function App(){
             const merged=tryAutoMergeAll(localResolved,remoteMigrated);
             if(merged){
               resolved=merged;
+              const mergedFP=fingerprint(merged);
               lastCloudSnapshotRef.current=remoteFP;
-              meta.hasUnsyncedChanges=true;
+              // still dirty unless the merge landed exactly on remote's content
+              meta.hasUnsyncedChanges=mergedFP!==remoteFP;
               meta.lastCloudSnapshot=remoteFP;
               meta.lastCloudPulledAt=new Date().toISOString();
               saveSyncMeta(meta);
             }else if(!cancelled){
+              resolved=localResolved;
               setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
             }
           }
+        }else{
+          // genuinely no local copy on this device yet — remote is authoritative
+          resolved=remoteMigrated;
+          lastCloudSnapshotRef.current=remoteFP;
+          meta.hasUnsyncedChanges=false;
+          meta.lastCloudSnapshot=remoteFP;
+          meta.lastCloudPulledAt=new Date().toISOString();
+          saveSyncMeta(meta);
         }
-        // remote fetch failed or unconfigured → keep local, stay dirty, don't touch meta
-      }else if(remoteRaw&&Array.isArray(remoteRaw.plans)){
-        const remoteMigrated=migrate(remoteRaw);
-        resolved=remoteMigrated;
-        const fp=fingerprint(remoteMigrated);
-        lastCloudSnapshotRef.current=fp;
-        meta.hasUnsyncedChanges=false;
-        meta.lastCloudSnapshot=fp;
-        meta.lastCloudPulledAt=new Date().toISOString();
-        saveSyncMeta(meta);
       }
+      // remote fetch failed or unconfigured → keep local as-is, don't touch meta
 
       if(cancelled)return;
 
@@ -1286,9 +1289,11 @@ function App(){
     return()=>clearTimeout(t);
   },[data,loaded]);
 
-  /* ── manual Save to Cloud — the ONLY place that calls KVSync.save() ──── */
+  /* ── Save to Cloud — the ONLY place that calls KVSync.save() (aside from
+     the best-effort keepalive flush below, which talks to the same worker
+     endpoint directly). `reason` is just for the status message. ──────── */
   const savingRef=useRef(false);
-  const saveToCloud=async(fromGesture=false)=>{
+  const saveToCloud=async(reason="manual")=>{
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(savingRef.current)return;
     savingRef.current=true;
@@ -1340,7 +1345,7 @@ function App(){
         setLastCloudSavedAt(now);
         setHasUnsyncedChanges(false);
         setChangesSinceSave(0);
-        setSyncMsg(fromGesture?"Cloud saved and synced ✓":"Cloud saved ✓");
+        setSyncMsg(reason==="gesture"?"Cloud saved and synced ✓":reason==="auto"?"Auto-synced ✓":"Cloud saved ✓");
       }
     }catch(e){
       setSyncMsg("Cloud save failed — data is safe on this device");
@@ -1351,6 +1356,93 @@ function App(){
   };
   const saveToCloudRef=useRef(saveToCloud);
   useEffect(()=>{saveToCloudRef.current=saveToCloud;});
+
+  /* ── Autosave to cloud — idle-debounced with a hard ceiling ──────────────
+     Fires 8s after the last edit, but never waits more than 45s from the
+     *first* pending edit in a burst — so a steady stream of edits still
+     syncs periodically instead of postponing forever. This keeps writes far
+     under Cloudflare KV's free-tier 1,000/day cap: a normal day of entering
+     transactions lands around a few dozen writes, not one per keystroke. */
+  const AUTOSAVE_IDLE_MS=8000,AUTOSAVE_MAX_WAIT_MS=45000;
+  const autosaveTimerRef=useRef(null);
+  const autosaveFirstPendingRef=useRef(null);
+  useEffect(()=>{
+    if(!loaded||!kvReady)return;
+    if(!hasUnsyncedChanges){
+      autosaveFirstPendingRef.current=null;
+      if(autosaveTimerRef.current){clearTimeout(autosaveTimerRef.current);autosaveTimerRef.current=null;}
+      return;
+    }
+    if(!autosaveFirstPendingRef.current)autosaveFirstPendingRef.current=Date.now();
+    const elapsed=Date.now()-autosaveFirstPendingRef.current;
+    const delay=Math.min(AUTOSAVE_IDLE_MS,Math.max(0,AUTOSAVE_MAX_WAIT_MS-elapsed));
+    if(autosaveTimerRef.current)clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current=setTimeout(()=>{
+      autosaveFirstPendingRef.current=null;
+      if(hasUnsyncedRef.current&&!savingRef.current)saveToCloudRef.current("auto");
+    },delay);
+    return()=>{if(autosaveTimerRef.current)clearTimeout(autosaveTimerRef.current);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[changesSinceSave,hasUnsyncedChanges,loaded,kvReady]);
+
+  /* ── Flush on background/close ────────────────────────────────────────
+     Two different signals, two different levels of safety:
+     • visibilitychange→hidden fires when the app is backgrounded (home
+       button, app switcher, tab switch) but the page process usually
+       keeps running for at least a moment afterward — enough time for the
+       normal saveToCloud() path, which checks for conflicts and merges
+       before overwriting the cloud (same protection the manual Save
+       button has).
+     • pagehide fires when the page is actually being torn down (closed,
+       navigated away, or the OS reclaiming it) — there may be near-zero
+       execution time left, so this uses a raw best-effort
+       fetch(...,{keepalive:true}) instead. keepalive is designed to
+       survive teardown, unlike a plain fetch or a React state update;
+       custom headers (needed for the sync token) rule out
+       navigator.sendBeacon, which only supports simple bodies.
+     The pagehide beacon does NOT check for conflicts — there's no time to
+     round-trip a check-then-merge-then-retry — so in the rare case both
+     devices close at nearly the same moment with unsynced edits, one
+     device's push could overwrite the other's on the cloud. That's a real
+     trade-off, not a guarantee. The safety net is the pull-side fix from
+     before: every pull/load merges by content (id + updatedAt) rather than
+     trusting a flag, so as long as at least one device still has its data
+     locally, the next successful sync reconciles it rather than losing it
+     for good. Browsers also cap keepalive body size (historically ~64KB),
+     which is a second reason this is a safety net on top of — not a
+     replacement for — the idle autosave above and the "N unsynced
+     changes" indicator already in the UI. */
+  const flushToCloudBeacon=()=>{
+    if(!kvReady||!hasUnsyncedRef.current)return;
+    try{
+      const payload=dataRef.current;
+      const body=JSON.stringify({data:payload,savedAt:new Date().toISOString(),lastPulledAt:KVSync.lastPulledAt});
+      fetch(`${PROXY_URL}/sync`,{method:"POST",headers:KVSync._headers(),body,keepalive:true}).catch(()=>{});
+      // optimistic local bookkeeping only — we can't await the response
+      // during teardown, so the next successful pull/save will reconcile
+      // if this silently failed or lost a race (e.g. payload over the
+      // keepalive size cap, or a conflicting write from the other device)
+      const fp=fingerprint(payload);
+      const meta=loadSyncMeta();
+      meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudSavedAt=new Date().toISOString();meta.changesSinceSave=0;
+      saveSyncMeta(meta);
+    }catch(e){}
+  };
+  useEffect(()=>{
+    if(!loaded)return;
+    const onVisibility=()=>{
+      if(document.visibilityState==="hidden"&&hasUnsyncedRef.current&&!savingRef.current){
+        saveToCloudRef.current("auto");
+      }
+    };
+    window.addEventListener("visibilitychange",onVisibility);
+    window.addEventListener("pagehide",flushToCloudBeacon);
+    return()=>{
+      window.removeEventListener("visibilitychange",onVisibility);
+      window.removeEventListener("pagehide",flushToCloudBeacon);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[loaded]);
 
   /* ── Ctrl+S / Cmd+S — save & sync to cloud without reaching for the mouse ── */
   useEffect(()=>{
@@ -1372,44 +1464,33 @@ function App(){
       const remoteRaw=await KVSync.load();
       if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
-        if(hasUnsyncedRef.current){
-          const localFP=fingerprint(dataRef.current);
-          const remoteFP=fingerprint(remoteMigrated);
-          if(localFP===remoteFP){
-            lastCloudSnapshotRef.current=remoteFP;
-            const now=new Date();
-            const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
-            setHasUnsyncedChanges(false);
-            setLastCloudPulledAt(now);
-            setSyncMsg("Already up to date ✓");
-          }else{
-            const merged=tryAutoMergeAll(dataRef.current,remoteMigrated);
-            if(merged){
-              skipSave.current=true;
-              setData(merged);
-              try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
-              lastCloudSnapshotRef.current=remoteFP;
-              const now=new Date();
-              const meta=loadSyncMeta();meta.hasUnsyncedChanges=true;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
-              setHasUnsyncedChanges(true);setLastCloudPulledAt(now);
-              setSyncMsg("Merged with cloud changes — save to sync ✓");
-            }else{
-              setSyncMsg("");
-              setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
-            }
-          }
-        }else{
-          stashPreCloudBackup(dataRef.current);
-          skipSave.current=true;
-          setData(remoteMigrated);
-          try{localStorage.setItem(STORAGE_KEY,JSON.stringify(remoteMigrated));}catch(e){}
-          const fp=fingerprint(remoteMigrated);
-          lastCloudSnapshotRef.current=fp;
+        const localFP=fingerprint(dataRef.current);
+        const remoteFP=fingerprint(remoteMigrated);
+        if(localFP===remoteFP){
+          lastCloudSnapshotRef.current=remoteFP;
           const now=new Date();
-          const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
+          const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
           setHasUnsyncedChanges(false);
           setLastCloudPulledAt(now);
-          setSyncMsg("Cloud data loaded ✓");
+          setSyncMsg("Already up to date ✓");
+        }else{
+          const merged=tryAutoMergeAll(dataRef.current,remoteMigrated);
+          if(merged){
+            const mergedFP=fingerprint(merged);
+            const stillDirty=mergedFP!==remoteFP;
+            stashPreCloudBackup(dataRef.current);
+            skipSave.current=true;
+            setData(merged);
+            try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
+            lastCloudSnapshotRef.current=remoteFP;
+            const now=new Date();
+            const meta=loadSyncMeta();meta.hasUnsyncedChanges=stillDirty;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
+            setHasUnsyncedChanges(stillDirty);setLastCloudPulledAt(now);
+            setSyncMsg(stillDirty?"Merged with cloud changes — save to sync ✓":"Cloud data loaded ✓");
+          }else{
+            setSyncMsg("");
+            setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+          }
         }
       }else{
         setSyncMsg("Nothing saved yet — will sync on next Save to Cloud");
@@ -1480,7 +1561,7 @@ function App(){
         // context-aware: pending local changes save first; otherwise this
         // is a plain safe pull. Read handlers via refs so this listener
         // (attached once, on mount) always calls the latest version.
-        if(hasUnsyncedRef.current)saveToCloudRef.current(true);
+        if(hasUnsyncedRef.current)saveToCloudRef.current("gesture");
         else pullFromCloudRef.current();
       }
       pullArmed.current=false;
@@ -1509,10 +1590,11 @@ function App(){
   const[fxTo,setFxTo]=useState("SAR");
 
   /* active plan for each owner */
-  const activePlanId=data.activePlanId||{me:data.plans?.[0]?.id,wife:null};
-  const plan=data.plans.find(p=>p.id===activePlanId[budgetOwner])||
-             data.plans.find(p=>p.owner===budgetOwner)||
-             data.plans[0];
+  const plans=(data.plans||[]).filter(p=>!p.deletedAt);
+  const activePlanId=data.activePlanId||{me:plans[0]?.id,wife:null};
+  const plan=plans.find(p=>p.id===activePlanId[budgetOwner])||
+             plans.find(p=>p.owner===budgetOwner)||
+             plans[0];
   const cur=data.currency;
 
   /* plan mutators — always operate on current budgetOwner's plan */
@@ -1540,11 +1622,13 @@ function App(){
     setPlanMenu(false);
   };
   const removePlan=id=>setData(d=>{
-    const ownerPlans=d.plans.filter(p=>p.owner===budgetOwner);
+    const ownerPlans=(d.plans||[]).filter(p=>!p.deletedAt&&p.owner===budgetOwner);
     if(ownerPlans.length<=1)return d;
-    const plans=d.plans.filter(p=>p.id!==id);
-    const fallback=plans.find(p=>p.owner===budgetOwner)?.id||plans[0]?.id;
-    return{...d,plans,activePlanId:{...activePlanId,[budgetOwner]:fallback}};
+    const remaining=(d.plans||[]).filter(p=>!p.deletedAt&&p.id!==id);
+    const fallback=remaining.find(p=>p.owner===budgetOwner)?.id||remaining[0]?.id;
+    return{...d,
+      plans:d.plans.map(p=>p.id===id?{...p,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:p),
+      activePlanId:{...activePlanId,[budgetOwner]:fallback}};
   });
   const renamePlan=(id,name)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===id?{...p,name,updatedAt:new Date().toISOString()}:p)}));
   const switchPlan=id=>setData(d=>({...d,activePlanId:{...activePlanId,[budgetOwner]:id}}));
@@ -1559,14 +1643,17 @@ function App(){
   /* ── monthly budget plans ──
      monthlyPlans: [{ month:"2026-06", planId:"p1" }]
      Maps each calendar month to a specific budget plan.
-     Falls back to activePlanId when no mapping exists. */
-  const monthlyPlans=data.monthlyPlans||[];
+     Falls back to activePlanId when no mapping exists. An unassignment is
+     itself an upsert (planId:null, deletedAt set) rather than a hard removal,
+     so it merges like any other edit instead of a stale copy on the other
+     device silently reinstating the old mapping. */
+  const monthlyPlans=(data.monthlyPlans||[]).filter(m=>!m.deletedAt&&m.planId);
 
   /* owner-aware: find the plan for a given month + owner */
   const planForMonth=(mo,owner=budgetOwner)=>{
     const mapping=monthlyPlans.find(m=>m.month===mo&&m.owner===owner);
     const pid=mapping?mapping.planId:activePlanId[owner];
-    return data.plans.find(p=>p.id===pid)||data.plans.find(p=>p.owner===owner)||data.plans[0];
+    return plans.find(p=>p.id===pid)||plans.find(p=>p.owner===owner)||plans[0];
   };
 
   const assignPlanToMonth=(mo,planId,owner=budgetOwner)=>setData(d=>({
@@ -1575,7 +1662,7 @@ function App(){
   }));
 
   const clonePlanForMonth=(mo,sourcePlanId,owner=budgetOwner,label)=>{
-    const source=data.plans.find(p=>p.id===sourcePlanId)||data.plans[0];
+    const source=plans.find(p=>p.id===sourcePlanId)||plans[0];
     const newId=uid();
     // `label` lets the caller supply a bucket-aware display name (calendar
     // month OR pay-period range); falls back to the old calendar-month-only
@@ -1612,7 +1699,7 @@ function App(){
   };
 
   const removePlanForMonth=(mo,owner=budgetOwner)=>setData(d=>({
-    ...d,monthlyPlans:(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner))
+    ...d,monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:null,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}]
   }));
 
   /* goals */
@@ -1891,15 +1978,15 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
-          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans:data.plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans:data.plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
-          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans:data.plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
+          {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
         </TabPane>
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
@@ -2427,7 +2514,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   /* which plan applies to the viewed month */
   const monthPlan=planForMonth(viewMonth,budgetOwner);
-  const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner);
+  const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner&&!m.deletedAt&&m.planId);
 
   /* move a category earlier(-1)/later(+1) in the viewed month's plan —
      the transaction log below groups by this same order */
