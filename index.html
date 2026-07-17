@@ -983,7 +983,37 @@ const PROFILE_KEY="allocation:preferredProfile";
    re-triggering the conflict modal on every save. Fingerprints used for
    dirty-checking / conflict-detection strip it out; the actual payload
    sent to the cloud still includes theme as normal. */
-const fingerprint=d=>{try{const{theme,dataUpdatedAt,...rest}=d||{};return JSON.stringify(rest);}catch(e){return "";}};
+const sortedById=arr=>Array.isArray(arr)?[...arr].sort((a,b)=>String((a&&a.id)||"").localeCompare(String((b&&b.id)||""))):arr;
+const sortedByKey=(arr,keyOf)=>Array.isArray(arr)?[...arr].sort((a,b)=>String(keyOf(a)||"").localeCompare(String(keyOf(b)||""))):arr;
+/* Two devices can hold the exact same set of records added in a different
+   order (new items get appended wherever they land locally), so a raw
+   JSON.stringify would call that "different" even when nothing actually
+   changed. This canonicalizes every collection where order isn't
+   meaningful (transactions, goals, investments, etc. — nothing in the UI
+   depends on their raw array order, everything gets re-sorted by date at
+   render time anyway) before comparing. Deliberately leaves plan-level
+   `categories`/`groups` order alone, since reordering those IS a real edit
+   a person might make on purpose. */
+const fingerprint=d=>{
+  try{
+    const{theme,dataUpdatedAt,...rest}=d||{};
+    const canon={
+      ...rest,
+      expenses:sortedById(rest.expenses),
+      goals:sortedById((rest.goals||[]).map(g=>({...g,contributions:sortedByKey(g.contributions,c=>`${c.date||""}|${c.id||""}`)}))),
+      investments:sortedById((rest.investments||[]).map(iv=>({...iv,trades:sortedByKey(iv.trades,t=>`${t.date||""}|${t.id||""}`)}))),
+      banks:sortedById(rest.banks),
+      assets:sortedById(rest.assets),
+      targets:sortedById(rest.targets),
+      plans:sortedById(rest.plans),
+      monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
+      portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
+      history:sortedByKey(rest.history,h=>h.month||""),
+      household:rest.household?{...rest.household,expenses:sortedById(rest.household.expenses)}:rest.household,
+    };
+    return JSON.stringify(canon);
+  }catch(e){return "";}
+};
 
 /* union records by id; on overlap, whichever has the newer updatedAt (or
    date, as a fallback for records that don't track updatedAt) wins outright.
@@ -999,7 +1029,12 @@ function mergeArrayById(localArr,remoteArr,tsOf=r=>r.updatedAt||r.date||""){
     if(!lx){map.set(rx.id,rx);return;}
     map.set(rx.id,tsOf(rx)>tsOf(lx)?rx:lx);
   });
-  return Array.from(map.values());
+  // sorted by id so the array order itself is deterministic — otherwise
+  // Map-insertion order (local's order, then remote-only additions tacked
+  // on) drifts a little differently every time this runs, and a plain
+  // JSON.stringify-based fingerprint would mistake that drift for a real
+  // change even when the actual record set is identical.
+  return Array.from(map.values()).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
 }
 /* Same idea, but for parent records that own a nested child array (goals→
    contributions, investments→trades). The parent's own scalar fields still
@@ -1010,8 +1045,8 @@ function mergeArrayById(localArr,remoteArr,tsOf=r=>r.updatedAt||r.date||""){
 function mergeArrayByIdWithChild(localArr,remoteArr,childKey,childTsOf){
   const lm=new Map((localArr||[]).map(x=>[x.id,x]));
   const rm=new Map((remoteArr||[]).map(x=>[x.id,x]));
-  const ids=new Set([...lm.keys(),...rm.keys()]);
-  return Array.from(ids).map(id=>{
+  const ids=Array.from(new Set([...lm.keys(),...rm.keys()])).sort((a,b)=>String(a).localeCompare(String(b)));
+  return ids.map(id=>{
     const l=lm.get(id),r=rm.get(id);
     if(l&&r){
       const winner=(r.updatedAt||"")>(l.updatedAt||"")?r:l;
@@ -1023,12 +1058,13 @@ function mergeArrayByIdWithChild(localArr,remoteArr,childKey,childTsOf){
 /* Records with no id, keyed some other way (monthlyPlans by month+owner,
    portHistory/history by month). No independent per-record timestamp, so a
    genuine same-key conflict falls back to whichever whole dataset was
-   edited more recently overall. */
+   edited more recently overall. Sorted by key for the same determinism
+   reason as mergeArrayById above. */
 function mergeKeyed(localArr,remoteArr,keyOf,preferLocal){
   const map=new Map();
   (preferLocal?(remoteArr||[]):(localArr||[])).forEach(x=>map.set(keyOf(x),x));
   (preferLocal?(localArr||[]):(remoteArr||[])).forEach(x=>map.set(keyOf(x),x));
-  return Array.from(map.values());
+  return Array.from(map.values()).sort((a,b)=>String(keyOf(a)).localeCompare(String(keyOf(b))));
 }
 
 /* Full cross-field auto-merge. Every record-bearing collection is merged by
@@ -1172,27 +1208,41 @@ function App(){
     }catch(e){}
   };
 
+  /* Never let a push happen from a session that hasn't actually confirmed
+     the current cloud state yet — this is what stops a new device (or one
+     that just timed out) from writing an empty/incomplete dataset over
+     real data that's already on the cloud. Set true once a load genuinely
+     completes (whether it found data or confirmed there's legitimately
+     none yet), moot when kvReady is false since there's nothing to protect. */
+  const cloudConfirmedRef=useRef(false);
+  const [cloudWaiting,setCloudWaiting]=useState(false);
+
   /* load — local-first startup policy:
      • No unsynced local changes  → safe to auto-pull the cloud copy, as before.
      • Unsynced local changes exist from a previous session → NEVER silently
        overwrite them. Check the cloud copy; if it's identical, mark clean;
-       if it differs, keep local data and surface the conflict modal. */
+       if it differs, merge (id + updatedAt everywhere, not just expenses).
+     • The initial cloud fetch is capped at 6s so a hung connection can't
+       freeze the app forever. A returning device (has a local copy already)
+       shows it immediately if that timeout hits, and keeps quietly retrying
+       in the background — safe, because nothing gets pushed until
+       cloudConfirmedRef flips true. A brand-new device with nothing local
+       is the one case that stays on the loading screen (with a visible
+       "still connecting" message and an explicit opt-out) rather than ever
+       showing an empty app that looks safe to start typing into. */
   useEffect(()=>{
     let cancelled=false;
-    (async()=>{
-      const meta=loadSyncMeta();
-      let localResolved=null;
-      try{
-        const raw=localStorage.getItem(STORAGE_KEY);
-        if(raw)localResolved=migrate(JSON.parse(raw));
-      }catch(e){}
+    let retryHandle=null;
 
+    const withTimeout=(p,ms)=>new Promise(res=>{
+      let settled=false;
+      const t=setTimeout(()=>{if(!settled){settled=true;res({timedOut:true,value:null});}},ms);
+      p.then(v=>{if(!settled){settled=true;clearTimeout(t);res({timedOut:false,value:v});}})
+       .catch(()=>{if(!settled){settled=true;clearTimeout(t);res({timedOut:false,value:null});}});
+    });
+
+    const reconcile=(remoteRaw,localResolved,meta)=>{
       let resolved=localResolved;
-      let remoteRaw=null;
-      if(kvReady){
-        try{remoteRaw=await KVSync.load();}catch(e){}
-      }
-
       if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
         const remoteFP=fingerprint(remoteMigrated);
@@ -1200,22 +1250,12 @@ function App(){
           const localFP=fingerprint(localResolved);
           if(localFP===remoteFP){
             resolved=localResolved;
-            lastCloudSnapshotRef.current=remoteFP;
             meta.hasUnsyncedChanges=false;
-            meta.lastCloudSnapshot=remoteFP;
-            meta.lastCloudPulledAt=new Date().toISOString();
-            saveSyncMeta(meta);
           }else{
             const merged=tryAutoMergeAll(localResolved,remoteMigrated);
             if(merged){
               resolved=merged;
-              const mergedFP=fingerprint(merged);
-              lastCloudSnapshotRef.current=remoteFP;
-              // still dirty unless the merge landed exactly on remote's content
-              meta.hasUnsyncedChanges=mergedFP!==remoteFP;
-              meta.lastCloudSnapshot=remoteFP;
-              meta.lastCloudPulledAt=new Date().toISOString();
-              saveSyncMeta(meta);
+              meta.hasUnsyncedChanges=fingerprint(merged)!==remoteFP;
             }else if(!cancelled){
               resolved=localResolved;
               setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
@@ -1224,42 +1264,122 @@ function App(){
         }else{
           // genuinely no local copy on this device yet — remote is authoritative
           resolved=remoteMigrated;
-          lastCloudSnapshotRef.current=remoteFP;
           meta.hasUnsyncedChanges=false;
-          meta.lastCloudSnapshot=remoteFP;
-          meta.lastCloudPulledAt=new Date().toISOString();
-          saveSyncMeta(meta);
         }
+        lastCloudSnapshotRef.current=remoteFP;
+        meta.lastCloudSnapshot=remoteFP;
+        meta.lastCloudPulledAt=new Date().toISOString();
       }
-      // remote fetch failed or unconfigured → keep local as-is, don't touch meta
+      return resolved;
+    };
 
+    const finish=(resolved,meta)=>{
       if(cancelled)return;
-
       if(!lastCloudSnapshotRef.current&&meta.lastCloudSnapshot){
         lastCloudSnapshotRef.current=meta.lastCloudSnapshot;
       }
-
       if(resolved){
-        // skip the very next autosave so loading data doesn't immediately
-        // re-trigger a dirty-marking round-trip
         skipSave.current=true;
         setData(resolved);
         try{localStorage.setItem(STORAGE_KEY,JSON.stringify(resolved));}catch(e){}
       }
-
+      saveSyncMeta(meta);
       setHasUnsyncedChanges(!!meta.hasUnsyncedChanges);
       setChangesSinceSave(meta.changesSinceSave||0);
       if(meta.lastCloudSavedAt)setLastCloudSavedAt(new Date(meta.lastCloudSavedAt));
       if(meta.lastCloudPulledAt)setLastCloudPulledAt(new Date(meta.lastCloudPulledAt));
+    };
 
-      applyTheme(theme);
-      applySegTheme(theme);
-      setThemeTick(t=>t+1);
+    const revealApp=()=>{
+      setCloudWaiting(false);
+      applyTheme(theme);applySegTheme(theme);setThemeTick(t=>t+1);
       setLoaded(true);
       if(typeof window.__hideLoading==="function")window.__hideLoading();
+    };
+
+    // quiet background retry — used both for a returning device that timed
+    // out (nothing shown, just keeps trying) and a new device that's stuck
+    // on the "still connecting" screen (its success reveals the app).
+    const backgroundRetry=(localResolved,attempt=1)=>{
+      if(cancelled||!kvReady)return;
+      const delay=Math.min(30000,5000*attempt);
+      retryHandle=setTimeout(async()=>{
+        if(cancelled)return;
+        let remoteRaw=null;
+        try{remoteRaw=await KVSync.load();}catch(e){}
+        if(cancelled)return;
+        if(remoteRaw!==null||KVSync.lastPulledAt){
+          // got an actual answer (data, or a confirmed-empty account)
+          cloudConfirmedRef.current=true;
+          const meta=loadSyncMeta();
+          const resolved=reconcile(remoteRaw,dataRef.current||localResolved,meta);
+          finish(resolved,meta);
+          revealApp();
+        }else{
+          backgroundRetry(localResolved,attempt+1);
+        }
+      },delay);
+    };
+
+    (async()=>{
+      const meta=loadSyncMeta();
+      let localResolved=null;
+      try{
+        const raw=localStorage.getItem(STORAGE_KEY);
+        if(raw)localResolved=migrate(JSON.parse(raw));
+      }catch(e){}
+
+      if(!kvReady){
+        cloudConfirmedRef.current=true; // nothing to protect — sync isn't configured
+        finish(localResolved,meta);
+        revealApp();
+        return;
+      }
+
+      const{timedOut,value:remoteRaw}=await withTimeout(KVSync.load(),6000);
+
+      if(cancelled)return;
+
+      if(!timedOut){
+        // request genuinely completed — whether it found data or confirmed
+        // the account is legitimately empty, either way we now know the
+        // real cloud state, so it's safe to proceed and to allow pushes.
+        cloudConfirmedRef.current=true;
+        const resolved=reconcile(remoteRaw,localResolved,meta);
+        finish(resolved,meta);
+        revealApp();
+        return;
+      }
+
+      // timed out — never got an answer either way
+      if(localResolved){
+        // returning device: show what it already has, keep confirming quietly
+        finish(localResolved,meta);
+        revealApp();
+      }else{
+        // brand-new device with nothing local: stay on the loading screen
+        // and say so, rather than opening on an empty app that looks safe
+        // to start typing into
+        setCloudWaiting(true);
+      }
+      backgroundRetry(localResolved,1);
     })();
-    return()=>{cancelled=true;};
+
+    return()=>{cancelled=true;if(retryHandle)clearTimeout(retryHandle);};
   },[]);
+
+  /* explicit opt-out from the "still connecting" screen — proceeds with an
+     empty local dataset, but does NOT mark the cloud confirmed, so no save
+     can go out until a background retry actually succeeds and reconciles
+     whatever gets entered in the meantime */
+  const continueOffline=()=>{
+    setCloudWaiting(false);
+    skipSave.current=true;
+    setData(migrate(defaultData()));
+    applyTheme(theme);applySegTheme(theme);setThemeTick(t=>t+1);
+    setLoaded(true);
+    if(typeof window.__hideLoading==="function")window.__hideLoading();
+  };
 
   const toggleTheme=()=>{
     const next=theme==="dark"?"light":"dark";
@@ -1295,6 +1415,7 @@ function App(){
   const savingRef=useRef(false);
   const saveToCloud=async(reason="manual")=>{
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
+    if(!cloudConfirmedRef.current){setSyncMsg("Still connecting to the cloud — try again in a moment");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(savingRef.current)return;
     savingRef.current=true;
     setSyncOp("push");
@@ -1413,7 +1534,7 @@ function App(){
      replacement for — the idle autosave above and the "N unsynced
      changes" indicator already in the UI. */
   const flushToCloudBeacon=()=>{
-    if(!kvReady||!hasUnsyncedRef.current)return;
+    if(!kvReady||!cloudConfirmedRef.current||!hasUnsyncedRef.current)return;
     try{
       const payload=dataRef.current;
       const body=JSON.stringify({data:payload,savedAt:new Date().toISOString(),lastPulledAt:KVSync.lastPulledAt});
@@ -1887,6 +2008,20 @@ function App(){
 
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
+      {cloudWaiting&&(
+        <div style={{position:"fixed",inset:0,zIndex:1000,background:P.bg,display:"flex",
+          flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24,textAlign:"center"}}>
+          <div className="loader" style={{width:32,height:32}}/>
+          <div style={{fontSize:15,fontWeight:600,color:P.ink}}>Waiting to reach the cloud…</div>
+          <div style={{fontSize:13,color:P.neuSub,maxWidth:280,lineHeight:1.5}}>
+            This looks like a new device — we want to load your existing data first so nothing gets overwritten.
+          </div>
+          <button onClick={continueOffline} className="neu-btn"
+            style={{marginTop:8,padding:"10px 20px",fontSize:13,fontWeight:600,color:P.neuSub,borderRadius:12}}>
+            Continue offline for now
+          </button>
+        </div>
+      )}
       {/* pull-to-sync indicator */}
       <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",flexDirection:"column",
         alignItems:"center",pointerEvents:"none",
@@ -4945,7 +5080,7 @@ window.__hideLoading=function(){
   var el=document.getElementById("loading");
   if(el){el.style.opacity="0";el.style.transition="opacity 0.3s";setTimeout(function(){el.remove();},300);}
 };
-setTimeout(window.__hideLoading,8000);
+setTimeout(window.__hideLoading,30000);
 </script>
 <script>
   if ('serviceWorker' in navigator) {
