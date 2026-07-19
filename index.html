@@ -972,6 +972,9 @@ const KVSync={
    localStorage key so closing/reopening the app doesn't lose track of
    whether this device has unsaved work. ─────────────────────────────────── */
 const SYNC_META_KEY="salaryPlanner:v3:syncMeta";
+const LAST_SYNCED_DATA_KEY="salaryPlanner:v3:lastSyncedData";
+const cacheSyncedSnapshot=d=>{try{localStorage.setItem(LAST_SYNCED_DATA_KEY,JSON.stringify(d));}catch(e){}};
+const loadSyncedSnapshot=()=>{try{const raw=localStorage.getItem(LAST_SYNCED_DATA_KEY);if(raw)return JSON.parse(raw);}catch(e){}return null;};
 const PRE_CLOUD_BACKUP_KEY="salaryPlanner:v3:preCloudRestore";
 const PROFILE_KEY="allocation:preferredProfile";
 
@@ -1101,6 +1104,47 @@ function tryAutoMergeAll(local,remote){
   }catch(e){return null;}
 }
 
+/* Reports what's different between local and remote for one id-keyed
+   collection, without merging anything — used purely to show the person
+   what a given conflict-modal choice would win/lose. Tombstoned records
+   (deletedAt set) are left out of "only on X" so a delete on one side
+   doesn't show up looking like a brand-new item on the other. */
+function diffCollection(localArr,remoteArr){
+  const lm=new Map((localArr||[]).map(x=>[x.id,x]));
+  const rm=new Map((remoteArr||[]).map(x=>[x.id,x]));
+  const onlyLocal=[],onlyRemote=[],changed=[];
+  lm.forEach((lx,id)=>{if(!rm.has(id)&&!lx.deletedAt)onlyLocal.push(lx);});
+  rm.forEach((rx,id)=>{
+    if(!lm.has(id)){if(!rx.deletedAt)onlyRemote.push(rx);return;}
+    const lx=lm.get(id);
+    if(!lx.deletedAt&&!rx.deletedAt&&JSON.stringify(lx)!==JSON.stringify(rx))changed.push({local:lx,remote:rx});
+  });
+  return{onlyLocal,onlyRemote,changed};
+}
+/* Collections worth summarizing in the conflict modal, with a short label
+   function for each record so the person can recognize it at a glance. */
+const CONFLICT_COLLECTIONS=[
+  {key:"expenses",label:"Transactions",nameOf:e=>`${e.name||"Transaction"}${e.amount!=null?` — ${Number(e.amount).toLocaleString()}`:""}${e.date?` (${e.date})`:""}`},
+  {key:"goals",label:"Goals",nameOf:g=>g.name||"Goal"},
+  {key:"investments",label:"Investments",nameOf:i=>i.ticker||i.name||"Investment"},
+  {key:"banks",label:"Bank accounts",nameOf:b=>`${b.name||"Account"}${b.bank?` — ${b.bank}`:""}`},
+  {key:"assets",label:"Assets & liabilities",nameOf:a=>a.name||"Asset"},
+  {key:"targets",label:"Targets",nameOf:t=>t.name||"Target"},
+  {key:"plans",label:"Plans",nameOf:p=>`${p.name||"Plan"}${p.month?` (${p.month})`:""}`},
+];
+function buildConflictDiff(local,remote){
+  return CONFLICT_COLLECTIONS.map(({key,label,nameOf})=>{
+    const{onlyLocal,onlyRemote,changed}=diffCollection((local||{})[key],(remote||{})[key]);
+    return{key,label,
+      onlyLocal:onlyLocal.map(nameOf),
+      onlyRemote:onlyRemote.map(nameOf),
+      changed:changed.map(c=>{
+        const l=nameOf(c.local),r=nameOf(c.remote);
+        return l===r?`${l} (other details differ)`:`${l}  →  ${r}`;
+      })};
+  }).filter(c=>c.onlyLocal.length||c.onlyRemote.length||c.changed.length);
+}
+
 const loadSyncMeta=()=>{
   try{
     const raw=localStorage.getItem(SYNC_META_KEY);
@@ -1132,6 +1176,7 @@ function App(){
   const[tab,setTab]=useState("budget");
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
+  const[showPendingDiff,setShowPendingDiff]=useState(false);
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
   const[syncMsg,setSyncMsg]=useState("");
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
@@ -1152,6 +1197,66 @@ function App(){
   const lastCloudSnapshotRef=useRef(null);
   const dataRef=useRef(data);
   useEffect(()=>{dataRef.current=data;},[data]);
+
+  /* ── undo / recently-deleted ───────────────────────────────────────────
+     Every delete in this app already sets `deletedAt` on the record instead
+     of removing it (needed for tombstone merging across devices) — so undo
+     just means clearing that flag again, and "recently deleted" just means
+     showing what's still sitting there. restoreRecord handles both the
+     6-second toast and the full recovery list with one function. */
+  const restoreRecord=(collection,id,childKey,childId)=>{
+    setData(d=>{
+      const arr=d[collection]||[];
+      if(childKey&&childId){
+        return{...d,[collection]:arr.map(p=>p.id===id?{...p,[childKey]:(p[childKey]||[]).map(c=>c.id===childId?{...c,deletedAt:null}:c),updatedAt:new Date().toISOString()}:p)};
+      }
+      return{...d,[collection]:arr.map(x=>x.id===id?{...x,deletedAt:null,updatedAt:new Date().toISOString()}:x)};
+    });
+  };
+  const undoTimerRef=useRef(null);
+  const[undoAction,setUndoAction]=useState(null); // {label,collection,id,childKey?,childId?} | null
+  const triggerUndo=(label,restoreArgs)=>{
+    if(undoTimerRef.current)clearTimeout(undoTimerRef.current);
+    setUndoAction({label,...restoreArgs});
+    undoTimerRef.current=setTimeout(()=>setUndoAction(null),6000);
+  };
+  const performUndo=()=>{
+    if(!undoAction)return;
+    restoreRecord(undoAction.collection,undoAction.id,undoAction.childKey,undoAction.childId);
+    if(undoTimerRef.current)clearTimeout(undoTimerRef.current);
+    setUndoAction(null);
+  };
+  const[showRecentlyDeleted,setShowRecentlyDeleted]=useState(false);
+
+  /* Hard-drops tombstones older than the retention window so deleted data
+     doesn't accumulate forever. Only ever run once local is confirmed clean
+     (hasUnsyncedChanges===false) so it isn't racing an in-flight edit, and
+     it goes through the normal setData path (not skipSave) so the purge
+     itself gets pushed to the cloud on the next sync like any other edit. */
+  const TOMBSTONE_RETENTION_DAYS=90;
+  const purgeOldTombstones=(d,days=TOMBSTONE_RETENTION_DAYS)=>{
+    const cutoff=Date.now()-days*86400000;
+    const fresh=x=>!(x.deletedAt&&new Date(x.deletedAt).getTime()<cutoff);
+    const stripChild=(arr,childKey)=>(arr||[]).map(p=>p[childKey]?{...p,[childKey]:p[childKey].filter(fresh)}:p);
+    return{...d,
+      expenses:(d.expenses||[]).filter(fresh),
+      goals:stripChild((d.goals||[]).filter(fresh),"contributions"),
+      investments:stripChild((d.investments||[]).filter(fresh),"trades"),
+      banks:(d.banks||[]).filter(fresh),
+      assets:(d.assets||[]).filter(fresh),
+      targets:(d.targets||[]).filter(fresh),
+      plans:(d.plans||[]).filter(fresh),
+    };
+  };
+  const purgedThisSessionRef=useRef(false);
+  useEffect(()=>{
+    if(!loaded||purgedThisSessionRef.current||hasUnsyncedChanges)return;
+    purgedThisSessionRef.current=true;
+    const purged=purgeOldTombstones(dataRef.current);
+    if(fingerprint(purged)!==fingerprint(dataRef.current))setData(purged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[loaded,hasUnsyncedChanges]);
+
   const hasUnsyncedRef=useRef(false);
   useEffect(()=>{hasUnsyncedRef.current=hasUnsyncedChanges;},[hasUnsyncedChanges]);
 
@@ -1270,6 +1375,7 @@ function App(){
         lastCloudSnapshotRef.current=remoteFP;
         meta.lastCloudSnapshot=remoteFP;
         meta.lastCloudPulledAt=new Date().toISOString();
+        cacheSyncedSnapshot(remoteMigrated);
       }
       return resolved;
     };
@@ -1438,6 +1544,7 @@ function App(){
               try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
               const fp=fingerprint(merged);
               lastCloudSnapshotRef.current=fp;
+              cacheSyncedSnapshot(merged);
               const now=new Date();
               const meta=loadSyncMeta();
               meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudSavedAt=now.toISOString();meta.changesSinceSave=0;
@@ -1459,6 +1566,7 @@ function App(){
       }else{
         const fp=fingerprint(payload);
         lastCloudSnapshotRef.current=fp;
+        cacheSyncedSnapshot(payload);
         const now=new Date();
         const meta=loadSyncMeta();
         meta.hasUnsyncedChanges=false;
@@ -1550,6 +1658,7 @@ function App(){
       const meta=loadSyncMeta();
       meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudSavedAt=new Date().toISOString();meta.changesSinceSave=0;
       saveSyncMeta(meta);
+      cacheSyncedSnapshot(payload);
     }catch(e){}
   };
   useEffect(()=>{
@@ -1592,6 +1701,7 @@ function App(){
         const remoteFP=fingerprint(remoteMigrated);
         if(localFP===remoteFP){
           lastCloudSnapshotRef.current=remoteFP;
+          cacheSyncedSnapshot(remoteMigrated);
           const now=new Date();
           const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
           setHasUnsyncedChanges(false);
@@ -1607,6 +1717,7 @@ function App(){
             setData(merged);
             try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
             lastCloudSnapshotRef.current=remoteFP;
+            cacheSyncedSnapshot(remoteMigrated);
             const now=new Date();
             const meta=loadSyncMeta();meta.hasUnsyncedChanges=stillDirty;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
             setHasUnsyncedChanges(stillDirty);setLastCloudPulledAt(now);
@@ -1639,6 +1750,7 @@ function App(){
     try{localStorage.setItem(STORAGE_KEY,JSON.stringify(remoteMigrated));}catch(e){}
     const fp=fingerprint(remoteMigrated);
     lastCloudSnapshotRef.current=fp;
+    cacheSyncedSnapshot(remoteMigrated);
     const now=new Date();
     const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudPulledAt=now.toISOString();meta.changesSinceSave=0;saveSyncMeta(meta);
     setHasUnsyncedChanges(false);
@@ -1830,20 +1942,34 @@ function App(){
   const goals=(data.goals||[]).filter(g=>!g.deletedAt);
   const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length],updatedAt:new Date().toISOString()}]}));
   const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch,updatedAt:new Date().toISOString()}:g)}));
-  const removeGoal=id=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:g)}));
+  const removeGoal=id=>{
+    const g=(data.goals||[]).find(x=>x.id===id);
+    setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:g)}));
+    if(g)triggerUndo(`Deleted goal "${g.name||"Goal"}"`,{collection:"goals",id});
+  };
   const addContribution=(goalId,amount,note="")=>{
     const contrib={id:uid(),date:new Date().toISOString().slice(0,10),amount:Number(amount),note};
     setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib],updatedAt:new Date().toISOString()}:g)}));
   };
-  const removeContribution=(goalId,cid)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:g)}));
+  const removeContribution=(goalId,cid)=>{
+    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:g)}));
+    triggerUndo("Deleted contribution",{collection:"goals",id:goalId,childKey:"contributions",childId:cid});
+  };
 
   /* investments */
   const invs=(data.investments||[]).filter(x=>!x.deletedAt);
   const addInv=()=>setData(d=>({...d,investments:[...(d.investments||[]),{id:uid(),ticker:"",name:"",broker:"",trades:[],updatedAt:new Date().toISOString()}]}));
   const updateInv=(id,patch)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,...patch,updatedAt:new Date().toISOString()}:x)}));
-  const removeInv=id=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:x)}));
+  const removeInv=id=>{
+    const inv=(data.investments||[]).find(x=>x.id===id);
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:x)}));
+    if(inv)triggerUndo(`Deleted "${inv.ticker||inv.name||"investment"}"`,{collection:"investments",id});
+  };
   const addTrade=(invId,trade)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}],updatedAt:new Date().toISOString()}:x)}));
-  const removeTrade=(invId,tid)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:new Date().toISOString()}:t),updatedAt:new Date().toISOString()}:x)}));
+  const removeTrade=(invId,tid)=>{
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:new Date().toISOString()}:t),updatedAt:new Date().toISOString()}:x)}));
+    triggerUndo("Deleted trade",{collection:"investments",id:invId,childKey:"trades",childId:tid});
+  };
   const setProjection=patch=>setData(d=>({...d,projection:{...(d.projection||{monthly:1500,years:20,rate:8}),...patch}}));
 
   /* runway/capital targets — trend-based forecasting toward a custom goal.
@@ -1858,7 +1984,11 @@ function App(){
     updatedAt:new Date().toISOString(),
   }]}));
   const updateTarget=(id,patch)=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,...patch,updatedAt:new Date().toISOString()}:t)}));
-  const removeTarget=id=>setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:t)}));
+  const removeTarget=id=>{
+    const t=(data.targets||[]).find(x=>x.id===id);
+    setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:t)}));
+    if(t)triggerUndo(`Deleted target "${t.name||"Target"}"`,{collection:"targets",id});
+  };
   const livePrice=data.livePrice||{};
   const setLivePrice=prices=>setData(d=>({...d,livePrice:{...(d.livePrice||{}),...prices}}));
 
@@ -1884,7 +2014,11 @@ function App(){
   const expenses=(data.expenses||[]).filter(e=>!e.deletedAt);
   const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,updatedAt:new Date().toISOString()}]}));
   const updateExpenseTx=(id,patch)=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount,updatedAt:new Date().toISOString()}:e)}));
-  const removeExpenseTx=id=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}));
+  const removeExpenseTx=id=>{
+    const e=(data.expenses||[]).find(x=>x.id===id);
+    setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}));
+    if(e)triggerUndo(`Deleted "${e.name||"transaction"}"`,{collection:"expenses",id});
+  };
 
   /* quick-transfer: logs a transaction against an untracked category (e.g. Savings)
      and remembers the actual amount transferred, since it doesn't always match
@@ -1924,7 +2058,11 @@ function App(){
   const banks=(data.banks||[]).filter(b=>!b.deletedAt);
   const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0,updatedAt:new Date().toISOString()}]}));
   const updateBank=(id,patch)=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,...patch,updatedAt:new Date().toISOString()}:b)}));
-  const removeBank=id=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:b)}));
+  const removeBank=id=>{
+    const b=(data.banks||[]).find(x=>x.id===id);
+    setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:b)}));
+    if(b)triggerUndo(`Deleted "${b.name||"account"}"`,{collection:"banks",id});
+  };
 
   /* assets */
   const assets=(data.assets||[]).filter(a=>!a.deletedAt);
@@ -1934,7 +2072,11 @@ function App(){
       :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",value:0,updatedAt:new Date().toISOString()}
   ]}));
   const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch,updatedAt:new Date().toISOString()}:a)}));
-  const removeAsset=id=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:a)}));
+  const removeAsset=id=>{
+    const a=(data.assets||[]).find(x=>x.id===id);
+    setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:a)}));
+    if(a)triggerUndo(`Deleted "${a.name||"item"}"`,{collection:"assets",id});
+  };
 
   /* net worth */
   const sarOf=(amt,ccy)=>{const v=convert(amt,ccy,"SAR");return v==null?0:v;};
@@ -2086,6 +2228,12 @@ function App(){
                 {hasUnsyncedChanges&&kvReady&&syncOp!=="push"&&
                   <span style={{position:"absolute",top:-2,right:-2,width:7,height:7,borderRadius:999,background:P.red,border:`1px solid ${P.bg}`}}/>}
               </button>
+              {hasUnsyncedChanges&&kvReady&&
+                <button onClick={()=>setShowPendingDiff(true)} title="View what's pending"
+                  style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
+                    color:P.sub,background:"transparent",border:`1px solid ${P.line}`}}>
+                  <I.Receipt size={14}/>
+                </button>}
               <button onClick={()=>setShowSettings(true)} style={{borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
                 <I.Settings size={18}/>
               </button>
@@ -2128,7 +2276,7 @@ function App(){
 
         <TabPane tab={tab}>
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
@@ -2140,8 +2288,24 @@ function App(){
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
-        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod}}/>}
+        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,
+        onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true)}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
+      {showPendingDiff&&<PendingChangesModal data={data} onClose={()=>setShowPendingDiff(false)}
+        onSaveToCloud={()=>{setShowPendingDiff(false);saveToCloud();}}/>}
+      {showRecentlyDeleted&&<RecentlyDeletedModal data={data} restoreRecord={restoreRecord}
+        retentionDays={TOMBSTONE_RETENTION_DAYS} onClose={()=>setShowRecentlyDeleted(false)}/>}
+      {undoAction&&
+        <div style={{position:"fixed",left:16,right:16,maxWidth:420,margin:"0 auto",
+          bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:80,
+          display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,
+          background:"#15243B",color:"#fff",borderRadius:12,padding:"12px 14px",
+          boxShadow:"0 8px 24px rgba(12,22,40,.32)"}}>
+          <span style={{fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{undoAction.label}</span>
+          <button onClick={performUndo} style={{flexShrink:0,background:"transparent",border:"none",color:"#3FBF9E",fontWeight:700,fontSize:13,letterSpacing:.3}}>
+            UNDO
+          </button>
+        </div>}
       {showProfilePicker&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
       {tab!=="expenses"&&
@@ -2626,7 +2790,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger}){
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -2802,7 +2966,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   // Global FAB (in App) bumps globalAddTrigger to ask us to open the add-transaction
   // modal from wherever the user was. Trigger starts at 0 (falsy), so the initial
   // mount is a no-op — only real bumps (1,2,3...) fire this.
-  useEffect(()=>{if(globalAddTrigger)openAdd();},[globalAddTrigger]);
+  useEffect(()=>{if(globalAddTrigger){openAdd();setGlobalAddTrigger&&setGlobalAddTrigger(0);}},[globalAddTrigger]);
   const openEdit=(tx)=>{
     setEditTx(tx.id);
     setAddMode("tracked"); // edits always go through the tracked flow — transfers/goal contributions aren't editable here
@@ -2853,49 +3017,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     byMonth[mo].push(tx);
   });
   const allMonths=Object.keys(byMonth).sort((a,b)=>b.localeCompare(a));
-
-  /* transaction log grouped by category name — names (not raw catId) are the
-     grouping key because each month/pay-period can carry its own cloned plan
-     with brand-new category ids, so the same conceptual category ("Groceries")
-     may have a different id per bucket. Falls back to a "Goals" pseudo-group
-     for goal-contribution transfers (logged with the goal's id as catId), and
-     finally to the transaction's own title for entries whose category can no
-     longer be found (e.g. a category that was later deleted from that
-     bucket's plan). */
   const GOALS_GROUP_COLOR=P.gr;
-  const byCategory={};
-  allFiltered.forEach(tx=>{
-    if(!tx.date)return;
-    const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
-    const moPlan=planForMonth(mo);
-    const cat=(moPlan.categories||[]).find(c=>c.id===tx.catId);
-    let name,color;
-    if(cat){name=cat.name;color=cat.color;}
-    else if((goals||[]).some(g=>g.id===tx.catId)){name="Goals";color=GOALS_GROUP_COLOR;}
-    else{name="Uncategorized";color=P.faint;}
-    if(!byCategory[name])byCategory[name]={name,color,txs:[],total:0};
-    byCategory[name].txs.push(tx);
-    byCategory[name].total+=tx.amount;
-  });
-  /* order the log's category sections to match the viewed month's plan
-     order (as controlled by "Reorder categories" below); groups that don't
-     correspond to a live plan category (Goals, Uncategorized) sort after,
-     by total spent */
-  const catOrderIndex=useMemo(()=>{
-    const idx={};
-    (monthPlan.categories||[]).forEach((c,i)=>{idx[c.name]=i;});
-    return idx;
-  },[monthPlan]);
-  const categoryGroups=Object.values(byCategory).sort((a,b)=>{
-    const ai=catOrderIndex[a.name],bi=catOrderIndex[b.name];
-    if(ai!=null&&bi!=null)return ai-bi;
-    if(ai!=null)return -1;
-    if(bi!=null)return 1;
-    return b.total-a.total;
-  });
 
-  /* shared row renderer — used by both the month-grouped and
-     category-grouped transaction log so the two stay visually identical */
+  /* shared row renderer — used by both the full month-grouped log below and
+     the per-envelope expand list, so the two stay visually identical */
   const renderTxRow=(tx,idx,total)=>{
     const mo=bucketKeyFor(tx.date,payPeriods,budgetOwner);
     const moPlan=planForMonth(mo);
@@ -3122,8 +3247,9 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             const pacing=paceHot(spent,effBudget,expectedRatio);
             const color=pacing?P.amber:statusColor(spent,effBudget);
             const bg=pacing?P.amberS:statusBg(spent,effBudget);
-            const catGroup=categoryGroups.find(g=>g.name===env.name);
-            const envTxs=catGroup?[...catGroup.txs].sort((a,b)=>b.date.localeCompare(a.date)):[];
+            const catTxs=viewMonthExpenses.filter(e=>e.catId===env.id);
+            const envTxs=[...catTxs].sort((a,b)=>b.date.localeCompare(a.date));
+            const envTxsTotal=catTxs.reduce((s,t)=>s+t.amount,0);
             const envOpen=!!expandedEnvelopes[env.id];
             return(
               <div key={env.id} style={{...neu(14),padding:"12px 16px"}}>
@@ -3193,7 +3319,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                   <div style={{marginTop:10,paddingTop:8,borderTop:`1px solid rgba(0,0,0,.06)`}}>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:P.neuSub,marginBottom:4}}>
                       <span>{envTxs.length} transaction{envTxs.length===1?"":"s"}</span>
-                      {envTxs.length>0&&<span className="tnum" style={{fontWeight:600}}>{fmt(catGroup.total)}</span>}
+                      {envTxs.length>0&&<span className="tnum" style={{fontWeight:600}}>{fmt(envTxsTotal)}</span>}
                     </div>
                     {envTxs.length===0
                       ?<div style={{fontSize:12,color:P.neuSub,padding:"8px 0"}}>No transactions logged for {env.name} yet.</div>
@@ -4898,17 +5024,63 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
 /* ── Conflict resolution — shown when local and cloud data disagree and this
    device has unsynced changes. Blocking modal by design: the person must
    pick a side rather than risk either copy being silently lost. ── */
+/* Shared renderer for a buildConflictDiff() result — used by both
+   ConflictModal (local-vs-cloud) and PendingChangesModal (local-vs-last-
+   synced-snapshot). `buckets` maps which diff field goes under which
+   title/color for this context. */
+const diffRowStyle={fontSize:12,color:P.sub,padding:"2px 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"};
+function DiffBucket({title,items,color,bg}){
+  if(!items.length)return null;
+  return(
+    <div style={{marginBottom:8}}>
+      <div style={{fontSize:11,fontWeight:700,color,background:bg,display:"inline-block",padding:"2px 7px",borderRadius:6,marginBottom:4}}>
+        {title} ({items.length})
+      </div>
+      {items.slice(0,5).map((t,i)=><div key={i} style={diffRowStyle}>• {t}</div>)}
+      {items.length>5&&<div style={diffRowStyle}>+{items.length-5} more</div>}
+    </div>
+  );
+}
+function DiffCollectionsList({diff,buckets}){
+  return diff.map(c=>(
+    <div key={c.key} style={{marginBottom:6}}>
+      <div style={{fontSize:12,fontWeight:600,color:P.ink,marginBottom:2}}>{c.label}</div>
+      {buckets.map(b=><DiffBucket key={b.field} title={b.title} items={c[b.field]} color={b.color} bg={b.bg}/>)}
+    </div>
+  ));
+}
+
 function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
   useScrollLock(true); // only ever mounted while open
   const remoteWhen=conflict.remoteSavedAt?new Date(conflict.remoteSavedAt).toLocaleString():"an unknown time";
   const choiceBtn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",display:"block"};
+  const diff=useMemo(()=>buildConflictDiff(conflict.local,conflict.remote),[conflict]);
+  const totalOnlyLocal=diff.reduce((s,c)=>s+c.onlyLocal.length,0);
+  const totalOnlyRemote=diff.reduce((s,c)=>s+c.onlyRemote.length,0);
+  const totalChanged=diff.reduce((s,c)=>s+c.changed.length,0);
+  const buckets=[
+    {field:"onlyLocal",title:"Only on this device",color:P.gr,bg:P.grS},
+    {field:"onlyRemote",title:"Only on cloud",color:P.br,bg:P.brS},
+    {field:"changed",title:"Changed on both",color:P.amber,bg:P.amberS},
+  ];
   return(
     <div className="sheet-bg">
-      <div className="sheet" style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
+      <div className="sheet" style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600}}>Cloud and local data differ</h3>
-        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:14}}>
+        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:10}}>
           This device has changes that haven't been saved to the cloud, and the cloud copy — last saved {remoteWhen} — is different. Choose which one to keep.
         </p>
+        {diff.length>0?(
+          <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:P.faint,textTransform:"uppercase",letterSpacing:.4,marginBottom:6}}>What's different</div>
+            <DiffCollectionsList diff={diff} buckets={buckets}/>
+            <div style={{fontSize:11,color:P.faint,marginTop:4}}>
+              "Use Cloud" would drop the {totalOnlyLocal} item{totalOnlyLocal===1?"":"s"} only on this device. "Save Local to Cloud" would drop the {totalOnlyRemote} item{totalOnlyRemote===1?"":"s"} only on cloud{totalChanged?`, and pick this device's version for the ${totalChanged} changed item${totalChanged===1?"":"s"}`:""}.
+            </div>
+          </div>
+        ):(
+          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No record-level differences found — this is likely just a settings/timestamp mismatch.</p>
+        )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onKeepLocal} style={choiceBtn}>
             Keep Local<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Stay on this device's data. Cloud is left as-is.</div>
@@ -4920,6 +5092,92 @@ function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
             Save Local to Cloud<div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Overwrite the cloud copy with this device's data.</div>
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Pending-changes viewer — diffs the current local data against the last
+   full snapshot known to be in sync with the cloud (cached locally, so this
+   works offline / without a round-trip). Answers "what exactly is the N in
+   the Save to Cloud badge?" before the person commits to syncing. ── */
+function PendingChangesModal({data,onClose,onSaveToCloud}){
+  useScrollLock(true); // only ever mounted while open
+  const snapshot=useMemo(()=>loadSyncedSnapshot(),[]);
+  const diff=useMemo(()=>snapshot?buildConflictDiff(data,snapshot):[],[data,snapshot]);
+  const buckets=[
+    {field:"onlyLocal",title:"Added since last sync",color:P.gr,bg:P.grS},
+    {field:"onlyRemote",title:"Removed since last sync",color:P.wine,bg:P.wineS},
+    {field:"changed",title:"Edited since last sync",color:P.amber,bg:P.amberS},
+  ];
+  const btn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
+  return(
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <h3 style={{margin:"0 0 8px",fontWeight:600}}>What's pending</h3>
+        {!snapshot?(
+          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No cached copy of the last synced state yet on this device — this'll be available after the next successful sync.</p>
+        ):diff.length>0?(
+          <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+            <DiffCollectionsList diff={diff} buckets={buckets}/>
+          </div>
+        ):(
+          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No record-level changes found since the last sync — the pending flag is likely just a settings or timestamp difference.</p>
+        )}
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={onSaveToCloud} style={{...btn,border:"none",background:P.gr,color:"#fff"}}>
+            <I.Cloud size={14}/>Save to Cloud
+          </button>
+          <button onClick={onClose} style={btn}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Recently Deleted — everything that's been soft-deleted (deletedAt set)
+   but not yet purged, grouped by type, with one-tap restore. Only surfaces
+   top-level records (transactions, goals, investments, etc.) — nested items
+   like a single contribution or trade are covered by the undo toast at the
+   moment you delete them instead of showing up here individually. ── */
+function RecentlyDeletedModal({data,restoreRecord,retentionDays,onClose}){
+  useScrollLock(true); // only ever mounted while open
+  const groups=useMemo(()=>CONFLICT_COLLECTIONS.map(({key,label,nameOf})=>({
+    key,label,
+    items:((data||{})[key]||[]).filter(x=>x.deletedAt).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt)).map(x=>({id:x.id,label:nameOf(x),deletedAt:x.deletedAt})),
+  })).filter(g=>g.items.length),[data]);
+  const btn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink};
+  return(
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <h3 style={{margin:"0 0 4px",fontWeight:600}}>Recently Deleted</h3>
+        <p style={{fontSize:11,color:P.faint,marginBottom:14}}>
+          Kept for {retentionDays} days before being permanently removed.
+        </p>
+        {groups.length===0?(
+          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>Nothing here right now.</p>
+        ):(
+          <div style={{marginBottom:14}}>
+            {groups.map(g=>(
+              <div key={g.key} style={{marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:700,color:P.faint,textTransform:"uppercase",letterSpacing:.4,marginBottom:6}}>{g.label}</div>
+                {g.items.map(it=>(
+                  <div key={it.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:`1px solid ${P.line}`}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:13,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.label}</div>
+                      <div style={{fontSize:11,color:P.faint}}>Deleted {new Date(it.deletedAt).toLocaleDateString()}</div>
+                    </div>
+                    <button onClick={()=>restoreRecord(g.key,it.id)}
+                      style={{flexShrink:0,borderRadius:8,padding:"6px 10px",fontSize:12,fontWeight:600,border:`1px solid ${P.grS}`,background:P.grS,color:P.grD}}>
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={onClose} style={{...btn,width:"100%"}}>Close</button>
       </div>
     </div>
   );
@@ -4953,7 +5211,7 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,onViewPendingChanges,onOpenRecentlyDeleted}){
   useScrollLock(true); // only ever mounted while open
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
@@ -5044,6 +5302,10 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 Last saved to cloud: {lastCloudSavedAt?lastCloudSavedAt.toLocaleString():"never"}<br/>
                 Last pulled from cloud: {lastCloudPulledAt?lastCloudPulledAt.toLocaleString():"never"}
               </div>
+              {hasUnsyncedChanges&&onViewPendingChanges&&
+                <button onClick={onViewPendingChanges} style={{marginTop:6,background:"transparent",border:"none",padding:0,fontSize:11,fontWeight:600,color:P.amber,textDecoration:"underline"}}>
+                  View what's pending
+                </button>}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
               <button onClick={()=>saveToCloud()} disabled={syncOp==="push"} style={btn}>
@@ -5076,6 +5338,10 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         </div>
         <input ref={fileRef} type="file" accept=".json" onChange={onFile} style={{display:"none"}}/>
         {msg&&<div style={{fontSize:12,color:P.gr,marginBottom:12}}>{msg}</div>}
+        {onOpenRecentlyDeleted&&
+          <button onClick={onOpenRecentlyDeleted} style={{...btn,width:"100%",marginBottom:12}}>
+            <I.Trash size={14}/>Recently Deleted
+          </button>}
         <button onClick={()=>confirm?(setData(migrate(defaultData())),flash("Reset done")):setConfirm(true)}
           style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
             background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
