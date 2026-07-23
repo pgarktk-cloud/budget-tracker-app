@@ -1352,6 +1352,7 @@ function App(){
       if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
         const remoteFP=fingerprint(remoteMigrated);
+        let conflictShown=false;
         if(localResolved){
           const localFP=fingerprint(localResolved);
           if(localFP===remoteFP){
@@ -1364,6 +1365,7 @@ function App(){
               meta.hasUnsyncedChanges=fingerprint(merged)!==remoteFP;
             }else if(!cancelled){
               resolved=localResolved;
+              conflictShown=true;
               setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
             }
           }
@@ -1375,7 +1377,15 @@ function App(){
         lastCloudSnapshotRef.current=remoteFP;
         meta.lastCloudSnapshot=remoteFP;
         meta.lastCloudPulledAt=new Date().toISOString();
-        cacheSyncedSnapshot(remoteMigrated);
+        // Only cache a "last synced" baseline when `resolved` actually reflects
+        // this pull (clean match, successful merge, or a fresh device adopting
+        // remote wholesale). Never while a conflict is still unresolved —
+        // `resolved` stays on the stale pre-merge local copy in that branch,
+        // so caching the fresh remote pull here would make the pending-changes
+        // diff compare local data against a cloud state it hasn't actually
+        // merged in yet, showing the other person's already-synced changes in
+        // a confusing, backwards-looking way until the conflict is resolved.
+        if(!conflictShown)cacheSyncedSnapshot(remoteMigrated);
       }
       return resolved;
     };
