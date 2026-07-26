@@ -939,30 +939,44 @@ const SYNC_TOKEN="kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
 
 const KVSync={
   lastPulledAt:null,
+  lastKnownRev:0, // best-known cloud revision, updated by every successful load/save/meta check
   _ready(){return !PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");},
   _headers(){return{"Content-Type":"application/json","X-Sync-Token":SYNC_TOKEN};},
+  /* Full download. Returns {data, savedAt, rev} | null (null only on
+     network/parse failure — a genuinely-empty account still resolves with
+     data:null, rev:0, which callers distinguish from a failed fetch). */
   async load(){
     if(!this._ready())return null;
     const r=await fetch(`${PROXY_URL}/sync`,{headers:this._headers()});
     if(!r.ok)return null;
     const j=await r.json();
     if(j.savedAt)this.lastPulledAt=j.savedAt;
-    return j.data||null;
-  },
-  async save(data){
-    if(!this._ready())return{ok:false,reason:"not configured"};
-    const body=JSON.stringify({data,savedAt:new Date().toISOString(),lastPulledAt:this.lastPulledAt});
-    const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
-    if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
-    const j=await r.json();
-    if(j.savedAt)this.lastPulledAt=j.savedAt;
+    if(Number.isFinite(j.rev))this.lastKnownRev=j.rev;
     return j;
   },
+  /* Cheap metadata-only GET — no dataset transfer. Returns {savedAt, rev} |
+     null. This is what the "app became active" check uses. */
   async checkMeta(){
     if(!this._ready())return null;
     const r=await fetch(`${PROXY_URL}/sync/meta`,{headers:this._headers()});
     if(!r.ok)return null;
-    return await r.json();
+    const j=await r.json();
+    if(Number.isFinite(j.rev))this.lastKnownRev=j.rev;
+    return j;
+  },
+  /* baseRev = the cloud revision this save is built on top of (i.e. the
+     device's current localRev). Server rejects with {conflict:true} and
+     hands back its current data+rev if baseRev is stale, instead of
+     silently overwriting a change this device never saw. */
+  async save(data,baseRev){
+    if(!this._ready())return{ok:false,reason:"not configured"};
+    const body=JSON.stringify({data,savedAt:new Date().toISOString(),rev:baseRev||0});
+    const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
+    if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
+    const j=await r.json();
+    if(j.savedAt)this.lastPulledAt=j.savedAt;
+    if(Number.isFinite(j.rev))this.lastKnownRev=j.rev;
+    return j;
   },
 };
 
@@ -1145,12 +1159,29 @@ function buildConflictDiff(local,remote){
   }).filter(c=>c.onlyLocal.length||c.onlyRemote.length||c.changed.length);
 }
 
+/* localRev: the cloud revision number this device has fully reconciled
+   with — either by pulling it, or by a push that the server confirmed
+   landed at that revision. This (not a timestamp/fingerprint) is the
+   source of truth for "am I behind the cloud".
+   pendingUpload / pendingUploadFP: written to localStorage *before* a push
+   request is sent, and only cleared *after* the server confirms it. If the
+   process is killed/backgrounded mid-flight, these survive in localStorage
+   (synchronous write) so the next launch/resume can check whether that
+   upload actually landed rather than silently assuming success OR failure. */
 const loadSyncMeta=()=>{
   try{
     const raw=localStorage.getItem(SYNC_META_KEY);
-    if(raw)return JSON.parse(raw);
+    if(raw){
+      const m=JSON.parse(raw);
+      if(!Number.isFinite(m.localRev))m.localRev=0;
+      if(typeof m.pendingUpload!=="boolean")m.pendingUpload=false;
+      if(m.pendingUploadFP===undefined)m.pendingUploadFP=null;
+      if(m.lastCloudUploadAt===undefined)m.lastCloudUploadAt=m.lastCloudSavedAt||null;
+      if(m.lastCloudDownloadAt===undefined)m.lastCloudDownloadAt=m.lastCloudPulledAt||null;
+      return m;
+    }
   }catch(e){}
-  return{hasUnsyncedChanges:false,lastCloudSavedAt:null,lastCloudPulledAt:null,lastCloudSnapshot:null,changesSinceSave:0};
+  return{hasUnsyncedChanges:false,lastCloudSavedAt:null,lastCloudPulledAt:null,lastCloudUploadAt:null,lastCloudDownloadAt:null,lastCloudSnapshot:null,changesSinceSave:0,localRev:0,pendingUpload:false,pendingUploadFP:null};
 };
 const saveSyncMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m));}catch(e){}};
 
@@ -1184,11 +1215,24 @@ function App(){
 
   /* ── local-first sync state ──────────────────────────────────────────── */
   const[hasUnsyncedChanges,setHasUnsyncedChanges]=useState(false);
-  const[lastCloudSavedAt,setLastCloudSavedAt]=useState(null);
-  const[lastCloudPulledAt,setLastCloudPulledAt]=useState(null);
+  const[lastCloudSavedAt,setLastCloudSavedAt]=useState(null); // last confirmed upload
+  const[lastCloudPulledAt,setLastCloudPulledAt]=useState(null); // last confirmed download
   const[changesSinceSave,setChangesSinceSave]=useState(0);
   const[syncOp,setSyncOp]=useState(null); // null | "push" | "pull"
   const[conflict,setConflict]=useState(null); // {local,remote,remoteSavedAt} | null
+  /* ── revision-based sync state ───────────────────────────────────────────
+     localRev tracks the last cloud revision this device has fully
+     reconciled with (see loadSyncMeta comment). syncStatus drives the
+     status pill in the UI; isOnline is a plain navigator.onLine mirror so
+     we can show "Offline" immediately instead of waiting for a fetch to
+     time out. lastSyncError is diagnostics-only. */
+  const[localRev,setLocalRev]=useState(0);
+  const[cloudRev,setCloudRev]=useState(0); // last-known cloud revision, incl. ahead-of-local (diagnostics + "newer data available")
+  const[syncStatus,setSyncStatus]=useState("idle"); // idle|saving|synced|pending|offline|failed|stale
+  const[isOnline,setIsOnline]=useState(()=>typeof navigator==="undefined"?true:navigator.onLine);
+  const[lastSyncError,setLastSyncError]=useState(null);
+  const localRevRef=useRef(0);
+  useEffect(()=>{localRevRef.current=localRev;},[localRev]);
   const[preCloudBackupAt,setPreCloudBackupAt]=useState(()=>{
     try{const raw=localStorage.getItem(PRE_CLOUD_BACKUP_KEY);if(raw)return JSON.parse(raw).at;}catch(e){}
     return null;
@@ -1212,6 +1256,7 @@ function App(){
       }
       return{...d,[collection]:arr.map(x=>x.id===id?{...x,deletedAt:null,updatedAt:new Date().toISOString()}:x)};
     });
+    pushImportantRef.current();
   };
   const undoTimerRef=useRef(null);
   const[undoAction,setUndoAction]=useState(null); // {label,collection,id,childKey?,childId?} | null
@@ -1347,11 +1392,13 @@ function App(){
        .catch(()=>{if(!settled){settled=true;clearTimeout(t);res({timedOut:false,value:null});}});
     });
 
-    const reconcile=(remoteRaw,localResolved,meta)=>{
+    const reconcile=(remoteEnvelope,localResolved,meta)=>{
       let resolved=localResolved;
+      const remoteRaw=remoteEnvelope&&remoteEnvelope.data;
       if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
         const remoteFP=fingerprint(remoteMigrated);
+        const remoteRev=Number.isFinite(remoteEnvelope.rev)?remoteEnvelope.rev:meta.localRev||0;
         let conflictShown=false;
         if(localResolved){
           const localFP=fingerprint(localResolved);
@@ -1366,7 +1413,7 @@ function App(){
             }else if(!cancelled){
               resolved=localResolved;
               conflictShown=true;
-              setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+              setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt,remoteRev});
             }
           }
         }else{
@@ -1377,14 +1424,12 @@ function App(){
         lastCloudSnapshotRef.current=remoteFP;
         meta.lastCloudSnapshot=remoteFP;
         meta.lastCloudPulledAt=new Date().toISOString();
-        // Only cache a "last synced" baseline when `resolved` actually reflects
-        // this pull (clean match, successful merge, or a fresh device adopting
-        // remote wholesale). Never while a conflict is still unresolved —
-        // `resolved` stays on the stale pre-merge local copy in that branch,
-        // so caching the fresh remote pull here would make the pending-changes
-        // diff compare local data against a cloud state it hasn't actually
-        // merged in yet, showing the other person's already-synced changes in
-        // a confusing, backwards-looking way until the conflict is resolved.
+        meta.lastCloudDownloadAt=meta.lastCloudPulledAt;
+        // localRev only advances to the remote rev once this device's data
+        // actually reflects it (clean match / successful merge / fresh
+        // adopt). Left alone while a conflict modal is pending, since
+        // `resolved` is still the stale pre-merge copy in that branch.
+        if(!conflictShown)meta.localRev=remoteRev;
         if(!conflictShown)cacheSyncedSnapshot(remoteMigrated);
       }
       return resolved;
@@ -1400,11 +1445,25 @@ function App(){
         setData(resolved);
         try{localStorage.setItem(STORAGE_KEY,JSON.stringify(resolved));}catch(e){}
       }
+      // A push that was mid-flight when the app was last killed/backgrounded
+      // leaves pendingUpload=true behind (see markUploadPending). Now that
+      // we have a definitive read of the cloud, resolve it for real instead
+      // of guessing: if what we uploaded is what the cloud ended up
+      // confirming as the reconciled baseline, it landed — clear the flag.
+      // Otherwise leave it cleared too (no point tracking a specific
+      // in-flight fingerprint anymore), but hasUnsyncedChanges — already
+      // computed above by the normal fingerprint/merge reconcile — stays
+      // whatever that determined, so a genuinely-lost upload's changes are
+      // still marked dirty and will retry via the normal autosave path.
+      if(meta.pendingUpload){meta.pendingUpload=false;meta.pendingUploadFP=null;}
       saveSyncMeta(meta);
       setHasUnsyncedChanges(!!meta.hasUnsyncedChanges);
       setChangesSinceSave(meta.changesSinceSave||0);
+      setLocalRev(meta.localRev||0);
+      setCloudRev(meta.localRev||0);
       if(meta.lastCloudSavedAt)setLastCloudSavedAt(new Date(meta.lastCloudSavedAt));
       if(meta.lastCloudPulledAt)setLastCloudPulledAt(new Date(meta.lastCloudPulledAt));
+      setSyncStatus(meta.hasUnsyncedChanges?"pending":"synced");
     };
 
     const revealApp=()=>{
@@ -1524,6 +1583,7 @@ function App(){
       saveSyncMeta(meta);
       setHasUnsyncedChanges(dirty);
       setChangesSinceSave(meta.changesSinceSave||0);
+      if(dirty&&syncOp==null)setSyncStatus(isOnline?"pending":"offline");
     },450);
     return()=>clearTimeout(t);
   },[data,loaded]);
@@ -1532,64 +1592,98 @@ function App(){
      the best-effort keepalive flush below, which talks to the same worker
      endpoint directly). `reason` is just for the status message. ──────── */
   const savingRef=useRef(false);
+  /* Marks a push as in-flight *before* the network call, durably, so a
+     kill/background mid-upload can never look like a silent success — see
+     the pendingUpload verification in the startup/activation checks. */
+  const markUploadPending=payload=>{
+    const meta=loadSyncMeta();
+    meta.pendingUpload=true;
+    meta.pendingUploadFP=fingerprint(payload);
+    saveSyncMeta(meta);
+  };
+  const clearUploadPending=()=>{
+    const meta=loadSyncMeta();
+    meta.pendingUpload=false;
+    meta.pendingUploadFP=null;
+    saveSyncMeta(meta);
+    return meta;
+  };
+  const commitPush=(payload,rev,now)=>{
+    const fp=fingerprint(payload);
+    lastCloudSnapshotRef.current=fp;
+    cacheSyncedSnapshot(payload);
+    const meta=clearUploadPending();
+    meta.hasUnsyncedChanges=false;
+    meta.lastCloudSnapshot=fp;
+    meta.lastCloudSavedAt=now.toISOString();
+    meta.lastCloudUploadAt=meta.lastCloudSavedAt;
+    meta.changesSinceSave=0;
+    meta.localRev=rev;
+    saveSyncMeta(meta);
+    setLastCloudSavedAt(now);
+    setHasUnsyncedChanges(false);
+    setChangesSinceSave(0);
+    setLocalRev(rev);
+    setCloudRev(rev);
+  };
   const saveToCloud=async(reason="manual")=>{
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(!cloudConfirmedRef.current){setSyncMsg("Still connecting to the cloud — try again in a moment");setTimeout(()=>setSyncMsg(""),3000);return;}
+    if(!isOnline){setSyncStatus("offline");setSyncMsg("Offline — will sync when back online");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(savingRef.current)return;
     savingRef.current=true;
     setSyncOp("push");
+    setSyncStatus("saving");
     try{
       const payload=dataRef.current;
-      const result=await KVSync.save(payload);
+      markUploadPending(payload);
+      let result=await KVSync.save(payload,localRevRef.current);
       if(result&&result.conflict){
-        try{
-          const remoteRaw=await KVSync.load();
-          if(remoteRaw&&Array.isArray(remoteRaw.plans)){
-            const remoteMigrated=migrate(remoteRaw);
-            const merged=tryAutoMergeAll(payload,remoteMigrated);
-            const retry=merged?await KVSync.save(merged):null;
-            if(merged&&retry&&!retry.conflict&&retry.ok!==false){
-              skipSave.current=true;
-              setData(merged);
-              try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
-              const fp=fingerprint(merged);
-              lastCloudSnapshotRef.current=fp;
-              cacheSyncedSnapshot(merged);
-              const now=new Date();
-              const meta=loadSyncMeta();
-              meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudSavedAt=now.toISOString();meta.changesSinceSave=0;
-              saveSyncMeta(meta);
-              setLastCloudSavedAt(now);setHasUnsyncedChanges(false);setChangesSinceSave(0);
-              setSyncMsg("Merged with cloud changes and saved ✓");
-            }else{
-              setHasUnsyncedChanges(true);
-              setSyncMsg("⚠️ Cloud changed — review before saving");
-              setConflict({local:payload,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
-            }
+        // Server handed back its current data+rev inline — no second
+        // round trip needed to see what changed.
+        const remoteRaw=result.data;
+        if(remoteRaw&&Array.isArray(remoteRaw.plans)){
+          const remoteMigrated=migrate(remoteRaw);
+          const merged=tryAutoMergeAll(payload,remoteMigrated);
+          const retry=merged?await KVSync.save(merged,result.rev):null;
+          if(merged&&retry&&!retry.conflict&&retry.ok!==false){
+            skipSave.current=true;
+            setData(merged);
+            try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
+            const now=new Date();
+            commitPush(merged,retry.rev,now);
+            setSyncStatus("synced");
+            setLastSyncError(null);
+            setSyncMsg("Merged with cloud changes and saved ✓");
+          }else{
+            clearUploadPending();
+            setHasUnsyncedChanges(true);
+            setSyncStatus("stale");
+            setSyncMsg("⚠️ Cloud changed — review before saving");
+            setConflict({local:payload,remote:remoteMigrated,remoteSavedAt:result.savedAt,remoteRev:result.rev});
           }
-        }catch(e){
+        }else{
+          clearUploadPending();
           setHasUnsyncedChanges(true);
-          setSyncMsg("⚠️ Cloud changed — review before saving");
+          setSyncStatus("failed");
+          setLastSyncError("Conflict response missing data");
         }
       }else if(!result||result.ok===false){
+        clearUploadPending();
+        setSyncStatus("failed");
+        setLastSyncError(result&&result.reason?result.reason:"unknown error");
         setSyncMsg("Cloud save failed — data is safe on this device");
       }else{
-        const fp=fingerprint(payload);
-        lastCloudSnapshotRef.current=fp;
-        cacheSyncedSnapshot(payload);
         const now=new Date();
-        const meta=loadSyncMeta();
-        meta.hasUnsyncedChanges=false;
-        meta.lastCloudSnapshot=fp;
-        meta.lastCloudSavedAt=now.toISOString();
-        meta.changesSinceSave=0;
-        saveSyncMeta(meta);
-        setLastCloudSavedAt(now);
-        setHasUnsyncedChanges(false);
-        setChangesSinceSave(0);
+        commitPush(payload,result.rev,now);
+        setSyncStatus("synced");
+        setLastSyncError(null);
         setSyncMsg(reason==="gesture"?"Cloud saved and synced ✓":reason==="auto"?"Auto-synced ✓":"Cloud saved ✓");
       }
     }catch(e){
+      clearUploadPending();
+      setSyncStatus(isOnline?"failed":"offline");
+      setLastSyncError(String((e&&e.message)||e));
       setSyncMsg("Cloud save failed — data is safe on this device");
     }
     setSyncOp(null);
@@ -1605,6 +1699,30 @@ function App(){
      syncs periodically instead of postponing forever. This keeps writes far
      under Cloudflare KV's free-tier 1,000/day cap: a normal day of entering
      transactions lands around a few dozen writes, not one per keystroke. */
+  /* ── Immediate push for completed actions ────────────────────────────────
+     The idle autosave above is for typing (debounced 8–45s so a burst of
+     keystrokes doesn't spam the cloud). Discrete completed actions —
+     add/edit/delete a transaction, a goal contribution, a bank balance
+     commit, a trade, a salary update, any modal's Save button — shouldn't
+     wait on that: call pushImportant() right after the setData that
+     performs the action. The short delay (not 0) exists only to let the
+     state update actually land in dataRef.current before saveToCloud reads
+     it; it is not a "wait for more edits" debounce like the idle autosave. */
+  const pushImportantTimerRef=useRef(null);
+  const pushImportant=()=>{
+    if(!loaded||!kvReady)return;
+    if(pushImportantTimerRef.current)clearTimeout(pushImportantTimerRef.current);
+    pushImportantTimerRef.current=setTimeout(()=>{
+      pushImportantTimerRef.current=null;
+      // supersede the idle-autosave timer so this doesn't double-fire
+      if(autosaveTimerRef.current){clearTimeout(autosaveTimerRef.current);autosaveTimerRef.current=null;}
+      autosaveFirstPendingRef.current=null;
+      if(hasUnsyncedRef.current&&!savingRef.current)saveToCloudRef.current("auto");
+    },300);
+  };
+  const pushImportantRef=useRef(pushImportant);
+  useEffect(()=>{pushImportantRef.current=pushImportant;});
+
   const AUTOSAVE_IDLE_MS=8000,AUTOSAVE_MAX_WAIT_MS=45000;
   const autosaveTimerRef=useRef(null);
   const autosaveFirstPendingRef=useRef(null);
@@ -1643,45 +1761,50 @@ function App(){
        custom headers (needed for the sync token) rule out
        navigator.sendBeacon, which only supports simple bodies.
      The pagehide beacon does NOT check for conflicts — there's no time to
-     round-trip a check-then-merge-then-retry — so in the rare case both
-     devices close at nearly the same moment with unsynced edits, one
-     device's push could overwrite the other's on the cloud. That's a real
-     trade-off, not a guarantee. The safety net is the pull-side fix from
-     before: every pull/load merges by content (id + updatedAt) rather than
-     trusting a flag, so as long as at least one device still has its data
-     locally, the next successful sync reconciles it rather than losing it
-     for good. Browsers also cap keepalive body size (historically ~64KB),
-     which is a second reason this is a safety net on top of — not a
-     replacement for — the idle autosave above and the "N unsynced
-     changes" indicator already in the UI. */
+     round-trip a check-then-merge-then-retry — so it's sent with the
+     device's current baseline `rev`; the server now rejects it outright
+     (no write at all) rather than overwriting if that rev is stale, which
+     is strictly safer than the old always-accepts behavior. Because the
+     response can't be awaited during teardown, this deliberately does NOT
+     mark the change as synced — that was a false-synced-state bug (the
+     beacon could silently fail or be rejected and the UI would still claim
+     "saved"). It only sets pendingUpload durably; hasUnsyncedChanges is
+     left exactly as it already was, so the next launch/resume verifies
+     against the cloud for real instead of taking teardown's word for it.
+     Browsers also cap keepalive body size (historically ~64KB), a second
+     reason this is a safety net on top of — not a replacement for — the
+     idle autosave above and the automatic-refresh-on-resume below. */
   const flushToCloudBeacon=()=>{
     if(!kvReady||!cloudConfirmedRef.current||!hasUnsyncedRef.current)return;
     try{
       const payload=dataRef.current;
-      const body=JSON.stringify({data:payload,savedAt:new Date().toISOString(),lastPulledAt:KVSync.lastPulledAt});
+      const body=JSON.stringify({data:payload,savedAt:new Date().toISOString(),rev:localRevRef.current||0});
       fetch(`${PROXY_URL}/sync`,{method:"POST",headers:KVSync._headers(),body,keepalive:true}).catch(()=>{});
-      // optimistic local bookkeeping only — we can't await the response
-      // during teardown, so the next successful pull/save will reconcile
-      // if this silently failed or lost a race (e.g. payload over the
-      // keepalive size cap, or a conflicting write from the other device)
+      // Durable "in flight" marker only — never optimistically claim
+      // synced here (see comment above). The next launch/resume's cloud
+      // check reconciles the real outcome either way.
       const fp=fingerprint(payload);
       const meta=loadSyncMeta();
-      meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudSavedAt=new Date().toISOString();meta.changesSinceSave=0;
+      meta.pendingUpload=true;meta.pendingUploadFP=fp;
       saveSyncMeta(meta);
-      cacheSyncedSnapshot(payload);
     }catch(e){}
   };
   useEffect(()=>{
     if(!loaded)return;
     const onVisibility=()=>{
-      if(document.visibilityState==="hidden"&&hasUnsyncedRef.current&&!savingRef.current){
-        saveToCloudRef.current("auto");
+      if(document.visibilityState==="hidden"){
+        if(hasUnsyncedRef.current&&!savingRef.current)saveToCloudRef.current("auto");
+      }else if(document.visibilityState==="visible"){
+        checkCloudOnActivateRef.current();
       }
     };
+    const onFocus=()=>checkCloudOnActivateRef.current();
     window.addEventListener("visibilitychange",onVisibility);
+    window.addEventListener("focus",onFocus);
     window.addEventListener("pagehide",flushToCloudBeacon);
     return()=>{
       window.removeEventListener("visibilitychange",onVisibility);
+      window.removeEventListener("focus",onFocus);
       window.removeEventListener("pagehide",flushToCloudBeacon);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1702,20 +1825,26 @@ function App(){
   /* ── manual Pull from Cloud — GET only, never POSTs ──────────────────── */
   const pullFromCloud=async()=>{
     if(!kvReady){setSyncMsg("Add Worker URL + sync token first");setTimeout(()=>setSyncMsg(""),3000);return;}
+    if(!isOnline){setSyncStatus("offline");setSyncMsg("Offline — can't pull right now");setTimeout(()=>setSyncMsg(""),3000);return;}
     setSyncOp("pull");setSyncMsg("Pulling…");
     try{
-      const remoteRaw=await KVSync.load();
+      const remoteEnvelope=await KVSync.load();
+      const remoteRaw=remoteEnvelope&&remoteEnvelope.data;
       if(remoteRaw&&Array.isArray(remoteRaw.plans)){
         const remoteMigrated=migrate(remoteRaw);
+        const remoteRev=Number.isFinite(remoteEnvelope.rev)?remoteEnvelope.rev:localRevRef.current;
         const localFP=fingerprint(dataRef.current);
         const remoteFP=fingerprint(remoteMigrated);
         if(localFP===remoteFP){
           lastCloudSnapshotRef.current=remoteFP;
           cacheSyncedSnapshot(remoteMigrated);
           const now=new Date();
-          const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
+          const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();meta.lastCloudDownloadAt=meta.lastCloudPulledAt;meta.localRev=remoteRev;saveSyncMeta(meta);
           setHasUnsyncedChanges(false);
           setLastCloudPulledAt(now);
+          setLocalRev(remoteRev);
+          setCloudRev(remoteRev);
+          setSyncStatus("synced");
           setSyncMsg("Already up to date ✓");
         }else{
           const merged=tryAutoMergeAll(dataRef.current,remoteMigrated);
@@ -1729,18 +1858,29 @@ function App(){
             lastCloudSnapshotRef.current=remoteFP;
             cacheSyncedSnapshot(remoteMigrated);
             const now=new Date();
-            const meta=loadSyncMeta();meta.hasUnsyncedChanges=stillDirty;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();saveSyncMeta(meta);
-            setHasUnsyncedChanges(stillDirty);setLastCloudPulledAt(now);
-            setSyncMsg(stillDirty?"Merged with cloud changes — save to sync ✓":"Cloud data loaded ✓");
+            const meta=loadSyncMeta();meta.hasUnsyncedChanges=stillDirty;meta.lastCloudSnapshot=remoteFP;meta.lastCloudPulledAt=now.toISOString();meta.lastCloudDownloadAt=meta.lastCloudPulledAt;meta.localRev=remoteRev;saveSyncMeta(meta);
+            setHasUnsyncedChanges(stillDirty);setLastCloudPulledAt(now);setLocalRev(remoteRev);setCloudRev(remoteRev);
+            setSyncStatus(stillDirty?"pending":"synced");
+            setSyncMsg(stillDirty?"Merged with cloud changes — syncing…":"Cloud data loaded ✓");
+            // Close the loop: a merge means both devices had edits, so push
+            // the merged result straight back rather than leaving it
+            // sitting here as "pending" until the person happens to notice
+            // and hits Save — that's exactly the manual step this feature
+            // is meant to remove. Short delay lets the state above land in
+            // dataRef.current first (pushImportant already does the same).
+            if(stillDirty)setTimeout(()=>{if(!savingRef.current)saveToCloudRef.current("auto");},350);
           }else{
             setSyncMsg("");
-            setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt});
+            setSyncStatus("stale");
+            setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:remoteEnvelope.savedAt,remoteRev});
           }
         }
       }else{
         setSyncMsg("Nothing saved yet — will sync on next Save to Cloud");
       }
     }catch(e){
+      setSyncStatus(isOnline?"failed":"offline");
+      setLastSyncError(String((e&&e.message)||e));
       setSyncMsg("Pull failed — using local data");
     }
     setSyncOp(null);
@@ -1749,8 +1889,70 @@ function App(){
   const pullFromCloudRef=useRef(pullFromCloud);
   useEffect(()=>{pullFromCloudRef.current=pullFromCloud;});
 
+  /* ── Automatic cloud refresh on activate ─────────────────────────────────
+     This is the actual fix for "edited on iPhone, iPad still shows old
+     data": every place the app can become active again (tab/app
+     foregrounded, window focus, reconnecting after offline) now fires a
+     *cheap* GET /sync/meta — just {savedAt, rev}, no dataset transfer — and
+     only escalates to a real pull when the returned rev is actually ahead
+     of what this device last reconciled. That escalation reuses
+     pullFromCloud() itself (not a second copy of the merge logic): clean
+     match → adopt; both sides changed → auto-merge; genuinely unmergeable
+     → the same conflict modal manual pull already uses. So the person
+     never has to remember to hit Sync when switching devices — the check
+     just happens whenever the app comes back to the foreground. Throttled
+     so rapid focus/visibility events (both can fire together) don't double
+     up, and skipped outright while a push/pull is already in flight. */
+  const syncOpRef=useRef(null);
+  useEffect(()=>{syncOpRef.current=syncOp;},[syncOp]);
+  const ACTIVATE_CHECK_MIN_INTERVAL_MS=4000;
+  const lastActivateCheckRef=useRef(0);
+  const checkCloudOnActivate=async()=>{
+    if(!kvReady||!cloudConfirmedRef.current)return;
+    if(!(typeof navigator==="undefined"?true:navigator.onLine))return;
+    if(syncOpRef.current||savingRef.current)return;
+    const now=Date.now();
+    if(now-lastActivateCheckRef.current<ACTIVATE_CHECK_MIN_INTERVAL_MS)return;
+    lastActivateCheckRef.current=now;
+    try{
+      const meta=await KVSync.checkMeta();
+      if(!meta)return; // network hiccup on a background check — not worth surfacing an error
+      const remoteRev=Number.isFinite(meta.rev)?meta.rev:0;
+      setCloudRev(remoteRev);
+      if(remoteRev===localRevRef.current)return; // already fully caught up
+      setSyncStatus("stale");
+      await pullFromCloudRef.current();
+    }catch(e){/* silent — this is a passive background check, not a user action */}
+  };
+  const checkCloudOnActivateRef=useRef(checkCloudOnActivate);
+  useEffect(()=>{checkCloudOnActivateRef.current=checkCloudOnActivate;});
+
+  /* ── network status ──────────────────────────────────────────────────────
+     navigator.onLine mirror, so "Offline" shows immediately rather than
+     waiting for a fetch to time out — and reconnecting fires the same
+     activation check, so data catches up the moment connectivity returns. */
+  useEffect(()=>{
+    const onOnline=()=>{setIsOnline(true);checkCloudOnActivateRef.current();};
+    const onOffline=()=>{setIsOnline(false);setSyncStatus("offline");};
+    window.addEventListener("online",onOnline);
+    window.addEventListener("offline",onOffline);
+    return()=>{window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);};
+  },[]);
+
   /* ── conflict resolution actions ─────────────────────────────────────── */
-  const resolveKeepLocal=()=>setConflict(null);
+  const resolveKeepLocal=()=>{
+    // Keeping the local copy still leaves it built on a stale baseline —
+    // immediately push so the next save doesn't just conflict again.
+    // localRevRef is set synchronously (not just via setLocalRev) so the
+    // push below — which reads the ref, not React state — sees it in time.
+    if(conflict&&Number.isFinite(conflict.remoteRev)){
+      localRevRef.current=conflict.remoteRev;
+      setLocalRev(conflict.remoteRev);
+      setCloudRev(conflict.remoteRev);
+    }
+    setConflict(null);
+    setTimeout(()=>saveToCloudRef.current("auto"),0);
+  };
   const resolveUseCloud=()=>{
     if(!conflict)return;
     stashPreCloudBackup(dataRef.current);
@@ -1762,15 +1964,26 @@ function App(){
     lastCloudSnapshotRef.current=fp;
     cacheSyncedSnapshot(remoteMigrated);
     const now=new Date();
-    const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudPulledAt=now.toISOString();meta.changesSinceSave=0;saveSyncMeta(meta);
+    const rev=Number.isFinite(conflict.remoteRev)?conflict.remoteRev:localRevRef.current;
+    const meta=loadSyncMeta();meta.hasUnsyncedChanges=false;meta.lastCloudSnapshot=fp;meta.lastCloudPulledAt=now.toISOString();meta.lastCloudDownloadAt=meta.lastCloudPulledAt;meta.changesSinceSave=0;meta.localRev=rev;saveSyncMeta(meta);
     setHasUnsyncedChanges(false);
     setChangesSinceSave(0);
     setLastCloudPulledAt(now);
+    setLocalRev(rev);
+    setCloudRev(rev);
+    setSyncStatus("synced");
     setConflict(null);
     setSyncMsg("Cloud data loaded ✓");
     setTimeout(()=>setSyncMsg(""),3000);
   };
   const resolveSaveLocalToCloud=async()=>{
+    // "Keep local, push it" — same baseline bump as resolveKeepLocal, but
+    // explicit and awaited so the caller (button) can show a spinner.
+    if(conflict&&Number.isFinite(conflict.remoteRev)){
+      localRevRef.current=conflict.remoteRev;
+      setLocalRev(conflict.remoteRev);
+      setCloudRev(conflict.remoteRev);
+    }
     setConflict(null);
     await saveToCloud();
   };
@@ -1950,20 +2163,23 @@ function App(){
 
   /* goals */
   const goals=(data.goals||[]).filter(g=>!g.deletedAt);
-  const addGoal=owner=>setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length],updatedAt:new Date().toISOString()}]}));
+  const addGoal=owner=>{setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length],updatedAt:new Date().toISOString()}]}));pushImportantRef.current();};
   const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch,updatedAt:new Date().toISOString()}:g)}));
   const removeGoal=id=>{
     const g=(data.goals||[]).find(x=>x.id===id);
     setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:g)}));
     if(g)triggerUndo(`Deleted goal "${g.name||"Goal"}"`,{collection:"goals",id});
+    pushImportantRef.current();
   };
   const addContribution=(goalId,amount,note="")=>{
     const contrib={id:uid(),date:new Date().toISOString().slice(0,10),amount:Number(amount),note};
     setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib],updatedAt:new Date().toISOString()}:g)}));
+    pushImportantRef.current();
   };
   const removeContribution=(goalId,cid)=>{
     setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:g)}));
     triggerUndo("Deleted contribution",{collection:"goals",id:goalId,childKey:"contributions",childId:cid});
+    pushImportantRef.current();
   };
 
   /* investments */
@@ -1974,11 +2190,13 @@ function App(){
     const inv=(data.investments||[]).find(x=>x.id===id);
     setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:x)}));
     if(inv)triggerUndo(`Deleted "${inv.ticker||inv.name||"investment"}"`,{collection:"investments",id});
+    pushImportantRef.current();
   };
-  const addTrade=(invId,trade)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}],updatedAt:new Date().toISOString()}:x)}));
+  const addTrade=(invId,trade)=>{setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}],updatedAt:new Date().toISOString()}:x)}));pushImportantRef.current();};
   const removeTrade=(invId,tid)=>{
     setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:new Date().toISOString()}:t),updatedAt:new Date().toISOString()}:x)}));
     triggerUndo("Deleted trade",{collection:"investments",id:invId,childKey:"trades",childId:tid});
+    pushImportantRef.current();
   };
   const setProjection=patch=>setData(d=>({...d,projection:{...(d.projection||{monthly:1500,years:20,rate:8}),...patch}}));
 
@@ -1998,6 +2216,7 @@ function App(){
     const t=(data.targets||[]).find(x=>x.id===id);
     setData(d=>({...d,targets:(d.targets||[]).map(t=>t.id===id?{...t,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:t)}));
     if(t)triggerUndo(`Deleted target "${t.name||"Target"}"`,{collection:"targets",id});
+    pushImportantRef.current();
   };
   const livePrice=data.livePrice||{};
   const setLivePrice=prices=>setData(d=>({...d,livePrice:{...(d.livePrice||{}),...prices}}));
@@ -2010,6 +2229,7 @@ function App(){
       const rest=(d.portHistory||[]).filter(h=>h.month!==month);
       return{...d,portHistory:[...rest,{id:uid(),month,value:Math.round(valueUSD)}].sort((a,b)=>a.month.localeCompare(b.month))};
     });
+    pushImportantRef.current();
   };
 
   /* expense tracker — transactions per budget category.
@@ -2022,12 +2242,13 @@ function App(){
      boosts that category's effective budget in the Expenses tab without
      ever touching the category's base amount/percentage in the Budget tab. */
   const expenses=(data.expenses||[]).filter(e=>!e.deletedAt);
-  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,updatedAt:new Date().toISOString()}]}));
-  const updateExpenseTx=(id,patch)=>setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount,updatedAt:new Date().toISOString()}:e)}));
+  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>{setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,updatedAt:new Date().toISOString()}]}));pushImportantRef.current();};
+  const updateExpenseTx=(id,patch)=>{setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount,updatedAt:new Date().toISOString()}:e)}));pushImportantRef.current();};
   const removeExpenseTx=id=>{
     const e=(data.expenses||[]).find(x=>x.id===id);
     setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}));
     if(e)triggerUndo(`Deleted "${e.name||"transaction"}"`,{collection:"expenses",id});
+    pushImportantRef.current();
   };
 
   /* quick-transfer: logs a transaction against an untracked category (e.g. Savings)
@@ -2066,12 +2287,18 @@ function App(){
 
   /* banks */
   const banks=(data.banks||[]).filter(b=>!b.deletedAt);
-  const addBank=owner=>setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0,updatedAt:new Date().toISOString()}]}));
+  const addBank=owner=>{setData(d=>({...d,banks:[...(d.banks||[]),{id:uid(),owner,name:"New account",bank:"",country:"SA",currency:"SAR",balance:0,updatedAt:new Date().toISOString()}]}));pushImportantRef.current();};
+  /* shared by every field's onChange (name/bank/country/currency/balance as
+     the person types) — deliberately left on the debounced idle-autosave
+     path, not pushImportant, or every keystroke would trigger a push. The
+     balance field's onBlur (its "commit" moment) calls pushImportant
+     separately where it's wired up in BanksView below. */
   const updateBank=(id,patch)=>setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,...patch,updatedAt:new Date().toISOString()}:b)}));
   const removeBank=id=>{
     const b=(data.banks||[]).find(x=>x.id===id);
     setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===id?{...b,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:b)}));
     if(b)triggerUndo(`Deleted "${b.name||"account"}"`,{collection:"banks",id});
+    pushImportantRef.current();
   };
 
   /* assets */
@@ -2230,11 +2457,18 @@ function App(){
                 <I.Refresh size={14} style={syncOp==="pull"?{animation:"spin .9s linear infinite"}:null}/>
               </button>
               <button onClick={()=>saveToCloud()} disabled={!kvReady||syncOp==="push"}
-                title={kvReady?(hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL and sync token to enable sync"}
+                title={kvReady?(!isOnline?"Offline — will sync when back online":syncStatus==="failed"?`Sync failed${lastSyncError?`: ${lastSyncError}`:""}`:hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL and sync token to enable sync"}
                 style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
-                  background:!kvReady?P.sf:P.grS,color:!kvReady?P.sub:P.grD,border:`1px solid ${!kvReady?P.line:P.grS}`,opacity:kvReady?1:.5}}>
+                  background:!kvReady?P.sf:!isOnline?P.sf:syncStatus==="failed"?P.amberS:P.grS,
+                  color:!kvReady?P.sub:!isOnline?P.sub:syncStatus==="failed"?P.amber:P.grD,
+                  border:`1px solid ${!kvReady?P.line:P.grS}`,opacity:kvReady?1:.5}}>
                 <I.Cloud size={13} style={syncOp==="push"?{animation:"spin .9s linear infinite"}:null}/>
-                {syncOp==="push"?"Saving…":hasUnsyncedChanges?`Save to Cloud${changesSinceSave?` (${changesSinceSave})`:""}`:"Cloud saved"}
+                {syncOp==="push"?"Saving…"
+                  :!isOnline?"Offline"
+                  :syncStatus==="failed"?"Sync failed"
+                  :syncStatus==="stale"?"Newer data available"
+                  :hasUnsyncedChanges?`Save to Cloud${changesSinceSave?` (${changesSinceSave})`:""}`
+                  :"Cloud synced"}
                 {hasUnsyncedChanges&&kvReady&&syncOp!=="push"&&
                   <span style={{position:"absolute",top:-2,right:-2,width:7,height:7,borderRadius:999,background:P.red,border:`1px solid ${P.bg}`}}/>}
               </button>
@@ -2252,7 +2486,10 @@ function App(){
 
           {kvReady&&
             <div style={{marginTop:8,fontSize:11,color:P.faint}}>
-              {hasUnsyncedChanges?"Saved on this device — not yet in the cloud. ":"Saved on this device. "}
+              {!isOnline?"Offline — changes are saved on this device and will sync automatically once you're back online. "
+                :hasUnsyncedChanges?"Saved on this device — not yet in the cloud. "
+                :"Saved on this device. "}
+              {lastCloudSavedAt&&<>Last synced {lastCloudSavedAt.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}. </>}
               Pull before editing on another device; Save to Cloud when finished.
             </div>}
 
@@ -2266,6 +2503,7 @@ function App(){
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
                 <input type="number" value={plan.income} onChange={e=>patchPlan({income:Number(e.target.value)})}
+                  onBlur={()=>pushImportantRef.current()}
                   className="bare tnum serif" style={{fontSize:30,fontWeight:600,width:170,textAlign:"right",color:P.ink}}/>
               </div>
             </div>
@@ -2285,10 +2523,10 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
-          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
-          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners}}/>}
+          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
           {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
@@ -2299,7 +2537,8 @@ function App(){
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
         preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,
-        onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true)}}/>}
+        onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
+        localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
       {showPendingDiff&&<PendingChangesModal data={data} onClose={()=>setShowPendingDiff(false)}
         onSaveToCloud={()=>{setShowPendingDiff(false);saveToCloud();}}/>}
@@ -2331,7 +2570,7 @@ function App(){
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget}){
+function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -2484,6 +2723,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
             <span style={{fontSize:13,color:P.neuSub}}>{cur}</span>
             <input type="number" value={income} disabled={!editable}
               onChange={e=>setIncome(e.target.value)}
+              onBlur={()=>syncNow&&syncNow()}
               className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:editable?P.neuInk:P.neuSub,
                 ...(editable?neuInset(8):{}),padding:editable?"2px 8px":undefined}}/>
           </div>
@@ -3899,7 +4139,7 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
 }
 
 /* ── BANKS VIEW — grid of "digital wallet pass" cards ── */
-function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners}){
+function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,syncNow}){
   const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
   const sar=n=>`SAR ${Math.round(n).toLocaleString("en-US")}`;
   const sarOf=b=>{const v=convert(b.balance,b.currency,"SAR");return v==null?0:v;};
@@ -3966,7 +4206,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners})
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:12,color:P.neuSub}}>Balance ({b.currency})</span>
               <input type="text" inputMode="decimal" value={b.balance} onChange={e=>updateBank(b.id,{balance:e.target.value})}
-                onBlur={e=>updateBank(b.id,{balance:evalMathExpr(e.target.value,0)})}
+                onBlur={e=>{updateBank(b.id,{balance:evalMathExpr(e.target.value,0)});syncNow&&syncNow();}}
                 onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
                 className="bare tnum" style={{...neuInset(8),flex:1,textAlign:"right",fontSize:14,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
             </div>
@@ -5221,7 +5461,39 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,onViewPendingChanges,onOpenRecentlyDeleted}){
+/* Hidden-by-default troubleshooting panel — a person shouldn't need this to
+   use the app day to day, so it's collapsed behind a disclosure rather than
+   always shown alongside the plain-language status pill above it. */
+function SyncDiagnostics({localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,hasUnsyncedChanges,changesSinceSave,syncStatus,isOnline,lastSyncError}){
+  const[open,setOpen]=useState(false);
+  const row=(label,value)=>(
+    <div style={{display:"flex",justifyContent:"space-between",gap:8,padding:"4px 0",borderBottom:`1px solid ${P.line}`,fontSize:12}}>
+      <span style={{color:P.faint}}>{label}</span>
+      <span style={{color:P.ink,fontFamily:"monospace",textAlign:"right"}}>{value}</span>
+    </div>
+  );
+  return(
+    <div style={{marginTop:10}}>
+      <button onClick={()=>setOpen(o=>!o)}
+        style={{background:"transparent",border:"none",padding:0,fontSize:11,fontWeight:600,color:P.faint,textDecoration:"underline",cursor:"pointer"}}>
+        {open?"Hide":"Show"} Sync Diagnostics
+      </button>
+      {open&&
+        <div style={{marginTop:8,padding:"8px 10px",background:P.sfA,borderRadius:10}}>
+          {row("Local revision",localRev??"—")}
+          {row("Cloud revision",cloudRev??"—")}
+          {row("Last cloud upload",lastCloudSavedAt?lastCloudSavedAt.toLocaleString():"never")}
+          {row("Last cloud download",lastCloudPulledAt?lastCloudPulledAt.toLocaleString():"never")}
+          {row("Pending changes",hasUnsyncedChanges?`yes (${changesSinceSave||0})`:"no")}
+          {row("Sync status",syncStatus||"idle")}
+          {row("Network",isOnline?"online":"offline")}
+          {lastSyncError&&row("Last error",lastSyncError)}
+        </div>}
+    </div>
+  );
+}
+
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
   useScrollLock(true); // only ever mounted while open
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
@@ -5303,20 +5575,33 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Cloudflare KV Sync</div>
         {kvReady
           ?<div style={{marginBottom:16}}>
-            <div style={{fontSize:12,color:hasUnsyncedChanges?P.amber:P.gr,marginBottom:8,padding:"8px 10px",
-              background:hasUnsyncedChanges?P.amberS:P.grS,borderRadius:10,lineHeight:1.6}}>
-              {hasUnsyncedChanges
-                ?`⚠️ Local changes pending${changesSinceSave?` (${changesSinceSave})`:""}`
-                :"✅ Cloud is up to date"}
-              <div style={{fontSize:11,color:P.faint,marginTop:4}}>
-                Last saved to cloud: {lastCloudSavedAt?lastCloudSavedAt.toLocaleString():"never"}<br/>
-                Last pulled from cloud: {lastCloudPulledAt?lastCloudPulledAt.toLocaleString():"never"}
-              </div>
-              {hasUnsyncedChanges&&onViewPendingChanges&&
-                <button onClick={onViewPendingChanges} style={{marginTop:6,background:"transparent",border:"none",padding:0,fontSize:11,fontWeight:600,color:P.amber,textDecoration:"underline"}}>
-                  View what's pending
-                </button>}
-            </div>
+            {(()=>{
+              const statusMap={
+                saving:{label:"Saving…",color:P.sub,bg:P.sfA},
+                synced:{label:"✅ Cloud synced",color:P.gr,bg:P.grS},
+                pending:{label:`⚠️ Pending changes${changesSinceSave?` (${changesSinceSave})`:""}`,color:P.amber,bg:P.amberS},
+                offline:{label:"📴 Offline — will sync when back online",color:P.sub,bg:P.sfA},
+                failed:{label:"❌ Sync failed — data is safe on this device",color:P.red||P.wine,bg:P.amberS},
+                stale:{label:"⬆️ Newer data available — syncing…",color:P.amber,bg:P.amberS},
+                idle:hasUnsyncedChanges
+                  ?{label:`⚠️ Local changes pending${changesSinceSave?` (${changesSinceSave})`:""}`,color:P.amber,bg:P.amberS}
+                  :{label:"✅ Cloud is up to date",color:P.gr,bg:P.grS},
+              };
+              const s=statusMap[syncStatus]||statusMap.idle;
+              return(
+                <div style={{fontSize:12,color:s.color,marginBottom:8,padding:"8px 10px",background:s.bg,borderRadius:10,lineHeight:1.6}}>
+                  {s.label}
+                  <div style={{fontSize:11,color:P.faint,marginTop:4}}>
+                    Last saved to cloud: {lastCloudSavedAt?lastCloudSavedAt.toLocaleString():"never"}<br/>
+                    Last pulled from cloud: {lastCloudPulledAt?lastCloudPulledAt.toLocaleString():"never"}
+                  </div>
+                  {hasUnsyncedChanges&&onViewPendingChanges&&
+                    <button onClick={onViewPendingChanges} style={{marginTop:6,background:"transparent",border:"none",padding:0,fontSize:11,fontWeight:600,color:P.amber,textDecoration:"underline"}}>
+                      View what's pending
+                    </button>}
+                </div>
+              );
+            })()}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
               <button onClick={()=>saveToCloud()} disabled={syncOp==="push"} style={btn}>
                 <I.Cloud size={14}/>{syncOp==="push"?"Saving…":"Save to Cloud"}
@@ -5335,6 +5620,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             <div style={{fontSize:11,color:P.sub,padding:"8px 10px",background:P.sfA,borderRadius:10}}>
               Pull before editing on another device. Save to Cloud when finished — you and {owners.wife||"your partner"} share this dataset.
             </div>
+            <SyncDiagnostics {...{localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,hasUnsyncedChanges,changesSinceSave,syncStatus,isOnline,lastSyncError}}/>
           </div>
           :<div style={{marginBottom:16,fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
             Add your Worker URL and Sync Token to <code>index.html</code> to enable sync.
