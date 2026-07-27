@@ -243,6 +243,74 @@ select{transition:background .22s;}
   .sub-row-meta{flex-basis:100%;padding-left:14px;}
 }
 
+/* ── Home tab: responsive dashboard grid ──
+   One shared 6-column track at every breakpoint, so every card snaps to the
+   same vertical guides instead of each row inventing its own widths (that
+   inconsistency is what made the old 2-col version feel "assembled"). Cards
+   claim column spans per breakpoint; `order` handles the mobile reading
+   sequence.
+
+   Row structure by breakpoint:
+     mobile  (<768)      1 col   Hero / Portfolio / Budget / Allocation / Goals
+     tablet  (768-1023)  6 col   Hero(6) / Portfolio(3)+Allocation(3)
+                                 / Budget(3)+Goals(3) / QuickActions(6)
+     desktop (>=1024)    6 col   same, but Portfolio(4)+Allocation(2) so the
+                                 analytical card gets the 2/3 width it needs
+                                 and Allocation gets a column it's designed for.
+
+   .home-cell is a flex wrapper whose single child card stretches to the full
+   row height — that's what keeps side-by-side cards bottom-aligned rather
+   than leaving one short card floating against a tall neighbour. */
+.home-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:stretch;}
+.home-cell{display:flex;min-width:0;grid-column:1/-1;}
+.home-cell>*{flex:1;min-width:0;}
+.home-grid>.cell-hero{order:1;}
+.home-grid>.cell-portfolio{order:2;}
+.home-grid>.cell-budget{order:3;}
+.home-grid>.cell-allocation{order:4;}
+.home-grid>.cell-goals{order:5;}
+/* Mobile uses the floating + button instead (never both at once). */
+.home-grid>.cell-qa{display:none;}
+@media(min-width:768px){
+  .home-grid>.cell-portfolio{grid-column:span 3;order:2;}
+  .home-grid>.cell-allocation{grid-column:span 3;order:3;}
+  .home-grid>.cell-budget{grid-column:span 3;order:4;}
+  .home-grid>.cell-goals{grid-column:span 3;order:5;}
+  .home-grid>.cell-qa{display:flex;order:6;}
+}
+@media(min-width:1024px){
+  .home-grid>.cell-portfolio{grid-column:span 4;}
+  .home-grid>.cell-allocation{grid-column:span 2;}
+}
+/* Home's own FAB: mobile-only, and only on the Home tab (App suppresses its
+   global FAB there). Above 768px the in-grid Quick Actions bar takes over, so
+   the floating button disappears — the two are never visible together. */
+@media(min-width:768px){.home-fab{display:none!important;}}
+/* Equal-height cards: the card root fills its stretched cell, and whichever
+   child is marked .home-fill (a chart, usually) absorbs the leftover height
+   so a tall row never leaves a dead blank band inside a short card. */
+.home-card{display:flex;flex-direction:column;height:100%;box-sizing:border-box;}
+.home-fill{flex:1;min-height:0;}
+/* Cards that drill into a tab: same neumorphic shell, just a light press
+   affordance so it reads as tappable without introducing a new style. */
+.home-tappable{transition:transform .15s ease,opacity .15s ease;}
+.home-tappable:active{transform:scale(.985);}
+.home-tappable:focus-visible{outline:2px solid var(--gr,#1E6E5C);outline-offset:2px;}
+/* Mobile keeps trend charts short so Net Worth, Portfolio and part of Budget
+   all land on the first screen; they grow back on wider layouts where the
+   extra height is what keeps side-by-side cards level. */
+@media(max-width:767px){
+  /* Fixed height, and opt out of .home-fill's flex growth — a max-height alone
+     would let the flex basis collapse the chart to nothing. */
+  .home-spark{flex:0 0 auto!important;height:46px!important;min-height:0!important;}
+}
+/* Hero: stacked on mobile; figures | trend side by side once there's width,
+   so the full-bleed row stops being mostly empty space. */
+.hero-split{display:grid;grid-template-columns:1fr;gap:8px;}
+@media(min-width:768px){
+  .hero-split{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:20px;align-items:end;}
+}
+
 #root{padding-top:env(safe-area-inset-top);}
 #loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;transition:background .25s;}
 .loader{width:32px;height:32px;border:3px solid #DADEE0;border-top-color:#1E6E5C;border-radius:50%;animation:spin .8s linear infinite;}
@@ -265,7 +333,7 @@ function Portal({children}){
   return ReactDOM.createPortal(children,document.body);
 }
 const _RC=(typeof Recharts!=='undefined')?Recharts:window.Recharts||{};
-const{PieChart,Pie,Cell,ResponsiveContainer,LineChart,Line,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
+const{PieChart,Pie,Cell,ResponsiveContainer,LineChart,Line,AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
 
 /* ── Animation helpers ── */
 
@@ -443,6 +511,7 @@ const I={
   Calendar:Ic([<rect key="a" x="3" y="4" width="18" height="18" rx="2"/>,<line key="b" x1="16" y1="2" x2="16" y2="6"/>,<line key="c" x1="8" y1="2" x2="8" y2="6"/>,<line key="d" x1="3" y1="10" x2="21" y2="10"/>]),
   PiggyBank:Ic([<path key="a" d="M19 11a7.5 7.5 0 0 1-7.5 7.5A7.5 7.5 0 0 1 4 11v-1a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1v1z"/>,<path key="b" d="M19 11c.9 0 1.8.2 2.6.5L23 9l-2-1.5"/>,<path key="c" d="M9 11v-1"/>,<path key="d" d="M8 15h8"/>]),
   Receipt:Ic([<polyline key="a" points="6 2 3 6 3 22 21 22 21 6 18 2"/>,<rect key="b" x="6" y="2" width="12" height="6"/>,<line key="c" x1="8" y1="13" x2="16" y2="13"/>,<line key="d" x1="8" y1="17" x2="16" y2="17"/>]),
+  Home:Ic([<path key="a" d="M3 9.5 12 3l9 6.5"/>,<path key="b" d="M5 10v10h14V10"/>,<path key="c" d="M9 20v-6h6v6"/>]),
 };
 
 /* ── Goal-type icons (minimalist line icons) ── */
@@ -629,6 +698,71 @@ function bucketProgress(bucketKey,payPeriods,owner){
   return{elapsed,total};
 }
 
+/* Spend-status thresholds — hoisted to module scope so the Expenses tab and
+   Home's Tracked Spending card colour envelopes by the exact same rule
+   (green under 80%, amber from 80%, red at/over 100%) instead of each keeping
+   its own copy. */
+function spendStatusColor(spent,budget){
+  if(budget===0)return P.sub;
+  const r=spent/budget;
+  if(r>=1)return P.red;
+  if(r>=0.8)return"#E07B2A";
+  return P.gr;
+}
+function spendStatusBg(spent,budget){
+  if(budget===0)return P.sfA;
+  const r=spent/budget;
+  if(r>=1)return P.redS;
+  if(r>=0.8)return P.amberS;
+  return P.sfA;
+}
+
+/* Tracked-spending rollup for one owner, for their CURRENT bucket (calendar
+   month, or pay-period when that owner has pay-periods enabled).
+
+   This is a straight lift of the envelope/spent maths ExpenseTrackerView
+   already performs — same tracked test (trackExpenses!==false), same
+   effective-budget rule (sub-category sum when subs exist, else the category
+   amount), same skip of zero-budget categories, same bucket filter, and the
+   same isExtraFunds handling where ad-hoc top-ups raise the effective budget
+   rather than counting as spend. Kept as one shared top-level function so
+   Home reads the numbers rather than re-deriving them. */
+function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods}){
+  const month=bucketNow(payPeriods,owner);
+  const plan=planForMonth?planForMonth(month,owner):null;
+  const envs=[];
+  if(plan){
+    (plan.groups||[]).forEach(g=>{
+      (plan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
+        if(c.trackExpenses===false)return; // untracked: transfers, savings, investments
+        const effAmt=(c.subs||[]).length>0
+          ?(c.subs||[]).reduce((s,sub)=>s+(Number(sub.amount)||0),0)
+          :Number(c.amount)||0;
+        if(effAmt<=0)return;
+        envs.push({id:c.id,name:c.name,baseBudget:effAmt,color:c.color});
+      });
+    });
+  }
+  const inBucket=(expenses||[]).filter(e=>
+    e.date&&(e.owner||"me")===owner&&bucketKeyFor(e.date,payPeriods,owner)===month);
+  const spentMap={},extraMap={};
+  inBucket.forEach(e=>{
+    const m=e.isExtraFunds?extraMap:spentMap;
+    m[e.catId]=(m[e.catId]||0)+e.amount;
+  });
+  const cats=envs.map(e=>{
+    const budget=e.baseBudget+(extraMap[e.id]||0);
+    const spent=spentMap[e.id]||0;
+    return{id:e.id,name:e.name,color:e.color,owner,budget,spent,
+      remaining:budget-spent,
+      pct:budget>0?(spent/budget)*100:0,
+      over:spent>budget};
+  });
+  return{month,cats,
+    budget:cats.reduce((s,c)=>s+c.budget,0),
+    spent:cats.reduce((s,c)=>s+c.spent,0)};
+}
+
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
 const PROXY_URL="https://alloc-kv.jastinefodra21.workers.dev";
@@ -661,6 +795,11 @@ function toYahooSym(t){
 }
 function baseKey(t){return t.toUpperCase().replace(/\.L$|\.AS$|\.DE$/i,"");}
 
+/* Returns {[ticker]:{price,previousClose}} uniformly regardless of provider —
+   previousClose is null when a provider doesn't have it, never fabricated.
+   Callers that only need the bare number (e.g. net-worth/portfolio value
+   math) read `.price`; Home's "today's gain/loss" is the only consumer of
+   `.previousClose` so far. */
 async function fetchQuotes(tickers){
   const out={};
 
@@ -671,8 +810,13 @@ async function fetchQuotes(tickers){
       const r=await fetch(`${PROXY_URL}/quote?symbols=${encodeURIComponent(syms)}`);
       if(r.ok){
         const j=await r.json();
-        Object.entries(j).forEach(([sym,price])=>{
-          if(price>0)out[baseKey(sym)]=price;
+        Object.entries(j).forEach(([sym,q])=>{
+          // Tolerate both the new {price,previousClose} shape (post-redeploy
+          // worker.js) and the old bare-number shape (pre-redeploy), so this
+          // client keeps working even before the Worker is redeployed.
+          const price=(q&&typeof q==="object")?q.price:q;
+          const previousClose=(q&&typeof q==="object")?(q.previousClose||null):null;
+          if(price>0)out[baseKey(sym)]={price,previousClose};
         });
       }
     }catch(e){}
@@ -686,8 +830,11 @@ async function fetchQuotes(tickers){
         const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(baseKey(t))}&token=${FINNHUB_KEY}`);
         if(!r.ok)return;
         const j=await r.json();
+        // Finnhub already returns both current (c) and previous-close (pc) —
+        // previously only `pc` was read, as a same-value fallback for the
+        // price when `c` was missing, and previousClose itself was discarded.
         const p=j.c>0?j.c:(j.pc>0?j.pc:null);
-        if(p)out[baseKey(t)]=p;
+        if(p)out[baseKey(t)]={price:p,previousClose:j.pc>0?j.pc:null};
       }catch(e){}
     }));
   }
@@ -800,6 +947,14 @@ function defaultData(){
        trades:[{id:uid(),date:buyDate,type:"buy",shares:8,price:160}]},
     ],
     livePrice:{},
+    livePriceAt:null,
+    prevClose:{},
+    homeDisplay:{
+      netWorth:{primary:"PHP",secondary:["SAR","USD","PHP"]},
+      portfolio:{primary:"USD"},
+      cash:{primary:"PHP"},
+      budget:{primary:"PHP"},
+    },
     projection:{monthly:1500,years:20,rate:8},
     banks:[
       {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000},
@@ -892,6 +1047,13 @@ function migrate(d){
     if(!a.updatedAt)a.updatedAt="2000-01-01T00:00:00.000Z";
   });
   if(!d.livePrice)d.livePrice={};
+  if(d.livePriceAt===undefined)d.livePriceAt=null;
+  if(!d.prevClose)d.prevClose={};
+  if(!d.homeDisplay)d.homeDisplay={};
+  if(!d.homeDisplay.netWorth)d.homeDisplay.netWorth={primary:"PHP",secondary:["SAR","USD","PHP"]};
+  if(!d.homeDisplay.portfolio)d.homeDisplay.portfolio={primary:"USD"};
+  if(!d.homeDisplay.cash)d.homeDisplay.cash={primary:"PHP"};
+  if(!d.homeDisplay.budget)d.homeDisplay.budget={primary:"PHP"};
   if(!d.portHistory)d.portHistory=[];
   if(!d.expenses)d.expenses=[];
   if(!d.monthlyPlans)d.monthlyPlans=[];
@@ -1013,7 +1175,11 @@ const sortedByKey=(arr,keyOf)=>Array.isArray(arr)?[...arr].sort((a,b)=>String(ke
    a person might make on purpose. */
 const fingerprint=d=>{
   try{
-    const{theme,dataUpdatedAt,...rest}=d||{};
+    // livePrice/livePriceAt/prevClose are excluded the same way theme is:
+    // they're refreshed automatically in the background (manual/auto quote+FX
+    // refresh) and must never make the doc look "dirty" or trigger a cloud
+    // autosave just because a stock price ticked.
+    const{theme,dataUpdatedAt,livePrice,livePriceAt,prevClose,...rest}=d||{};
     const canon={
       ...rest,
       expenses:sortedById(rest.expenses),
@@ -1204,7 +1370,7 @@ function App(){
     return{...next,dataUpdatedAt:new Date().toISOString()};
   });
   const[loaded,setLoaded]=useState(false);
-  const[tab,setTab]=useState("budget");
+  const[tab,setTab]=useState("home");
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[showPendingDiff,setShowPendingDiff]=useState(false);
@@ -1304,6 +1470,8 @@ function App(){
 
   const hasUnsyncedRef=useRef(false);
   useEffect(()=>{hasUnsyncedRef.current=hasUnsyncedChanges;},[hasUnsyncedChanges]);
+  const isOnlineRef=useRef(isOnline);
+  useEffect(()=>{isOnlineRef.current=isOnline;},[isOnline]);
 
   /* ── device-local theme (light/dark) ──────────────────────────────────────
      Purely a per-device UI preference, same treatment as budgetOwner below —
@@ -1796,9 +1964,10 @@ function App(){
         if(hasUnsyncedRef.current&&!savingRef.current)saveToCloudRef.current("auto");
       }else if(document.visibilityState==="visible"){
         checkCloudOnActivateRef.current();
+        refreshMarketDataRef.current();
       }
     };
-    const onFocus=()=>checkCloudOnActivateRef.current();
+    const onFocus=()=>{checkCloudOnActivateRef.current();refreshMarketDataRef.current();};
     window.addEventListener("visibilitychange",onVisibility);
     window.addEventListener("focus",onFocus);
     window.addEventListener("pagehide",flushToCloudBeacon);
@@ -1932,7 +2101,7 @@ function App(){
      waiting for a fetch to time out — and reconnecting fires the same
      activation check, so data catches up the moment connectivity returns. */
   useEffect(()=>{
-    const onOnline=()=>{setIsOnline(true);checkCloudOnActivateRef.current();};
+    const onOnline=()=>{setIsOnline(true);checkCloudOnActivateRef.current();refreshMarketDataRef.current();};
     const onOffline=()=>{setIsOnline(false);setSyncStatus("offline");};
     window.addEventListener("online",onOnline);
     window.addEventListener("offline",onOffline);
@@ -1998,6 +2167,13 @@ function App(){
   const pullStartY=useRef(null);
   const pullArmed=useRef(false);
   const pullDistRef=useRef(0);
+  /* Phase shown by the pull-to-sync indicator AFTER the existing cloud
+     save/pull step (syncOp) resolves: null while idle, then
+     "rates"→"quotes" while refreshMarketDataIfStale({force:true}) runs its
+     two sub-phases, then "done"/"error"/"offline" briefly before fading.
+     Kept as its own tiny piece of state rather than folding into syncOp so
+     syncOp's existing push/pull meaning (read elsewhere) is untouched. */
+  const[pullPhase,setPullPhase]=useState(null);
   useEffect(()=>{
     const atTop=()=>(window.scrollY||document.documentElement.scrollTop||0)<=0;
     const onStart=e=>{
@@ -2020,8 +2196,20 @@ function App(){
         // context-aware: pending local changes save first; otherwise this
         // is a plain safe pull. Read handlers via refs so this listener
         // (attached once, on mount) always calls the latest version.
-        if(hasUnsyncedRef.current)saveToCloudRef.current("gesture");
-        else pullFromCloudRef.current();
+        if(!isOnlineRef.current){
+          // no network attempts at all when offline — just say so.
+          setPullPhase("offline");
+          setTimeout(()=>setPullPhase(null),1600);
+        }else{
+          const cloudStep=hasUnsyncedRef.current?saveToCloudRef.current("gesture"):pullFromCloudRef.current();
+          Promise.resolve(cloudStep)
+            .then(()=>refreshMarketDataRef.current({force:true,onPhase:setPullPhase}))
+            .then(({failed})=>{
+              setPullPhase(failed?"error":"done");
+              setTimeout(()=>setPullPhase(null),1600);
+            })
+            .catch(()=>{setPullPhase("error");setTimeout(()=>setPullPhase(null),1600);});
+        }
       }
       pullArmed.current=false;
       pullStartY.current=null;
@@ -2219,7 +2407,25 @@ function App(){
     pushImportantRef.current();
   };
   const livePrice=data.livePrice||{};
-  const setLivePrice=prices=>setData(d=>({...d,livePrice:{...(d.livePrice||{}),...prices}}));
+  const livePriceAt=data.livePriceAt||null;
+  const prevClose=data.prevClose||{};
+  /* quote refreshes (manual InvestmentsView button or the auto-refresh
+     below) are deliberately NOT pushed via pushImportantRef — livePrice/
+     livePriceAt/prevClose are excluded from fingerprint() so this only ever
+     rides the slow idle-autosave path, never forces an immediate cloud write.
+     fetchQuotes() now returns {ticker:{price,previousClose}} uniformly, but
+     livePrice itself stays a bare {ticker:number} map — every existing
+     reader (invSar calc, InvestmentsView's per-ticker lookups) expects that
+     shape, so previousClose is split off into its own device-local field
+     instead of changing livePrice's shape. */
+  const setLivePrice=quotes=>setData(d=>{
+    const prices={},prevs={};
+    Object.entries(quotes||{}).forEach(([t,q])=>{
+      if(q&&typeof q==="object"){prices[t]=q.price;if(q.previousClose!=null)prevs[t]=q.previousClose;}
+      else prices[t]=q; // tolerate a bare-number map too (defensive)
+    });
+    return{...d,livePrice:{...(d.livePrice||{}),...prices},livePriceAt:Date.now(),prevClose:{...(d.prevClose||{}),...prevs}};
+  });
 
   /* portfolio history — snapshot of total USD value taken when user refreshes prices */
   const portHistory=data.portHistory||[];
@@ -2274,9 +2480,11 @@ function App(){
   const[ratesLoading,setRatesLoading]=useState(false);
   const loadRates=async()=>{
     setRatesLoading(true);setRatesErr(false);
+    let ok=true;
     try{const{rates:r,at}=await fetchRates();setRates(r);setRatesAt(at);}
-    catch(e){setRatesErr(true);}
+    catch(e){setRatesErr(true);ok=false;}
     setRatesLoading(false);
+    return ok; // used by refreshMarketDataIfStale to surface a "some data failed" flag
   };
   useEffect(()=>{loadRates();},[]);
   const convert=(amt,from,to)=>{
@@ -2362,6 +2570,51 @@ function App(){
     return()=>clearTimeout(t);
   },[netWorth,banksSar,invSar,assetSar,liabSar,netWorthReady]);
 
+  /* ── automatic market-data refresh ────────────────────────────────────────
+     Keeps stock quotes and FX rates from silently going stale for people who
+     never open Investments/Currency and just live on Home. Piggybacks on the
+     exact same "app became active" moments checkCloudOnActivate already
+     uses (visibility/focus/online) — no new listeners. Ref-guarded (not
+     state-guarded) so a second trigger while a fetch is already in flight is
+     a no-op even across the stale closures those event handlers capture.
+     Failures are swallowed here and never clear/zero the cached
+     livePrice/rates — fetchQuotes/fetchRates already only resolve on
+     success, so there's nothing to overwrite on failure. */
+  const quotesRefreshingRef=useRef(false);
+  const ratesRefreshingRef=useRef(false);
+  const QUOTES_STALE_MS=15*60*1000,RATES_STALE_MS=6*60*60*1000;
+  /* {force:true} bypasses the staleness window — used by the manual/gesture
+     pull-to-refresh, where the person explicitly asked for fresh data right
+     now. Passive lifecycle triggers (visibility/focus/online) call this with
+     no args and keep respecting the thresholds. Either way the in-flight
+     dedup refs still apply, so a forced pull and a passive stale-check firing
+     at once never double-fetch. Returns {failed} — true if any attempted
+     phase errored — purely for the pull-to-refresh indicator text; never
+     used to clear/zero cached data. */
+  const refreshMarketDataIfStale=async({force=false,onPhase}={})=>{
+    let failed=false;
+    if(!quotesRefreshingRef.current){
+      const tickers=[...new Set(invs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean))];
+      if(tickers.length&&(force||Date.now()-(livePriceAt||0)>QUOTES_STALE_MS)){
+        quotesRefreshingRef.current=true;
+        if(onPhase)onPhase("quotes");
+        try{const q=await fetchQuotes(tickers);setLivePrice(q);}catch(e){failed=true;/* keep last-good prices */}
+        quotesRefreshingRef.current=false;
+      }
+    }
+    if(!ratesRefreshingRef.current&&(force||Date.now()-(ratesAt||0)>RATES_STALE_MS)){
+      ratesRefreshingRef.current=true;
+      if(onPhase)onPhase("rates");
+      const ok=await loadRates().catch(()=>false);
+      if(!ok)failed=true;
+      ratesRefreshingRef.current=false;
+    }
+    return{failed};
+  };
+  const refreshMarketDataRef=useRef(refreshMarketDataIfStale);
+  useEffect(()=>{refreshMarketDataRef.current=refreshMarketDataIfStale;});
+  useEffect(()=>{if(loaded)refreshMarketDataRef.current();},[loaded]);
+
   /* household */
   const hh=data.household||{splitMine:50,expenses:[]};
   const setSplit=v=>setData(d=>({...d,household:{...(d.household||{splitMine:50,expenses:[]}),splitMine:v}}));
@@ -2381,6 +2634,7 @@ function App(){
   const setInvestTarget=patch=>setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));
 
   const TABS=[
+    ["home","Home",I.Home],
     ["budget","Budget",I.Wallet],["expenses","Expenses",I.Receipt],["household","Household",I.Users],
     ["banks","Banks",I.Bank],["investments","Investments",I.Trending],
     ["networth","Net Worth",I.Gem],["goals","Goals",I.Target],
@@ -2415,26 +2669,42 @@ function App(){
           </div>
         </div>
       )}
-      {/* pull-to-sync indicator */}
-      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",flexDirection:"column",
-        alignItems:"center",pointerEvents:"none",
-        paddingTop:`calc(env(safe-area-inset-top) + ${Math.max(8,pullDist-30)}px)`,
-        opacity:pullDist>0||syncing?Math.min(1,pullDist/PULL_THRESHOLD)||(syncing?1:0):0,
-        transition:pullDist===0?"opacity .2s ease":"none"}}>
-        <div style={{width:32,height:32,borderRadius:999,background:P.sf,border:`1px solid ${P.line}`,
-          display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 14px rgba(12,22,40,.18)"}}>
-          <I.Refresh size={15} style={{color:pullDist>=PULL_THRESHOLD||syncing?P.gr:P.faint,
-            transform:syncing?"none":`rotate(${Math.min(pullDist,PULL_THRESHOLD)/PULL_THRESHOLD*360}deg)`,
-            ...(syncing?{animation:"spin .8s linear infinite"}:{})}}/>
-        </div>
-        {(pullDist>0||syncing)&&
-          <div style={{marginTop:6,fontSize:11,color:P.sub,background:P.sf,padding:"2px 8px",borderRadius:999,border:`1px solid ${P.line}`}}>
-            {syncOp==="push"?"Saving to cloud…"
-              :syncOp==="pull"?"Checking cloud…"
-              :pullDist>=PULL_THRESHOLD?(hasUnsyncedChanges?"Release to save & sync":"Release to pull")
-              :(hasUnsyncedChanges?"Pull to save & sync":"Pull to check cloud")}
-          </div>}
-      </div>
+      {/* pull-to-sync indicator — extended with the post-sync market-data
+          phases (rates/quotes) a gesture-triggered pull now also runs; see
+          the pull-gesture onEnd handler above. */}
+      {(()=>{
+        const marketBusy=pullPhase==="rates"||pullPhase==="quotes";
+        const active=pullDist>0||syncing||!!pullPhase;
+        const spinning=syncing||marketBusy;
+        let label;
+        if(pullPhase==="offline")label="Offline · showing cached values";
+        else if(pullPhase==="rates")label="Updating exchange rates…";
+        else if(pullPhase==="quotes")label="Updating investments…";
+        else if(pullPhase==="done")label="Home updated";
+        else if(pullPhase==="error")label="Some market data could not be updated";
+        else if(syncOp==="push")label="Saving to cloud…";
+        else if(syncOp==="pull")label="Checking cloud…";
+        else if(pullDist>=PULL_THRESHOLD)label=hasUnsyncedChanges?"Release to save & sync":"Release to pull";
+        else label=hasUnsyncedChanges?"Pull to save & sync":"Pull to check cloud";
+        return(
+          <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",flexDirection:"column",
+            alignItems:"center",pointerEvents:"none",
+            paddingTop:`calc(env(safe-area-inset-top) + ${Math.max(8,pullDist-30)}px)`,
+            opacity:active?Math.min(1,pullDist/PULL_THRESHOLD)||(syncing||pullPhase?1:0):0,
+            transition:pullDist===0?"opacity .2s ease":"none"}}>
+            <div style={{width:32,height:32,borderRadius:999,background:P.sf,border:`1px solid ${P.line}`,
+              display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 14px rgba(12,22,40,.18)"}}>
+              <I.Refresh size={15} style={{color:pullDist>=PULL_THRESHOLD||spinning?P.gr:P.faint,
+                transform:spinning?"none":`rotate(${Math.min(pullDist,PULL_THRESHOLD)/PULL_THRESHOLD*360}deg)`,
+                ...(spinning?{animation:"spin .8s linear infinite"}:{})}}/>
+            </div>
+            {active&&
+              <div style={{marginTop:6,fontSize:11,color:P.sub,background:P.sf,padding:"2px 8px",borderRadius:999,border:`1px solid ${P.line}`}}>
+                {label}
+              </div>}
+          </div>
+        );
+      })()}
       <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px 80px"}}>
 
         {/* header */}
@@ -2523,6 +2793,7 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
+          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods}}/>}
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
@@ -2557,7 +2828,10 @@ function App(){
         </div>}
       {showProfilePicker&&<ProfilePickerModal owners={data.owners} dismissable={profilePickerDismissable}
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
-      {tab!=="expenses"&&
+      {/* Home renders its own mobile-only FAB (which opens the quick-add sheet
+          instead of jumping straight to Expenses) and a desktop Quick Actions
+          bar, so the global FAB steps aside there to avoid two + buttons. */}
+      {tab!=="expenses"&&tab!=="home"&&
         <button aria-label="Quick add transaction" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
           style={{position:"fixed",right:16,bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:70,
             width:56,height:56,borderRadius:999,background:P.gr,color:"#fff",border:"none",
@@ -2565,6 +2839,721 @@ function App(){
             boxShadow:"0 6px 20px rgba(12,22,40,.35)",cursor:"pointer"}}>
           <I.Plus size={24}/>
         </button>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HOME — dashboard landing tab. Purely presentational: every figure here is
+   either read straight off App()'s already-computed values (netWorth,
+   banksSar/invSar/assetSar/liabSar, holdingStats, goal contributions) or a
+   thin per-owner reslice of the same raw collections (banks/plans/goals).
+   It never recomputes financial logic and never mutates data except through
+   the exact same mutator functions (addContribution) the rest of the app
+   already uses. Deliberately split into small sibling components so a
+   future card (Wishlist, Subscriptions, Achievements) is just one more
+   <XCard/> added to the list at the bottom of HomeView. ─────────────────── */
+
+/* `overrides` lets individual cards dial padding up or down without
+   inventing a new shadow/radius — every Home card still goes through neu(20).
+   marginBottom is 0 by default: HomeView's .home-grid `gap` now handles
+   spacing between cards (grid replaced the old single-column stack), so a
+   card only needs its own marginBottom if it's rendered somewhere the grid
+   doesn't apply (kept overridable for that reason). */
+function homeCardStyle(overrides){return{...neu(20),padding:18,marginBottom:0,...overrides};}
+
+/* Turns a livePriceAt/ratesAt timestamp (+ online state) into the small
+   muted freshness line shown on Home's live-priced/FX-derived cards. Never
+   surfaces raw technical errors — those stay on Investments/Currency where
+   they already are. */
+function freshnessText(ts,isOnline){
+  if(isOnline===false)return "Offline · showing cached values";
+  if(!ts)return null;
+  const mins=Math.floor((Date.now()-ts)/60000);
+  if(mins<1)return "Updated just now";
+  if(mins<60)return `Updated ${mins} minute${mins===1?"":"s"} ago`;
+  const hrs=Math.floor(mins/60);
+  if(hrs<24)return `Updated ${hrs} hour${hrs===1?"":"s"} ago`;
+  const d=new Date(ts);
+  return `Using last available prices from ${d.toLocaleDateString(undefined,{month:"short",day:"numeric"})}`;
+}
+
+/* Minimal inline circular-progress ring (stroke-dasharray technique) — no
+   charting library needed for something this small. */
+function ProgressRing({pct,size=60,stroke=7,color,track}){
+  const p=Math.max(0,Math.min(100,pct||0));
+  const r=(size-stroke)/2;
+  const c=2*Math.PI*r;
+  const off=c*(1-p/100);
+  return(
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{flexShrink:0}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={track||P.sfA} strokeWidth={stroke}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color||P.gr} strokeWidth={stroke}
+        strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round"
+        transform={`rotate(-90 ${size/2} ${size/2})`} style={{transition:"stroke-dashoffset .4s ease"}}/>
+    </svg>
+  );
+}
+
+/* Subtle sparkline off portHistory/history — hidden axes/grid/tooltip on
+   purpose, this is a glance-level trend indicator, not a chart to read
+   values off. `area:true` renders a filled AreaChart instead of a bare line
+   (used by Portfolio/Hero for a slightly richer look) — same Recharts import,
+   no new dependency. `height` lets Hero use a taller trend than Portfolio's
+   compact one. */
+function Sparkline({data,color,area,height=40,fill}){
+  if(!data||data.length<2)return null;
+  const c=color||P.gr;
+  const gid=`spark-${c.replace(/[^a-zA-Z0-9]/g,"")}`;
+  /* Y-domain is the real fix for the "nearly flat decorative line": Recharts
+     defaults a numeric axis to start at 0, so a series like 10,650 → 10,718
+     gets squashed into an almost-horizontal band near the top of the plot.
+     Pinning the domain to the data's own min/max (with a small pad so the
+     stroke never clips against the edges) makes genuine month-to-month
+     movement legible without inventing or rescaling a single value. */
+  const vals=data.map(d=>d.value).filter(v=>Number.isFinite(v));
+  const lo=Math.min(...vals),hi=Math.max(...vals);
+  const pad=(hi-lo)*0.12||Math.abs(hi||1)*0.02||1;
+  const domain=[lo-pad,hi+pad];
+  const wrap=fill
+    ?{width:"100%",marginTop:8,minHeight:height}
+    :{width:"100%",height,marginTop:8};
+  return(
+    <div className={`${fill?"home-fill ":""}home-spark`} style={wrap}>
+      <ResponsiveContainer width="100%" height="100%">
+        {area?(
+          <AreaChart data={data} margin={{top:2,right:0,bottom:0,left:0}}>
+            <defs>
+              <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={c} stopOpacity={0.28}/>
+                <stop offset="100%" stopColor={c} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <YAxis hide domain={domain}/>
+            <Area type="monotone" dataKey="value" stroke={c} strokeWidth={2} fill={`url(#${gid})`} dot={false} isAnimationActive={false}/>
+          </AreaChart>
+        ):(
+          <LineChart data={data} margin={{top:2,right:0,bottom:0,left:0}}>
+            <YAxis hide domain={domain}/>
+            <Line type="monotone" dataKey="value" stroke={c} strokeWidth={2} dot={false} isAnimationActive={false}/>
+          </LineChart>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* 3-way Me / Wife / Household pill switcher for Home only. The underlying
+   data model only ever has 2 profiles ("me"/"wife" — see PROFILE_KEY); there
+   is no literal "household" profile anywhere else in the app. "Household" is
+   a Home-only aggregate view (assumption documented at the top of this
+   file's task): picking Me/Wife here also drives budgetOwner (so it stays
+   consistent with every other tab), picking Household is purely local to
+   this card and doesn't change budgetOwner. */
+function HomeProfileToggle({profile,setProfile,owners}){
+  const opts=[["me",owners.me||"Me",P.gr],["wife",owners.wife||"Wife",P.br],["household","Household",P.amber]];
+  return(
+    <div style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+      {opts.map(([key,label,color])=>(
+        <button key={key} onClick={()=>setProfile(key)}
+          style={{borderRadius:999,padding:"4px 10px",fontSize:11,fontWeight:600,border:"none",whiteSpace:"nowrap",
+            background:profile===key?color:"transparent",color:profile===key?"#fff":color,
+            transition:"background .15s,color .15s"}}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* a. Hero Card — net worth for the selected profile, MoM change from
+   data.history[] (reused, not recomputed), secondary currencies per
+   data.homeDisplay.netWorth, plus a trend sparkline off the same history[].
+   MoM-%-sanity guard: if the prior month's net is near-zero relative to the
+   current one, the percentage is mathematically unstable/misleading (a
+   near-zero denominator can turn an ordinary swing into "1500%"), most often
+   because a past month's auto-captured snapshot was saved before that
+   month's investment quotes had ever been fetched (invSar was still 0 that
+   month) — a data-staleness artifact, not a bug in the momPct formula
+   itself. In that case we still show the raw amount change but hide the %
+   rather than print something misleading. */
+function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDisplay,convert,ratesErr}){
+  const ref=useRef(null);
+  const val=netWorthByProfile(profile);
+  useFlash(Math.round(val),ref);
+  const sorted=[...(history||[])].sort((a,b)=>a.month.localeCompare(b.month));
+  const latest=sorted[sorted.length-1];
+  const prev=sorted[sorted.length-2];
+  const momAmt=(latest&&prev)?latest.net-prev.net:null;
+  const pctUnstable=prev&&(Math.abs(prev.net)<Math.abs(latest.net)*0.05);
+  const momPct=(momAmt!=null&&prev&&prev.net!==0&&!pctUnstable)?(momAmt/Math.abs(prev.net))*100:null;
+  const nwSettings=(homeDisplay&&homeDisplay.netWorth)||{primary:"PHP",secondary:["SAR","USD","PHP"]};
+  const primary=nwSettings.primary||"PHP";
+  const secondary=nwSettings.secondary||["SAR","USD","PHP"];
+  const primaryVal=convert?convert(val,"SAR",primary):null;
+  const label=profile==="household"?"Household":(owners[profile]||profile);
+  const trendPts=sorted.map(h=>({value:h.net}));
+  /* Two-column split on wide screens (figures left, trend right) rather than
+     one full-width band of text above a stretched-out chart — that band is
+     what made the Hero read as "very wide and dominant" while still being
+     mostly empty. `.hero-split` collapses back to a single column on mobile. */
+  return(
+    <div className="home-card" style={homeCardStyle({padding:16})}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Net worth · {label}</div>
+        <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+      </div>
+      <div className="hero-split">
+        <div style={{minWidth:0}}>
+          <div ref={ref} className="serif tnum" style={{fontSize:34,fontWeight:600,color:P.ink,lineHeight:1.1}}>
+            {primaryVal!=null?`${primary} ${Math.round(primaryVal).toLocaleString("en-US")}`:`SAR ${Math.round(val).toLocaleString("en-US")}`}
+          </div>
+          {momAmt!=null&&
+            <div className="tnum" style={{fontSize:13,marginTop:6,color:momAmt>=0?P.gr:P.red,fontWeight:600}}>
+              {momAmt>=0?"▲":"▼"} SAR {Math.round(Math.abs(momAmt)).toLocaleString("en-US")}{momPct!=null?` (${momPct.toFixed(1)}%)`:pctUnstable?" (new baseline)":""} this month
+            </div>}
+          {convert&&
+            <div style={{display:"flex",flexWrap:"wrap",gap:14,marginTop:10}}>
+              {secondary.filter(c=>c!==primary).map(c=>{
+                const v=convert(val,"SAR",c);
+                if(v==null)return null;
+                return <span key={c} className="tnum" style={{fontSize:12,color:P.faint}}>{c} {Math.round(v).toLocaleString("en-US")}</span>;
+              })}
+            </div>}
+          {ratesErr&&<div style={{fontSize:11,color:P.faint,marginTop:8}}>Using last available exchange rates.</div>}
+        </div>
+        <div style={{minWidth:0,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+          {sorted.length>=2
+            ?<Sparkline data={trendPts} color={momAmt!=null&&momAmt<0?P.red:P.gr} area height={64}/>
+            :<div style={{fontSize:11,color:P.faint,marginTop:10}}>Trend appears after 2+ months of history</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* b. Portfolio Card — same holdingStats+livePrice math as InvestmentsView,
+   just re-summed here rather than imported (InvestmentsView keeps its rows
+   local to itself); displayed in data.homeDisplay.portfolio currency.
+   "Today's gain/loss" is additive: (price-previousClose)*shares, using the
+   device-local data.prevClose cache (see fetchQuotes/setLivePrice in App()).
+   Any ticker missing a previousClose (no refresh has run yet, or a provider
+   didn't supply it) is simply excluded from the sum rather than fabricated;
+   if NO ticker has one, the whole line is hidden. */
+function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay,portHistory,isOnline}){
+  const rows=(invs||[]).map(hld=>{
+    const{shares,totalCost}=holdingStats(hld.trades);
+    const key=baseKey(hld.ticker||"");
+    const price=livePrice[key]||0;
+    const pc=(prevClose||{})[key];
+    const hasToday=shares>0&&price>0&&pc>0;
+    return{value:shares*price,totalCost,todayGain:hasToday?shares*(price-pc):null};
+  });
+  const totVal=rows.reduce((s,r)=>s+r.value,0);
+  const totCost=rows.reduce((s,r)=>s+r.totalCost,0);
+  const totGain=totVal-totCost;
+  const totGainPct=totCost>0?(totGain/totCost)*100:0;
+  const todayRows=rows.filter(r=>r.todayGain!=null);
+  const todayGain=todayRows.length?todayRows.reduce((s,r)=>s+r.todayGain,0):null;
+  const primary=(homeDisplay&&homeDisplay.portfolio&&homeDisplay.portfolio.primary)||"USD";
+  const displayVal=primary==="USD"?totVal:(convert?convert(totVal,"USD",primary):null);
+  const pts=[...(portHistory||[])].sort((a,b)=>a.month.localeCompare(b.month)).map(h=>({value:h.value}));
+  const fresh=freshnessText(livePriceAt,isOnline);
+  /* Wide-card composition: value on the left, today's/overall gain as aligned
+     stat columns beside it, then the chart absorbing whatever height the row
+     ends up at (.home-fill) so this card never shows a blank band. Stats sit
+     in a wrapping flex row rather than a stack of one-liners, which is what
+     lets the extra 2/3-width actually carry information. */
+  const stat=(label,valueNode,tone)=>(
+    <div style={{minWidth:0}}>
+      <div style={{fontSize:11,color:P.faint,marginBottom:2,whiteSpace:"nowrap"}}>{label}</div>
+      <div className="tnum" style={{fontSize:13,fontWeight:600,color:tone,whiteSpace:"nowrap"}}>{valueNode}</div>
+    </div>
+  );
+  return(
+    <div className="home-card" style={homeCardStyle()}>
+      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:6}}>
+        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Portfolio</div>
+        {fresh&&<div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fresh}</div>}
+      </div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:20,flexWrap:"wrap",rowGap:10}}>
+        <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.ink,lineHeight:1.1}}>
+          {displayVal!=null?`${primary} ${Math.round(displayVal).toLocaleString("en-US")}`:`$${Math.round(totVal).toLocaleString("en-US")}`}
+        </div>
+        <div style={{display:"flex",gap:18,flexWrap:"wrap",rowGap:8}}>
+          {todayGain!=null&&stat("Today",
+            `${todayGain>=0?"▲":"▼"} $${Math.round(Math.abs(todayGain)).toLocaleString("en-US")}`,
+            todayGain>=0?P.gr:P.red)}
+          {stat("Overall",
+            `${totGain>=0?"▲":"▼"} $${Math.round(Math.abs(totGain)).toLocaleString("en-US")}`,
+            totGain>=0?P.gr:P.red)}
+          {stat("Return",`${totGain>=0?"+":""}${totGainPct.toFixed(1)}%`,totGain>=0?P.gr:P.red)}
+        </div>
+      </div>
+      {pts.length>=2
+        ?<Sparkline data={pts} color={totGain>=0?P.gr:P.red} area height={64} fill/>
+        :<div className="home-fill" style={{fontSize:11,color:P.faint,marginTop:10,display:"flex",alignItems:"flex-end"}}>
+           Chart appears once there are 2+ portfolio snapshots
+         </div>}
+    </div>
+  );
+}
+
+/* c. Asset Allocation Card — replaces the old Cash Card. Donut + legend,
+   same pattern/colors as the existing Pie usage in BudgetView (SEG palette,
+   Cell+Tooltip) and the composition bar in NetWorthView (banksSar/invSar/
+   assetSar/liabSar — reused as-is, not recomputed).
+   Goals do NOT get their own slice: addContribution() (App()) only appends
+   to goal.contributions, it never debits data.banks — a goal's "saved"
+   amount is money still physically sitting in a bank balance that's already
+   counted in the Cash slice, just earmarked. Giving Goals its own slice on
+   top of Cash would double-count that money. Instead it's surfaced as a
+   one-line annotation under the legend so it doesn't disappear entirely.
+   Liabilities are shown as a small line below the donut rather than forced
+   into a negative pie slice (Recharts pies don't handle negative values). */
+function AssetAllocationCard({banks,invSar,assetSar,liabSar,goals,profile,cur,convert,homeDisplay}){
+  const sarOf=(amt,ccy)=>{const v=convert?convert(amt,ccy,"SAR"):null;return v==null?0:v;};
+  const cashSar=(banks||[]).reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+  const parts=[
+    {name:"Cash",value:cashSar,color:SEG[0]},
+    {name:"Investments",value:invSar||0,color:SEG[3]},
+    {name:"Other assets",value:assetSar||0,color:SEG[5]},
+  ].filter(p=>p.value>0);
+  const gross=cashSar+(invSar||0)+(assetSar||0);
+  const goalList=profile==="household"?(goals||[]):(goals||[]).filter(g=>g.owner===profile);
+  const goalsSavedRaw=goalList.reduce((s,g)=>s+(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s2,c)=>s2+(Number(c.amount)||0),0),0);
+  const goalsSavedSar=cur==="SAR"?goalsSavedRaw:sarOf(goalsSavedRaw,cur||"SAR");
+  // Reuses the same homeDisplay.cash{primary} field the old Cash Card used
+  // (still just "a currency code to show this card's total in" — same
+  // meaning, now attached to this card instead) so the existing Settings
+  // control isn't left pointing at a removed component.
+  const primary=(homeDisplay&&homeDisplay.cash&&homeDisplay.cash.primary)||"SAR";
+  const grossDisplay=primary==="SAR"?gross:(convert?convert(gross,"SAR",primary):null);
+  /* Built for a narrow (1/3-width) column: donut centred with the total sitting
+     INSIDE the ring rather than stranded on its own line, then a full-width
+     legend beneath where each row has room for name / value / % without
+     cramping. The legend carries .home-fill so, when this card is stretched to
+     match a taller Portfolio neighbour, the rows breathe instead of leaving a
+     dead band at the bottom. */
+  const totalStr=grossDisplay!=null
+    ?`${primary} ${Math.round(grossDisplay).toLocaleString("en-US")}`
+    :`SAR ${Math.round(gross).toLocaleString("en-US")}`;
+  // Legend amounts must read in the same currency as the total above them —
+  // parts[] are SAR internally, so convert for display only (never restated
+  // into the stored data).
+  const partDisplay=v=>{
+    const c=primary==="SAR"?v:(convert?convert(v,"SAR",primary):null);
+    return Math.round(c==null?v:c).toLocaleString("en-US");
+  };
+  return(
+    <div className="home-card" style={homeCardStyle({padding:14})}>
+      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:8}}>Asset allocation</div>
+      {gross<=0?
+        <div style={{fontSize:13,color:P.faint,padding:"8px 0"}}>Add a bank, investment, or asset to see your allocation.</div>
+      :(
+        <>
+          {/* Sized in explicit pixels with no ResponsiveContainer: inside this
+              stretched flex column the container intermittently measures before
+              layout settles, and because the Pie's radii are pixel values that
+              stale measurement renders the ring off-centre and clipped. The box
+              is a fixed square anyway, so nothing responsive is needed. */}
+          <div style={{position:"relative",width:132,height:132,flexShrink:0,margin:"0 auto"}}>
+            <PieChart width={132} height={132}>
+              <Pie data={parts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={64} innerRadius={44} paddingAngle={2} isAnimationActive={false}>
+                {parts.map((d,i)=><Cell key={i} fill={d.color}/>)}
+              </Pie>
+              <Tooltip formatter={v=>`SAR ${Math.round(v).toLocaleString("en-US")}`}/>
+            </PieChart>
+            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",
+              alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+              <div style={{fontSize:10,color:P.faint}}>Total</div>
+              <div className="tnum" style={{fontSize:13,fontWeight:600,color:P.ink}}>{totalStr}</div>
+            </div>
+          </div>
+          <div className="home-fill" style={{marginTop:10,display:"flex",flexDirection:"column",justifyContent:"center",gap:2}}>
+            {parts.map(d=>(
+              <div key={d.name} style={{display:"flex",alignItems:"center",gap:7,fontSize:12,padding:"3px 0"}}>
+                <span style={{width:8,height:8,borderRadius:999,background:d.color,flexShrink:0}}/>
+                <span style={{flex:1,color:P.sub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+                <span className="tnum" style={{color:P.faint,whiteSpace:"nowrap"}}>{partDisplay(d.value)}</span>
+                <span className="tnum" style={{color:P.ink,fontWeight:600,minWidth:30,textAlign:"right"}}>{((d.value/gross)*100).toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {liabSar>0&&
+        <div className="tnum" style={{fontSize:12,color:P.red,marginTop:8}}>− Liabilities: SAR {Math.round(liabSar).toLocaleString("en-US")}</div>}
+      {goalsSavedSar>0&&
+        <div style={{fontSize:11,color:P.faint,marginTop:6}}>Includes SAR {Math.round(goalsSavedSar).toLocaleString("en-US")} earmarked in goals (part of Cash)</div>}
+    </div>
+  );
+}
+
+/* d. Tracked Spending Card — replaces the old "Budget remaining" card, which
+   showed unallocated income (a planning number) rather than how much of the
+   month's tracked budget has actually been used.
+
+   All figures come from trackedSpendingFor() at module scope, which is the
+   same envelope/spent maths the Expenses tab runs — this component only
+   formats and ranks. Household sums both owners' rollups; because every
+   expense row carries exactly one `owner`, summing the two never
+   double-counts. (data.household.expenses is a separate shared-bill
+   splitter with no categories or tracking, so it is correctly not part of
+   this at all.)
+
+   Tapping anywhere drills into the Expenses tab for the same profile and
+   current bucket — Expenses re-anchors its own viewMonth off budgetOwner,
+   so setting the owner and switching tab is all that's needed. */
+function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,homeDisplay,convert,cur,onOpen}){
+  const profileLabel=profile==="household"?"Household":((owners||{})[profile]||profile);
+  const primary=(homeDisplay&&homeDisplay.budget&&homeDisplay.budget.primary)||cur;
+
+  const sum=useMemo(()=>{
+    const ctx={planForMonth,expenses,payPeriods};
+    if(profile==="household"){
+      const a=trackedSpendingFor("me",ctx),b=trackedSpendingFor("wife",ctx);
+      return{month:a.month,cats:[...a.cats,...b.cats],
+        budget:a.budget+b.budget,spent:a.spent+b.spent};
+    }
+    return trackedSpendingFor(profile,ctx);
+  },[profile,planForMonth,expenses,payPeriods]);
+
+  const{topCats,overCount,remaining,pctUsed,periodLabelText,daysLeft}=useMemo(()=>{
+    const remaining=sum.budget-sum.spent;
+    const pctUsed=sum.budget>0?(sum.spent/sum.budget)*100:0;
+    // "closest to reaching their budget" — highest % used first.
+    const topCats=[...sum.cats].sort((a,b)=>b.pct-a.pct).slice(0,3);
+    const overCount=sum.cats.filter(c=>c.over).length;
+    // Household has two owners who may be on different pay-period settings;
+    // label off "me" in that case, which is the same bucket Expenses opens on.
+    const labelOwner=profile==="household"?"me":profile;
+    const periodLabelText=bucketLabel(sum.month,payPeriods,labelOwner);
+    const{elapsed,total}=bucketProgress(sum.month,payPeriods,labelOwner);
+    return{topCats,overCount,remaining,pctUsed,periodLabelText,daysLeft:Math.max(0,total-elapsed)};
+  },[sum,payPeriods,profile]);
+
+  // Display-only conversion; stored amounts are always in `cur`.
+  const show=v=>{
+    const c=primary===cur?v:(convert?convert(v,cur,primary):null);
+    return`${primary} ${Math.round(c==null?v:c).toLocaleString("en-US")}`;
+  };
+  const barColor=spendStatusColor(sum.spent,sum.budget);
+  const hasData=sum.cats.length>0;
+
+  return(
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle({padding:14}),cursor:"pointer"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Tracked Spending</div>
+        <div style={{fontSize:11,color:P.faint}}>{periodLabelText} · {profileLabel}</div>
+      </div>
+
+      {!hasData?
+        <div className="home-fill" style={{fontSize:13,color:P.faint,display:"flex",alignItems:"center"}}>
+          No tracked categories with a budget this period.
+        </div>
+      :(
+        <>
+          <div className="serif tnum" style={{fontSize:20,fontWeight:600,lineHeight:1.15,
+            color:remaining>=0?P.ink:P.red}}>
+            {show(Math.abs(remaining))} {remaining>=0?"remaining":"over"}
+          </div>
+          <div className="tnum" style={{fontSize:11,color:P.faint,marginTop:2}}>
+            {show(sum.spent)} spent of {show(sum.budget)} · {pctUsed.toFixed(0)}% used
+          </div>
+
+          {/* Horizontal spent/remaining bar — replaces the old ring. */}
+          <div style={{height:8,borderRadius:999,background:P.sfA,overflow:"hidden",marginTop:10}}>
+            <div style={{height:"100%",width:`${Math.min(100,pctUsed)}%`,background:barColor,
+              borderRadius:999,transition:"width .4s ease"}}/>
+          </div>
+
+          {overCount>0&&
+            <div style={{fontSize:11,color:P.red,fontWeight:600,marginTop:6}}>
+              {overCount} categor{overCount===1?"y":"ies"} over budget
+            </div>}
+
+          {/* Only the three closest to their limit — Home stays compact. */}
+          <div className="home-fill" style={{marginTop:10,display:"flex",flexDirection:"column",
+            justifyContent:"center",gap:6,minHeight:0}}>
+            {topCats.map(c=>(
+              <div key={c.id+c.owner} style={{display:"flex",alignItems:"center",gap:8,fontSize:11}}>
+                <span style={{flex:1,color:P.sub,minWidth:0,overflow:"hidden",
+                  textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                <span className="tnum" style={{color:spendStatusColor(c.spent,c.budget),fontWeight:600}}>
+                  {c.pct.toFixed(0)}%
+                </span>
+                <span className="tnum" style={{color:P.faint,whiteSpace:"nowrap",
+                  minWidth:96,textAlign:"right"}}>
+                  {/* Never a negative remaining — over-budget reads as "over". */}
+                  {c.over?`${show(c.spent-c.budget)} over`:`${show(c.remaining)} left`}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{fontSize:11,color:P.faint,marginTop:8}}>
+            {daysLeft} day{daysLeft===1?"":"s"} left this period
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* e. Goals Summary Card — replaces the old combined-progress-bar GoalsCard.
+   Shows active/completed counts (kept, already good) plus the progress of
+   ONE goal: the single highest-priority active goal, rather than a bar
+   summed across every goal. There is no priority/order field anywhere on
+   the goal schema (checked: no `priority`/`order`/`sortIndex`), so as a
+   documented proxy this picks the active goal CLOSEST TO COMPLETION (surfaces
+   the goal most likely to need one last push) — an arbitrary-but-reasonable
+   stand-in until a real priority field exists. */
+function GoalsSummaryCard({goals,profile}){
+  const list=profile==="household"?(goals||[]):(goals||[]).filter(g=>g.owner===profile);
+  const withSaved=list.map(g=>{
+    const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
+    const target=Number(g.target)||0;
+    return{...g,saved,target,pct:target>0?(saved/target)*100:0,completed:target>0&&saved>=target};
+  });
+  const active=withSaved.filter(g=>!g.completed);
+  const completedCount=withSaved.length-active.length;
+  const top=[...active].sort((a,b)=>b.pct-a.pct)[0];
+  /* Deliberately mirrors BudgetCard's shell (header row, ring + headline,
+     footer detail) so the two read as a matched pair on the same grid row
+     rather than one dense card beside a nearly empty one. */
+  return(
+    <div className="home-card" style={homeCardStyle({padding:14})}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:6}}>
+        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Goals</div>
+        <div style={{fontSize:12,color:P.faint}}>{completedCount} completed · {active.length} active</div>
+      </div>
+      {!top?
+        <div className="home-fill" style={{fontSize:13,color:P.faint,display:"flex",alignItems:"center"}}>
+          {withSaved.length===0?"No goals yet":"All goals completed 🎉"}
+        </div>
+      :(
+        <>
+          <div className="home-fill" style={{display:"flex",alignItems:"center",gap:14,minHeight:0}}>
+            <ProgressRing pct={top.pct} size={56} stroke={6} color={top.color||P.gr}/>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top.name}</div>
+              <div className="tnum" style={{fontSize:11,color:P.faint,marginTop:2}}>{top.pct.toFixed(0)}% saved</div>
+            </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:10,fontSize:11,color:P.faint}}>
+            <span className="tnum">Saved {Math.round(top.saved).toLocaleString("en-US")}</span>
+            <span className="tnum">Target {Math.round(top.target).toLocaleString("en-US")}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* f. Quick Actions — + Expense reuses the exact same globalAddTrigger bump
+   the header FAB already uses (see the "Quick add transaction" button in
+   App()'s render). + Income/+ Investment navigate to their tab: there's no
+   standalone income dialog (income is a plain input in Budget's header),
+   and the trade-add modal lives inline inside InvestmentsView rather than
+   as a shared component (noted as a known limitation/future extension
+   point). + Goal Contribution gets a native Home sheet since addContribution
+   is trivially reusable standalone. Deliberately lighter-weight than a card:
+   sits as a slim strip right under the Hero, not its own "section". */
+function quickActionItems({onExpense,onIncome,onInvestment,onGoal}){
+  return[["Expense",I.Receipt,onExpense],["Income",I.Wallet,onIncome],
+         ["Investment",I.Trending,onInvestment],["Goal",I.Target,onGoal]];
+}
+
+/* Tablet/desktop only (the .cell-qa grid cell is display:none below 768px).
+   A 4-up equal-fraction grid rather than a wrapping flex row: every button is
+   the same width and height and the group spans the full content width, so it
+   reads as part of the grid instead of loose pills, and it can never wrap
+   awkwardly at an in-between viewport size. */
+function QuickActions(handlers){
+  return(
+    <div style={{...homeCardStyle({padding:8}),display:"grid",
+      gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8}}>
+      {quickActionItems(handlers).map(([label,Icon,fn])=>(
+        <button key={label} onClick={fn} className="neu-btn"
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+            borderRadius:12,padding:"10px 8px",fontSize:12,fontWeight:600,color:P.gr,
+            minWidth:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+          <I.Plus size={11}/><Icon size={13}/>{label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* Mobile counterpart to the Quick Actions bar: the floating + opens this
+   bottom sheet. Same .sheet-bg/.sheet shell and the same four handlers — no
+   duplicated workflows, just a different presentation for the breakpoint
+   where a 4-up bar wouldn't fit. */
+function QuickActionSheet({onClose,...handlers}){
+  useScrollLock(true);
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Quick add</h3>
+            <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {quickActionItems(handlers).map(([label,Icon,fn])=>(
+              <button key={label} onClick={()=>{onClose();fn();}} className="neu-btn"
+                style={{display:"flex",alignItems:"center",gap:10,borderRadius:12,
+                  padding:"12px 14px",fontSize:14,fontWeight:600,color:P.gr,textAlign:"left"}}>
+                <I.Plus size={13}/><Icon size={16}/>{label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+/* Native "add goal contribution" sheet for Home — styled identically to
+   GoalsView's own add-money sheet (same .sheet-bg/.sheet classes, same
+   Portal+useScrollLock pattern) but calls addContribution(goalId,...)
+   directly rather than routing through the Goals tab, since that mutator is
+   already a clean standalone function. */
+function GoalContributionSheet({goals,addContribution,onClose}){
+  useScrollLock(true);
+  const[goalId,setGoalId]=useState((goals&&goals[0]&&goals[0].id)||null);
+  const[amount,setAmount]=useState("");
+  const[note,setNote]=useState("");
+  const canSubmit=goalId&&Number(amount)>0;
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Add goal contribution</h3>
+            <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+          </div>
+          {(!goals||goals.length===0)
+            ?<div style={{fontSize:13,color:P.sub}}>No goals yet — create one in the Goals tab first.</div>
+            :<>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Goal</div>
+                <select value={goalId||""} onChange={e=>setGoalId(e.target.value)}
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}>
+                  {goals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount to add</div>
+                <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)}
+                  placeholder="0" autoFocus
+                  style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note (optional)</div>
+                <input value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Monthly deposit"
+                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+              </div>
+              <button onClick={()=>{if(canSubmit){addContribution(goalId,amount,note);onClose();}}}
+                disabled={!canSubmit}
+                style={{width:"100%",borderRadius:10,padding:"10px",fontSize:14,fontWeight:600,background:P.gr,color:"#fff",border:"none",opacity:canSubmit?1:.5}}>
+                Add contribution
+              </button>
+            </>}
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+/* Composition root — see the block comment above for the "small sibling
+   components" rationale. Adding a new card later = write <YCard/> above and
+   add one line to the JSX below. */
+function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods}){
+  const[profile,setProfile]=useState(budgetOwner);
+  const setProfileSynced=p=>{setProfile(p);if(p==="me"||p==="wife")setBudgetOwner(p);};
+  const[goalSheet,setGoalSheet]=useState(false);
+  const[qaSheet,setQaSheet]=useState(false);
+  useScrollLock(goalSheet);
+  const homeDisplay=data.homeDisplay||{};
+
+  const netWorthByProfile=useCallback(profileKey=>{
+    if(profileKey==="household")return netWorth;
+    const ownerBanksSar=(banks||[]).filter(b=>b.owner===profileKey).reduce((s,b)=>{
+      const v=convert?convert(b.balance,b.currency,"SAR"):null;return s+(v==null?0:v);
+    },0);
+    return ownerBanksSar+invSar+assetSar-liabSar;
+  },[banks,invSar,assetSar,liabSar,convert,netWorth]);
+
+  /* Drill-down for the Tracked Spending card. Expenses derives its own
+     viewMonth from bucketNow(payPeriods,budgetOwner) and re-anchors whenever
+     budgetOwner changes, so aligning the owner and switching tab lands on the
+     right profile AND the current period with no extra state. "Household"
+     isn't a real profile in the data model, so it drills into whichever owner
+     is currently active rather than inventing a combined Expenses view. */
+  const openExpenses=useCallback(()=>{
+    if(profile==="me"||profile==="wife")setBudgetOwner(profile);
+    setTab("expenses");
+  },[profile,setBudgetOwner,setTab]);
+
+  const actions={
+    onExpense:()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);},
+    onIncome:()=>setTab("budget"),
+    onInvestment:()=>setTab("investments"),
+    onGoal:()=>setGoalSheet(true),
+  };
+
+  return(
+    <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
+      <div className="home-grid">
+        <div className="home-cell cell-hero">
+          <HeroCard profile={profile} setProfile={setProfileSynced} owners={owners}
+            netWorthByProfile={netWorthByProfile} history={history} homeDisplay={homeDisplay} convert={convert} ratesErr={ratesErr}/>
+        </div>
+        <div className="home-cell cell-portfolio">
+          <PortfolioCard invs={invs} livePrice={livePrice} livePriceAt={livePriceAt} prevClose={prevClose} convert={convert} homeDisplay={homeDisplay} portHistory={portHistory} isOnline={isOnline}/>
+        </div>
+        <div className="home-cell cell-allocation">
+          <AssetAllocationCard banks={banks} invSar={invSar} assetSar={assetSar} liabSar={liabSar} goals={goals} profile={profile} cur={cur} convert={convert} homeDisplay={homeDisplay}/>
+        </div>
+        <div className="home-cell cell-budget">
+          <TrackedSpendingCard profile={profile} owners={owners} payPeriods={payPeriods}
+            planForMonth={planForMonth} expenses={expenses}
+            homeDisplay={homeDisplay} convert={convert} cur={cur} onOpen={openExpenses}/>
+        </div>
+        <div className="home-cell cell-goals">
+          <GoalsSummaryCard goals={goals} profile={profile}/>
+        </div>
+        <div className="home-cell cell-qa">
+          <QuickActions {...actions}/>
+        </div>
+      </div>
+      {/* Mobile-only floating +; App suppresses its global FAB on the Home tab
+          so only ever one + is on screen, and CSS hides this one >=768px where
+          the in-grid Quick Actions bar takes over.
+          MUST be portalled to <body>: HomeView renders inside TabPane, whose
+          .tab-enter-* animation is declared `both`, so the final keyframe's
+          transform:translateX(0) sticks permanently. Any transform other than
+          `none` makes that element the containing block for position:fixed
+          descendants, which would anchor this button to the tab pane and make
+          it scroll with the page instead of floating. App's own FAB avoids
+          this by living outside TabPane; Portal is how the rest of this file
+          escapes transformed/clipped ancestors. */}
+      <Portal>
+        <button aria-label="Quick add" className="home-fab" onClick={()=>setQaSheet(true)}
+          style={{position:"fixed",right:16,bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:70,
+            width:56,height:56,borderRadius:999,background:P.gr,color:"#fff",border:"none",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            boxShadow:"0 6px 20px rgba(12,22,40,.35)",cursor:"pointer"}}>
+          <I.Plus size={24}/>
+        </button>
+      </Portal>
+      {qaSheet&&<QuickActionSheet {...actions} onClose={()=>setQaSheet(false)}/>}
+      {goalSheet&&<GoalContributionSheet goals={goals} addContribution={addContribution} onClose={()=>setGoalSheet(false)}/>}
     </div>
   );
 }
@@ -3153,20 +4142,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const totalLoggedAllCats=viewMonthExpenses.reduce((s,e)=>s+e.amount,0);
   const totalUnallocatedOrUntransferred=totalIncome-totalLoggedAllCats;
 
-  const statusColor=(spent,budget)=>{
-    if(budget===0)return P.sub;
-    const r=spent/budget;
-    if(r>=1)return P.red;
-    if(r>=0.8)return"#E07B2A";
-    return P.gr;
-  };
-  const statusBg=(spent,budget)=>{
-    if(budget===0)return P.sfA;
-    const r=spent/budget;
-    if(r>=1)return P.redS;
-    if(r>=0.8)return P.amberS;
-    return P.sfA;
-  };
+  /* Shared with Home's Tracked Spending card — see spendStatusColor/Bg at
+     module scope. Aliased so every call site below stays unchanged. */
+  const statusColor=spendStatusColor;
+  const statusBg=spendStatusBg;
   
   /* pace-vs-calendar flag — only fires in the "on track" green zone
      (spend<80%), when spend ratio is already outrunning elapsed-days ratio */
@@ -5572,6 +6551,59 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Currency label</div>
         <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Home Display</div>
+        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+          Which currency each Home card shows its figure in. Presentation only — never affects any stored balance or calculation.
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+          {(()=>{
+            const hd=data.homeDisplay||{};
+            const setHD=(card,patch)=>setData(d=>({...d,homeDisplay:{...(d.homeDisplay||{}),[card]:{...((d.homeDisplay||{})[card]||{}),...patch}}}));
+            const selStyle={borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink};
+            return(<>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <span style={{fontSize:13,color:P.ink}}>Net Worth card</span>
+                <select value={(hd.netWorth&&hd.netWorth.primary)||"PHP"} onChange={e=>setHD("netWorth",{primary:e.target.value})} style={selStyle}>
+                  {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:6}}>Net Worth card — secondary currencies</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {BANK_CCY.map(c=>{
+                    const list=(hd.netWorth&&hd.netWorth.secondary)||["SAR","USD","PHP"];
+                    const active=list.includes(c);
+                    return(
+                      <button key={c} onClick={()=>setHD("netWorth",{secondary:active?list.filter(x=>x!==c):[...list,c]})}
+                        style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
+                          background:active?P.grS:P.sf,color:active?P.grD:P.sub,border:`1px solid ${active?P.grS:P.line}`}}>
+                        {c}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <span style={{fontSize:13,color:P.ink}}>Portfolio card</span>
+                <select value={(hd.portfolio&&hd.portfolio.primary)||"USD"} onChange={e=>setHD("portfolio",{primary:e.target.value})} style={selStyle}>
+                  {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <span style={{fontSize:13,color:P.ink}}>Asset Allocation card</span>
+                <select value={(hd.cash&&hd.cash.primary)||"PHP"} onChange={e=>setHD("cash",{primary:e.target.value})} style={selStyle}>
+                  {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <span style={{fontSize:13,color:P.ink}}>Tracked Spending card</span>
+                <select value={(hd.budget&&hd.budget.primary)||"PHP"} onChange={e=>setHD("budget",{primary:e.target.value})} style={selStyle}>
+                  {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </>);
+          })()}
+        </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Cloudflare KV Sync</div>
         {kvReady
           ?<div style={{marginBottom:16}}>
