@@ -250,13 +250,15 @@ select{transition:background .22s;}
    claim column spans per breakpoint; `order` handles the mobile reading
    sequence.
 
-   Row structure by breakpoint:
-     mobile  (<768)      1 col   Hero / Portfolio / Budget / Allocation / Goals
-     tablet  (768-1023)  6 col   Hero(6) / Portfolio(3)+Allocation(3)
+   Row structure by breakpoint (Phase 4 §7 — Savings & Investing replaces the
+   old Asset Allocation slot, same column position):
+     mobile  (<768)      1 col   Hero / Portfolio / Budget / Savings / Goals
+     tablet  (768-1023)  6 col   Hero(6) / Portfolio(3)+Savings(3)
                                  / Budget(3)+Goals(3) / QuickActions(6)
-     desktop (>=1024)    6 col   same, but Portfolio(4)+Allocation(2) so the
+     desktop (>=1024)    6 col   same, but Portfolio(4)+Savings(2) so the
                                  analytical card gets the 2/3 width it needs
-                                 and Allocation gets a column it's designed for.
+                                 and Savings gets the compact column it's
+                                 designed for.
 
    .home-cell is a flex wrapper whose single child card stretches to the full
    row height — that's what keeps side-by-side cards bottom-aligned rather
@@ -267,20 +269,20 @@ select{transition:background .22s;}
 .home-grid>.cell-hero{order:1;}
 .home-grid>.cell-portfolio{order:2;}
 .home-grid>.cell-budget{order:3;}
-.home-grid>.cell-allocation{order:4;}
+.home-grid>.cell-savings{order:4;}
 .home-grid>.cell-goals{order:5;}
 /* Mobile uses the floating + button instead (never both at once). */
 .home-grid>.cell-qa{display:none;}
 @media(min-width:768px){
   .home-grid>.cell-portfolio{grid-column:span 3;order:2;}
-  .home-grid>.cell-allocation{grid-column:span 3;order:3;}
+  .home-grid>.cell-savings{grid-column:span 3;order:3;}
   .home-grid>.cell-budget{grid-column:span 3;order:4;}
   .home-grid>.cell-goals{grid-column:span 3;order:5;}
   .home-grid>.cell-qa{display:flex;order:6;}
 }
 @media(min-width:1024px){
   .home-grid>.cell-portfolio{grid-column:span 4;}
-  .home-grid>.cell-allocation{grid-column:span 2;}
+  .home-grid>.cell-savings{grid-column:span 2;}
 }
 /* Home's own FAB: mobile-only, and only on the Home tab (App suppresses its
    global FAB there). Above 768px the in-grid Quick Actions bar takes over, so
@@ -559,6 +561,28 @@ const FX_CODES=["USD","SAR","PHP","AED","EUR","GBP","JPY","INR","AUD","CAD","SGD
 const BANK_CCY=["SAR","PHP","USD","AED","EUR","GBP"];
 const COUNTRIES=[["SA","Saudi Arabia"],["PH","Philippines"],["Other","Other"]];
 
+/* ── Investment account ownership & type ──────────────────────────────────
+   Phase 1 of the Investment module redesign: every investment now belongs
+   to an Investment Account owner ("me"/"wife" reuse the same keys as banks/
+   goals/budget so it slots into the existing profile machinery for free;
+   "household" is a genuine third owner here — unlike banks/goals, an
+   investment account really can be jointly held rather than assigned to one
+   person — see HomeProfileToggle's comment for why "household" elsewhere in
+   the app is a view-only aggregate, not a real owner).
+   INVESTMENT_TYPES lists every type the architecture supports so future
+   phases (MP2, Time Deposit, Gold) can plug in without another data-model
+   change; only "stocks" has real valuation logic today (holdingStats() +
+   live quotes) — the others are selectable now but simply won't accrue
+   value until a later phase teaches the app how to price them. */
+const INVESTMENT_OWNERS=["me","wife","household"];
+const investmentOwnerLabel=(owner,owners)=>owner==="household"?"Household":((owners||{})[owner]||owner);
+const INVESTMENT_TYPES=[
+  ["stocks","Stocks / ETF"],
+  ["mp2","Pag-IBIG MP2"],
+  ["td","Time Deposit"],
+  ["gold","Gold"],
+];
+
 /* ── Pay-period utilities ──────────────────────────────────────────────────
    Pay-periods are an opt-in alternative to calendar-month budgeting, for
    people whose salary lands on a fixed day rather than the 1st. A period is
@@ -763,6 +787,29 @@ function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods}){
     spent:cats.reduce((s,c)=>s+c.spent,0)};
 }
 
+/* Savings & Investing rollup for one owner, current bucket (Phase 4 §4).
+   Deliberately NOT income-minus-expenses — that guesses at savings from
+   what's left over, which silently double-counts anything already spent
+   from an envelope. Instead this sums actual `expenses` rows logged against
+   whichever budget categories the user has picked as "savings" or
+   "investment" in Home Dashboard settings (data.homeSettings), the same
+   quickTransfer/addExtraFunds-logged entries the untracked-category system
+   above already produces. Categories are matched by NAME rather than id
+   because cloning a plan into a new month gives its categories fresh ids —
+   name is the only thing stable across months for a category a user thinks
+   of as "the same one". */
+function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNames,investNames){
+  const month=bucketNow(payPeriods,owner);
+  const plan=planForMonth?planForMonth(month,owner):null;
+  const idsFor=names=>new Set((plan&&plan.categories||[]).filter(c=>(names||[]).includes(c.name)).map(c=>c.id));
+  const savingIds=idsFor(savingsNames),investIds=idsFor(investNames);
+  const inBucket=(expenses||[]).filter(e=>
+    e.date&&(e.owner||"me")===owner&&bucketKeyFor(e.date,payPeriods,owner)===month);
+  const saved=inBucket.filter(e=>savingIds.has(e.catId)).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const invested=inBucket.filter(e=>investIds.has(e.catId)).reduce((s,e)=>s+(Number(e.amount)||0),0);
+  return{month,saved,invested,income:Number((plan&&plan.income)||0)};
+}
+
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
 const PROXY_URL="https://alloc-kv.jastinefodra21.workers.dev";
@@ -785,6 +832,15 @@ async function fetchRates(){
    Worker fetches Yahoo Finance server-side (no CORS), returns JSON.
    Finnhub handles US stocks directly as a fast fallback.                 */
 const FINNHUB_KEY="d94h0p9r01qib64ang9gd94h0p9r01qib64anga0";
+
+/* ── Gold spot price (Phase 3) ──
+   Reuses the exact same Worker→Yahoo proxy as stock quotes (no new API, no
+   new key) — Yahoo's chart endpoint serves "GC=F" (COMEX gold futures, USD
+   per troy ounce, the standard proxy for spot gold — "XAUUSD=X" was tried
+   first but Yahoo's chart endpoint returns no data for it) just like any
+   equity ticker, so it rides fetchQuotes()/livePrice/the existing
+   staleness-refresh cycle unchanged. */
+const GOLD_TICKER="GC=F";
 
 /* Map tickers to the right Yahoo symbol.
    VWRA → VWRA.L (LSE), bare US tickers stay as-is.                      */
@@ -893,6 +949,161 @@ function holdingStats(trades=[]){
   return{shares,avgCost,totalCost:cost};
 }
 
+/* ── MP2 / Time Deposit valuation (Phase 2) ────────────────────────────────
+   Dedicated valuation strategies alongside holdingStats() (stocks). Neither
+   type has a live market price — both are rate-driven, so "confirmed" vs
+   "estimated" is the core distinction instead of cost-basis vs market value.
+
+   mp2GrowContribution walks a single contribution year-by-year (calendar-
+   year buckets, pro-rated for partial years) from its date to `today`,
+   applying whatever `rateForYear(y)` returns for each year. Two independent
+   walks are done per contribution — one with a rate-lookup that returns
+   null for any year without an official declared rate (→ confirmed, that
+   year's growth simply isn't recognized yet), one that falls back to the
+   account's projection rate for those same gaps (→ estimated). Never a
+   single walk with a "confirmed so far, then estimate" switch, because in
+   compounded mode that would let an estimated year's growth compound into
+   later *confirmed* years once a rate is eventually declared — mixing
+   projected money into a value labeled "confirmed". ───────────────────── */
+function mp2GrowContribution(amount,dateStr,today,rateForYear,compound){
+  const start=new Date(dateStr+"T00:00:00");
+  let base=Number(amount)||0,dividends=0;
+  if(!(start<today))return{base,dividends:0};
+  let cursor=new Date(start);
+  while(cursor<today){
+    const y=cursor.getFullYear();
+    const yearEnd=new Date(y,11,31,23,59,59,999);
+    const periodEnd=yearEnd<today?yearEnd:today;
+    const days=Math.max(0,(periodEnd-cursor)/86400000);
+    const rate=rateForYear(y);
+    if(rate!=null){
+      const div=base*(Number(rate)/100)*(days/365);
+      dividends+=div;
+      if(compound)base+=div;
+    }
+    cursor=new Date(periodEnd.getTime()+86400000);
+  }
+  return{base,dividends};
+}
+/* declaredRatesByYear: {year:rate} built from data.mp2DividendRates, already
+   resolved to "latest non-deleted entry per year". acc.rateOverrides (an
+   optional {year:rate} map on the account itself) takes priority over the
+   central table — "reused by all MP2 accounts unless explicitly overridden". */
+function mp2Valuation(acc,declaredRatesByYear){
+  const today=new Date();
+  const contributions=(acc.contributions||[]).filter(c=>!c.deletedAt);
+  const totalContrib=contributions.reduce((s,c)=>s+(Number(c.amount)||0),0);
+  const compound=acc.payoutMode!=="annual";
+  const declaredFor=y=>{
+    const ov=acc.rateOverrides&&acc.rateOverrides[y];
+    if(ov!=null&&ov!=="")return Number(ov);
+    const d=(declaredRatesByYear||{})[y];
+    return d!=null?Number(d):null;
+  };
+  const projFor=y=>{
+    const d=declaredFor(y);
+    return d!=null?d:(Number(acc.projectionRate)||0);
+  };
+  let confirmedDividends=0,estimatedDividends=0;
+  contributions.forEach(c=>{
+    const conf=mp2GrowContribution(c.amount,c.date,today,declaredFor,compound);
+    const est=mp2GrowContribution(c.amount,c.date,today,projFor,compound);
+    confirmedDividends+=conf.dividends;
+    estimatedDividends+=est.dividends;
+  });
+  const paid=(acc.paidDividends||[]).reduce((s,p)=>s+(Number(p.amount)||0),0);
+  // Annual-payout mode: declared dividends are receivable, not reinvested —
+  // once recorded paid (moved to a bank via "Record annual dividend payout"),
+  // they must drop out of the MP2 account's own value or they'd be counted
+  // twice (once here, once in the bank balance).
+  const confirmedValue=Math.max(0,totalContrib+confirmedDividends-(compound?0:paid));
+  const estimatedValueRaw=Math.max(0,totalContrib+estimatedDividends-(compound?0:paid));
+  const estimatedValue=Math.max(confirmedValue,estimatedValueRaw);
+  // Which calendar years actually have no declared rate yet, for the
+  // "not yet officially declared" warning in the UI.
+  const years=new Set();
+  contributions.forEach(c=>{for(let y=new Date(c.date).getFullYear();y<=today.getFullYear();y++)years.add(y);});
+  const undeclaredYears=[...years].filter(y=>declaredFor(y)==null).sort();
+  return{totalContrib,confirmedDividends,estimatedDividends,confirmedValue,estimatedValue,paid,undeclaredYears};
+}
+
+/* Time Deposit: simple or compounded interest over the account's term,
+   with an optional flat withholding-tax rate applied to interest only.
+   `freq` "maturity" = simple interest for the whole term (no intra-term
+   compounding); monthly/quarterly/annually compound at that cadence. */
+function tdValuation(acc){
+  const principal=Number(acc.principal)||0;
+  const rate=Number(acc.rate)||0;
+  const tax=Number(acc.taxRate)||0;
+  const start=new Date((acc.startDate||"")+"T00:00:00");
+  const maturity=new Date((acc.maturityDate||"")+"T00:00:00");
+  const today=new Date();
+  const validTerm=acc.startDate&&acc.maturityDate&&maturity>start;
+  if(!validTerm)return{principal,grossAccrued:0,taxAmt:0,netAccrued:0,currentEstValue:principal,grossAtMaturity:0,maturityValue:principal,daysRemaining:0,daysTotal:0};
+  const end=today<maturity?today:maturity;
+  const elapsedDays=Math.max(0,(end-start)/86400000);
+  const totalDays=Math.max(1,(maturity-start)/86400000);
+  const periodsPerYear={maturity:0,monthly:12,quarterly:4,annually:1}[acc.compounding||"maturity"]||0;
+  const grossFor=days=>periodsPerYear===0
+    ?principal*(rate/100)*(days/365)
+    :principal*Math.pow(1+(rate/100)/periodsPerYear,periodsPerYear*(days/365))-principal;
+  const grossAccrued=grossFor(elapsedDays);
+  const taxAmt=grossAccrued*(tax/100);
+  const netAccrued=grossAccrued-taxAmt;
+  const grossAtMaturity=grossFor(totalDays);
+  const netAtMaturity=grossAtMaturity*(1-tax/100);
+  return{
+    principal,grossAccrued,taxAmt,netAccrued,
+    currentEstValue:principal+netAccrued,
+    grossAtMaturity,maturityValue:principal+netAtMaturity,
+    daysRemaining:Math.max(0,Math.ceil((maturity-today)/86400000)),
+    daysTotal:Math.round(totalDays),
+  };
+}
+
+/* Gold (Phase 3): physical gold only (bars/coins, no jewellery), priced off
+   a live spot quote (see GOLD_TICKER/fetchQuotes) rather than a rate table —
+   the only priced type so far that's a literal commodity weight × purity ×
+   market price, not a cost-basis or contribution-driven balance. Purity is
+   entered as karat (24 for pure/24K, 22 for 22K, or any custom number the
+   account owner types in) rather than a raw 0–1 fraction, since that's how
+   gold purity is actually quoted/sold. `priceUsdPerOz` is looked up by the
+   caller from the shared livePrice cache (same stale-tolerant, never-cleared
+   pattern stocks already use) — this function is pure and never fetches. */
+const TROY_OZ_GRAMS=31.1034768;
+const GOLD_UNITS=[["g","Grams"],["oz","Troy ounces"]];
+function goldWeightOz(hld){
+  const w=Number(hld.weight)||0;
+  return hld.weightUnit==="oz"?w:w/TROY_OZ_GRAMS;
+}
+function goldKaratFraction(hld){
+  const k=Number(hld.karat)||0;
+  return Math.min(1,Math.max(0,k/24));
+}
+function goldValuation(hld,priceUsdPerOz,convert){
+  const oz=goldWeightOz(hld);
+  const purity=goldKaratFraction(hld);
+  const pureOz=oz*purity;
+  const price=Number(priceUsdPerOz)||0;
+  const currentValueUsd=pureOz*price;
+  const purchaseCost=Number(hld.purchaseCost)||0;
+  const purchaseValueUsd=convert?(convert(purchaseCost,hld.currency||"USD","USD")||0):0;
+  const gainUsd=currentValueUsd-purchaseValueUsd;
+  const gainPct=purchaseValueUsd>0?(gainUsd/purchaseValueUsd)*100:0;
+  return{oz,purity,pureOz,currentValueUsd,purchaseValueUsd,gainUsd,gainPct,hasPrice:price>0};
+}
+
+/* ── Filter an investments array down to one owner's accounts.
+   "household" returns everything (Home's household profile is the combined
+   view, and a household-owned account is already included in that combined
+   set — see investment-ownership comment near INVESTMENT_OWNERS above).
+   Single source of truth so App() and PortfolioCard never re-implement this
+   filter differently. ── */
+function investmentsForProfile(invs,owner){
+  if(owner==="household")return invs||[];
+  return(invs||[]).filter(x=>(x.owner||"me")===owner);
+}
+
 /* ── Liability remaining balance (auto-decrements by month) ── */
 function liabilityBalance(liab){
   if(!liab.installment)return Number(liab.value)||0;
@@ -939,11 +1150,11 @@ function defaultData(){
       {id:uid(),owner:"wife",name:"New Laptop",type:"tech",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
     ],
     investments:[
-      {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",
+      {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",owner:"me",type:"stocks",
        trades:[{id:uid(),date:buyDate,type:"buy",shares:10,price:180}]},
-      {id:uid(),ticker:"VOO",name:"Vanguard S&P 500",broker:"GoTrade",
+      {id:uid(),ticker:"VOO",name:"Vanguard S&P 500",broker:"GoTrade",owner:"me",type:"stocks",
        trades:[{id:uid(),date:buyDate,type:"buy",shares:5,price:420}]},
-      {id:uid(),ticker:"VWRA",name:"Vanguard FTSE All-World",broker:"GoTrade",
+      {id:uid(),ticker:"VWRA",name:"Vanguard FTSE All-World",broker:"GoTrade",owner:"me",type:"stocks",
        trades:[{id:uid(),date:buyDate,type:"buy",shares:8,price:160}]},
     ],
     livePrice:{},
@@ -954,6 +1165,17 @@ function defaultData(){
       portfolio:{primary:"USD"},
       cash:{primary:"PHP"},
       budget:{primary:"PHP"},
+      savingsInvesting:{primary:"PHP"},
+    },
+    // Phase 4 — Home Dashboard settings: which budget categories count as
+    // "saving" vs "investing" for the Savings & Investing card (matched by
+    // name, not id — see savingsInvestingFor()), plus per-card visibility.
+    // Seeded from this same file's own UNTRACKED categories above so the
+    // card has real numbers out of the box instead of an empty state.
+    homeSettings:{
+      savingsCategories:["Long Term Savings","Savings (Seabank)","Misc. Savings"],
+      investmentCategories:["Investment (GoTrade)"],
+      cardVisibility:{hero:true,portfolio:true,savingsInvesting:true,trackedSpending:true,goals:true},
     },
     projection:{monthly:1500,years:20,rate:8},
     banks:[
@@ -968,6 +1190,9 @@ function defaultData(){
     ],
     history:[],
     targets:[],
+    mp2DividendRates:[],
+    snapshots:[],
+    settings:{includeMp2EstimateInNetWorth:false,goldAutoRefresh:true,snapshotRetention:{dailyDays:35,weeklyDays:365}},
     investTarget:{me:{thresholdPct:20,groupNames:["Invest & Grow"]},wife:{thresholdPct:20,groupNames:[]}},
     household:{splitMine:50,expenses:[
       {id:uid(),name:"Rent",amount:2000,color:SEG[0]},
@@ -1040,8 +1265,64 @@ function migrate(d){
       inv.trades=s>0?[{id:uid(),date:new Date().toISOString().slice(0,10),type:"buy",shares:s,price:a}]:[];
       delete inv.shares;delete inv.avgCost;
     }
+    // Investment Accounts (Phase 1): every pre-existing holding predates the
+    // owner/type fields, so it's a stock/ETF account belonging to "me"
+    // (Jastine) — nothing else is a safe default since that's what every
+    // holding in this app has been until now.
+    if(!inv.owner)inv.owner="me";
+    if(!inv.type)inv.type="stocks";
     if(!inv.updatedAt)inv.updatedAt="2000-01-01T00:00:00.000Z";
+    // Phase 2: MP2 / Time Deposit field defaults, so records synced from an
+    // older version (or a device on an older build) never render with
+    // undefined fields — every reader below assumes these exist.
+    if(inv.type==="mp2"){
+      if(!inv.currency)inv.currency="PHP";
+      if(!inv.payoutMode)inv.payoutMode="compounded";
+      if(inv.projectionRate===undefined)inv.projectionRate=6;
+      if(!inv.contributions)inv.contributions=[];
+      if(!inv.paidDividends)inv.paidDividends=[];
+      if(!inv.rateOverrides)inv.rateOverrides={};
+      if(inv.notes===undefined)inv.notes="";
+      (inv.contributions||[]).forEach(c=>{if(!c.updatedAt)c.updatedAt=c.date?`${c.date}T00:00:00.000Z`:"2000-01-01T00:00:00.000Z";if(c.createdAt===undefined)c.createdAt=c.updatedAt;if(c.note===undefined)c.note="";});
+    }
+    if(inv.type==="td"){
+      if(!inv.currency)inv.currency="PHP";
+      if(inv.principal===undefined)inv.principal=0;
+      if(inv.rate===undefined)inv.rate=0;
+      if(inv.taxRate===undefined)inv.taxRate=0;
+      if(!inv.compounding)inv.compounding="maturity";
+      if(!inv.status)inv.status="active";
+      if(inv.institution===undefined)inv.institution="";
+      if(inv.notes===undefined)inv.notes="";
+    }
+    // Phase 3: Gold — physical bars/coins only, priced off a live spot quote
+    // (GOLD_TICKER) rather than a rate table. Karat defaults to 24 (pure)
+    // rather than 0, so a record that predates this migration never silently
+    // values at $0 purity.
+    if(inv.type==="gold"){
+      if(!inv.currency)inv.currency="USD";
+      if(inv.weight===undefined)inv.weight=0;
+      if(!inv.weightUnit)inv.weightUnit="g";
+      if(!inv.purityType)inv.purityType="24k";
+      if(inv.karat===undefined)inv.karat=inv.purityType==="22k"?22:24;
+      if(!inv.purchaseDate)inv.purchaseDate="2000-01-01";
+      if(inv.purchaseCost===undefined)inv.purchaseCost=0;
+      if(inv.notes===undefined)inv.notes="";
+    }
   });
+  if(!d.mp2DividendRates)d.mp2DividendRates=[];
+  (d.mp2DividendRates||[]).forEach(r=>{if(!r.updatedAt)r.updatedAt="2000-01-01T00:00:00.000Z";});
+  if(!d.settings)d.settings={};
+  if(d.settings.includeMp2EstimateInNetWorth===undefined)d.settings.includeMp2EstimateInNetWorth=false;
+  // Phase 3: gold price rides the automatic staleness-refresh cycle by
+  // default; snapshotRetention controls how many days of *daily*-resolution
+  // history are kept before compressSnapshots() collapses older entries to
+  // weekly, then monthly (see compressSnapshots below).
+  if(d.settings.goldAutoRefresh===undefined)d.settings.goldAutoRefresh=true;
+  if(!d.settings.snapshotRetention)d.settings.snapshotRetention={dailyDays:35,weeklyDays:365};
+  if(d.settings.snapshotRetention.dailyDays===undefined)d.settings.snapshotRetention.dailyDays=35;
+  if(d.settings.snapshotRetention.weeklyDays===undefined)d.settings.snapshotRetention.weeklyDays=365;
+  if(!d.snapshots)d.snapshots=[];
   (d.assets||[]).forEach(a=>{
     if(a.kind==="liability"&&!a.installment){a.installment=false;}
     if(!a.updatedAt)a.updatedAt="2000-01-01T00:00:00.000Z";
@@ -1054,6 +1335,15 @@ function migrate(d){
   if(!d.homeDisplay.portfolio)d.homeDisplay.portfolio={primary:"USD"};
   if(!d.homeDisplay.cash)d.homeDisplay.cash={primary:"PHP"};
   if(!d.homeDisplay.budget)d.homeDisplay.budget={primary:"PHP"};
+  if(!d.homeDisplay.savingsInvesting)d.homeDisplay.savingsInvesting={primary:"PHP"};
+  // Phase 4 Home Dashboard settings — see defaultData() for field meanings.
+  if(!d.homeSettings)d.homeSettings={};
+  if(!Array.isArray(d.homeSettings.savingsCategories))d.homeSettings.savingsCategories=[];
+  if(!Array.isArray(d.homeSettings.investmentCategories))d.homeSettings.investmentCategories=[];
+  if(!d.homeSettings.cardVisibility)d.homeSettings.cardVisibility={};
+  ["hero","portfolio","savingsInvesting","trackedSpending","goals"].forEach(k=>{
+    if(d.homeSettings.cardVisibility[k]===undefined)d.homeSettings.cardVisibility[k]=true;
+  });
   if(!d.portHistory)d.portHistory=[];
   if(!d.expenses)d.expenses=[];
   if(!d.monthlyPlans)d.monthlyPlans=[];
@@ -1184,14 +1474,20 @@ const fingerprint=d=>{
       ...rest,
       expenses:sortedById(rest.expenses),
       goals:sortedById((rest.goals||[]).map(g=>({...g,contributions:sortedByKey(g.contributions,c=>`${c.date||""}|${c.id||""}`)}))),
-      investments:sortedById((rest.investments||[]).map(iv=>({...iv,trades:sortedByKey(iv.trades,t=>`${t.date||""}|${t.id||""}`)}))),
+      investments:sortedById((rest.investments||[]).map(iv=>({...iv,
+        trades:sortedByKey(iv.trades,t=>`${t.date||""}|${t.id||""}`),
+        contributions:sortedByKey(iv.contributions,c=>`${c.date||""}|${c.id||""}`),
+        paidDividends:sortedByKey(iv.paidDividends,p=>`${p.date||""}|${p.id||""}`),
+      }))),
       banks:sortedById(rest.banks),
       assets:sortedById(rest.assets),
       targets:sortedById(rest.targets),
+      mp2DividendRates:sortedById(rest.mp2DividendRates),
       plans:sortedById(rest.plans),
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
       history:sortedByKey(rest.history,h=>h.month||""),
+      snapshots:sortedByKey(rest.snapshots,s=>`${s.date||""}|${s.profile||""}`),
       household:rest.household?{...rest.household,expenses:sortedById(rest.household.expenses)}:rest.household,
     };
     return JSON.stringify(canon);
@@ -1238,6 +1534,31 @@ function mergeArrayByIdWithChild(localArr,remoteArr,childKey,childTsOf){
     return l||r;
   });
 }
+/* Same idea as mergeArrayByIdWithChild but for records that can carry more
+   than one nested child array — investments now have "trades" (stocks),
+   "contributions" (MP2) and "paidDividends" (MP2 payout receipts), never
+   more than one populated per record depending on `type`, but the merge
+   can't assume which. Only merges a childSpec's key when at least one side
+   actually has that array, so plain scalar fields on stocks (no
+   contributions) or MP2 (no trades) aren't given an empty array they never
+   had. */
+function mergeArrayByIdWithChildren(localArr,remoteArr,childSpecs){
+  const lm=new Map((localArr||[]).map(x=>[x.id,x]));
+  const rm=new Map((remoteArr||[]).map(x=>[x.id,x]));
+  const ids=Array.from(new Set([...lm.keys(),...rm.keys()])).sort((a,b)=>String(a).localeCompare(String(b)));
+  return ids.map(id=>{
+    const l=lm.get(id),r=rm.get(id);
+    if(l&&r){
+      const winner=(r.updatedAt||"")>(l.updatedAt||"")?r:l;
+      const merged={...winner};
+      childSpecs.forEach(({key,tsOf})=>{
+        if(l[key]||r[key])merged[key]=mergeArrayById(l[key]||[],r[key]||[],tsOf);
+      });
+      return merged;
+    }
+    return l||r;
+  });
+}
 /* Records with no id, keyed some other way (monthlyPlans by month+owner,
    portHistory/history by month). No independent per-record timestamp, so a
    genuine same-key conflict falls back to whichever whole dataset was
@@ -1248,6 +1569,76 @@ function mergeKeyed(localArr,remoteArr,keyOf,preferLocal){
   (preferLocal?(remoteArr||[]):(localArr||[])).forEach(x=>map.set(keyOf(x),x));
   (preferLocal?(localArr||[]):(remoteArr||[])).forEach(x=>map.set(keyOf(x),x));
   return Array.from(map.values()).sort((a,b)=>String(keyOf(a)).localeCompare(String(keyOf(b))));
+}
+
+/* ── Historical snapshots (Phase 3) ────────────────────────────────────────
+   data.snapshots: one row per {date:"YYYY-MM-DD", profile:"me"|"wife"|
+   "household"} per calendar day, holding both Net Worth and Portfolio
+   figures (+ a per-type investment breakdown) so one array feeds both the
+   Net Worth and Portfolio range charts — never two parallel snapshot
+   systems. Kept entirely separate from the pre-existing `history`/
+   `portHistory` (monthly, manual-entry-friendly, MoM-stat-driving) arrays,
+   which continue to work exactly as before; this is purely additive so nothing
+   that already worked regresses. See docs/decisions.md for why. */
+const addDaysStr=(dateStr,n)=>{const d=new Date(dateStr+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
+/* Monday of the ISO week containing dateStr, used as a stable weekly bucket key. */
+const isoWeekKey=dateStr=>{
+  const d=new Date(dateStr+"T00:00:00Z");
+  const dow=(d.getUTCDay()+6)%7; // 0=Mon..6=Sun
+  d.setUTCDate(d.getUTCDate()-dow);
+  return d.toISOString().slice(0,10);
+};
+const monthKeyOf=dateStr=>dateStr.slice(0,7);
+/* Progressive retention (spec §6): every day for the most recent
+   `dailyDays`, then one (the latest) snapshot per ISO week for the next
+   `weeklyDays`, then one per calendar month forever beyond that — applied
+   per profile so Me/Wife/Household compress independently. Runs on every
+   write (arrays are tiny — a handful of profiles × ~400 rows tops) rather
+   than as a separate scheduled job, so storage never grows unbounded (spec
+   §11) without needing any background task. */
+function compressSnapshots(snaps,retention){
+  const{dailyDays=35,weeklyDays=365}=retention||{};
+  const today=new Date().toISOString().slice(0,10);
+  const dailyCutoff=addDaysStr(today,-dailyDays);
+  const weeklyCutoff=addDaysStr(today,-(dailyDays+weeklyDays));
+  const byProfile=new Map();
+  (snaps||[]).forEach(s=>{
+    if(!byProfile.has(s.profile))byProfile.set(s.profile,[]);
+    byProfile.get(s.profile).push(s);
+  });
+  let out=[];
+  byProfile.forEach(list=>{
+    const sorted=[...list].sort((a,b)=>a.date.localeCompare(b.date));
+    const daily=sorted.filter(s=>s.date>=dailyCutoff);
+    const weekly=sorted.filter(s=>s.date<dailyCutoff&&s.date>=weeklyCutoff);
+    const monthly=sorted.filter(s=>s.date<weeklyCutoff);
+    const byWeek=new Map();
+    weekly.forEach(s=>{const k=isoWeekKey(s.date);const cur=byWeek.get(k);if(!cur||s.date>cur.date)byWeek.set(k,s);});
+    const byMonth=new Map();
+    monthly.forEach(s=>{const k=monthKeyOf(s.date);const cur=byMonth.get(k);if(!cur||s.date>cur.date)byMonth.set(k,s);});
+    out=out.concat(Array.from(byMonth.values()),Array.from(byWeek.values()),daily);
+  });
+  return out.sort((a,b)=>a.date===b.date?String(a.profile).localeCompare(b.profile):a.date.localeCompare(b.date));
+}
+/* Buckets a sorted (by date), already-profile-filtered snapshot list to the
+   density a given range should render at (spec §7), taking the LAST
+   snapshot in each bucket — never averaging/recalculating values, since
+   every stored figure is itself already a point-in-time truth. Also caps to
+   the range window except for "MAX". Pure + cheap (a handful of ms for
+   hundreds of rows) so callers can useMemo it without a perf concern (§8). */
+const RANGE_DAYS={"1W":7,"1M":30,"3M":90,"1Y":365,"MAX":Infinity};
+function bucketSnapshotsForRange(sorted,range){
+  const today=new Date().toISOString().slice(0,10);
+  const days=RANGE_DAYS[range]??RANGE_DAYS["1M"];
+  const windowed=days===Infinity?sorted:sorted.filter(s=>s.date>=addDaysStr(today,-days));
+  let keyOf;
+  if(range==="1W"||range==="1M")keyOf=s=>s.date;         // daily
+  else if(range==="3M")keyOf=s=>isoWeekKey(s.date);       // weekly (dense enough at 90d without being noisy)
+  else if(range==="1Y")keyOf=s=>isoWeekKey(s.date);       // weekly
+  else keyOf=s=>monthKeyOf(s.date);                        // MAX: monthly
+  const byKey=new Map();
+  windowed.forEach(s=>{const k=keyOf(s);const cur=byKey.get(k);if(!cur||s.date>cur.date)byKey.set(k,s);});
+  return Array.from(byKey.values()).sort((a,b)=>a.date.localeCompare(b.date));
 }
 
 /* Full cross-field auto-merge. Every record-bearing collection is merged by
@@ -1268,14 +1659,20 @@ function tryAutoMergeAll(local,remote){
       ...base,
       expenses:mergeArrayById(local.expenses,remote.expenses),
       goals:mergeArrayByIdWithChild(local.goals,remote.goals,"contributions",c=>c.date||""),
-      investments:mergeArrayByIdWithChild(local.investments,remote.investments,"trades",t=>t.date||""),
+      investments:mergeArrayByIdWithChildren(local.investments,remote.investments,[
+        {key:"trades",tsOf:t=>t.date||""},
+        {key:"contributions",tsOf:c=>c.date||""},
+        {key:"paidDividends",tsOf:p=>p.date||""},
+      ]),
       banks:mergeArrayById(local.banks,remote.banks),
       assets:mergeArrayById(local.assets,remote.assets),
       targets:mergeArrayById(local.targets,remote.targets),
+      mp2DividendRates:mergeArrayById(local.mp2DividendRates,remote.mp2DividendRates),
       plans:mergeArrayById(local.plans,remote.plans),
       monthlyPlans:mergeKeyed(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
+      snapshots:mergeKeyed(local.snapshots,remote.snapshots,s=>`${s.date}|${s.profile}`,preferLocal),
       household:{
         ...(base.household||{splitMine:50,expenses:[]}),
         expenses:mergeArrayById((local.household||{}).expenses,(remote.household||{}).expenses,()=>""),
@@ -1310,6 +1707,7 @@ const CONFLICT_COLLECTIONS=[
   {key:"banks",label:"Bank accounts",nameOf:b=>`${b.name||"Account"}${b.bank?` — ${b.bank}`:""}`},
   {key:"assets",label:"Assets & liabilities",nameOf:a=>a.name||"Asset"},
   {key:"targets",label:"Targets",nameOf:t=>t.name||"Target"},
+  {key:"mp2DividendRates",label:"MP2 declared rates",nameOf:r=>`${r.year||""} — ${r.rate!=null?`${r.rate}%`:""}`},
   {key:"plans",label:"Plans",nameOf:p=>`${p.name||"Plan"}${p.month?` (${p.month})`:""}`},
 ];
 function buildConflictDiff(local,remote){
@@ -1375,6 +1773,7 @@ function App(){
   const[showSettings,setShowSettings]=useState(false);
   const[showPendingDiff,setShowPendingDiff]=useState(false);
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
+  const[expensesFilterRequest,setExpensesFilterRequest]=useState(null); // {catNames,nonce} — Home's Savings & Investing card drill-down (Phase 4)
   const[syncMsg,setSyncMsg]=useState("");
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
   const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
@@ -1449,14 +1848,16 @@ function App(){
     const cutoff=Date.now()-days*86400000;
     const fresh=x=>!(x.deletedAt&&new Date(x.deletedAt).getTime()<cutoff);
     const stripChild=(arr,childKey)=>(arr||[]).map(p=>p[childKey]?{...p,[childKey]:p[childKey].filter(fresh)}:p);
+    const stripChildren=(arr,keys)=>keys.reduce((a,k)=>stripChild(a,k),arr);
     return{...d,
       expenses:(d.expenses||[]).filter(fresh),
       goals:stripChild((d.goals||[]).filter(fresh),"contributions"),
-      investments:stripChild((d.investments||[]).filter(fresh),"trades"),
+      investments:stripChildren((d.investments||[]).filter(fresh),["trades","contributions"]),
       banks:(d.banks||[]).filter(fresh),
       assets:(d.assets||[]).filter(fresh),
       targets:(d.targets||[]).filter(fresh),
       plans:(d.plans||[]).filter(fresh),
+      mp2DividendRates:(d.mp2DividendRates||[]).filter(fresh),
     };
   };
   const purgedThisSessionRef=useRef(false);
@@ -2372,7 +2773,16 @@ function App(){
 
   /* investments */
   const invs=(data.investments||[]).filter(x=>!x.deletedAt);
-  const addInv=()=>setData(d=>({...d,investments:[...(d.investments||[]),{id:uid(),ticker:"",name:"",broker:"",trades:[],updatedAt:new Date().toISOString()}]}));
+  /* Phase 2: addInv(type) — each Investment Account type starts with only
+     the fields it actually uses, rather than one shape crammed with every
+     field from every type. */
+  const NEW_INV_BY_TYPE={
+    stocks:()=>({ticker:"",name:"",broker:"",trades:[]}),
+    mp2:()=>({name:"",nickname:"",currency:"PHP",startDate:new Date().toISOString().slice(0,10),maturityDate:"",payoutMode:"compounded",projectionRate:6,contributions:[],paidDividends:[],rateOverrides:{},notes:""}),
+    td:()=>({name:"",currency:"PHP",principal:0,rate:0,startDate:new Date().toISOString().slice(0,10),maturityDate:"",compounding:"maturity",taxRate:0,institution:"",status:"active",notes:""}),
+    gold:()=>({name:"",currency:"USD",weight:0,weightUnit:"g",purityType:"24k",karat:24,purchaseDate:new Date().toISOString().slice(0,10),purchaseCost:0,notes:""}),
+  };
+  const addInv=(type="stocks",owner="me")=>setData(d=>({...d,investments:[...(d.investments||[]),{id:uid(),owner,type,...(NEW_INV_BY_TYPE[type]||NEW_INV_BY_TYPE.stocks)(),updatedAt:new Date().toISOString()}]}));
   const updateInv=(id,patch)=>setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===id?{...x,...patch,updatedAt:new Date().toISOString()}:x)}));
   const removeInv=id=>{
     const inv=(data.investments||[]).find(x=>x.id===id);
@@ -2384,6 +2794,82 @@ function App(){
   const removeTrade=(invId,tid)=>{
     setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:new Date().toISOString()}:t),updatedAt:new Date().toISOString()}:x)}));
     triggerUndo("Deleted trade",{collection:"investments",id:invId,childKey:"trades",childId:tid});
+    pushImportantRef.current();
+  };
+
+  /* MP2 contributions — same add/edit/delete-with-undo shape as goal
+     contributions (App()'s addContribution/removeContribution above), just
+     scoped under an investment account instead of a goal. */
+  const addMp2Contribution=(invId,amount,date,note="")=>{
+    const now=new Date().toISOString();
+    const contrib={id:uid(),amount:Number(amount),date,note,createdAt:now,updatedAt:now};
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,contributions:[...(x.contributions||[]),contrib],updatedAt:now}:x)}));
+    pushImportantRef.current();
+  };
+  const updateMp2Contribution=(invId,cid,patch)=>{
+    const now=new Date().toISOString();
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,contributions:(x.contributions||[]).map(c=>c.id===cid?{...c,...patch,amount:patch.amount!==undefined?Number(patch.amount):c.amount,updatedAt:now}:c),updatedAt:now}:x)}));
+    pushImportantRef.current();
+  };
+  const removeMp2Contribution=(invId,cid)=>{
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,contributions:(x.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:x)}));
+    triggerUndo("Deleted contribution",{collection:"investments",id:invId,childKey:"contributions",childId:cid});
+    pushImportantRef.current();
+  };
+
+  /* MP2 declared dividend rates — centrally stored (data.mp2DividendRates),
+     one entry per year, shared by every MP2 account unless a specific
+     account overrides it via acc.rateOverrides (see mp2Valuation). */
+  const mp2Rates=(data.mp2DividendRates||[]).filter(r=>!r.deletedAt);
+  const mp2RatesByYear=useMemo(()=>{
+    const m={};mp2Rates.forEach(r=>{m[r.year]=Number(r.rate);});return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[data.mp2DividendRates]);
+  const addMp2Rate=(year,rate)=>{setData(d=>({...d,mp2DividendRates:[...(d.mp2DividendRates||[]),{id:uid(),year:Number(year),rate:Number(rate),updatedAt:new Date().toISOString()}]}));pushImportantRef.current();};
+  const updateMp2Rate=(id,patch)=>{setData(d=>({...d,mp2DividendRates:(d.mp2DividendRates||[]).map(r=>r.id===id?{...r,...patch,updatedAt:new Date().toISOString()}:r)}));pushImportantRef.current();};
+  const removeMp2Rate=id=>{
+    const r=(data.mp2DividendRates||[]).find(x=>x.id===id);
+    setData(d=>({...d,mp2DividendRates:(d.mp2DividendRates||[]).map(x=>x.id===id?{...x,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:x)}));
+    if(r)triggerUndo(`Deleted ${r.year} MP2 rate`,{collection:"mp2DividendRates",id});
+    pushImportantRef.current();
+  };
+
+  /* "Record annual dividend payout" — MP2 annual-payout mode only. Declared
+     dividends sit as a receivable inside the MP2 account (see mp2Valuation's
+     `paid` subtraction) until the person confirms the bank actually received
+     them; this both records the receipt on the account (so it stops being
+     counted as still-inside-MP2 value) and, only if a bank is chosen,
+     credits that bank's balance — never automatic, always an explicit
+     confirm action per section 5 of the spec. */
+  const recordMp2Payout=(invId,{year,amount,date,bankId,note=""})=>{
+    const now=new Date().toISOString();
+    const receipt={id:uid(),year:Number(year),amount:Number(amount),date,note,bankId:bankId||null,createdAt:now};
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,paidDividends:[...(x.paidDividends||[]),receipt],updatedAt:now}:x)}));
+    if(bankId)setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===bankId?{...b,balance:(Number(b.balance)||0)+Number(amount),updatedAt:now}:b)}));
+    pushImportantRef.current();
+  };
+
+  /* Time Deposit maturity confirmation — user-entered actual credited
+     interest/final amount become the new source of truth (no more estimate
+     once the bank has actually confirmed it), status flips to "matured".
+     Transferring to a bank is optional and, once done, flips status to
+     "closed" so the TD's own value drops to 0 in totals (the money now
+     lives in that bank balance instead — see investmentValueSar) rather
+     than being counted in both places. */
+  const confirmTdMaturity=(invId,{confirmedInterest,confirmedFinalAmount,transferBankId})=>{
+    const now=new Date().toISOString();
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,status:"matured",confirmedInterest:Number(confirmedInterest),confirmedFinalAmount:Number(confirmedFinalAmount),maturedAt:now,updatedAt:now}:x)}));
+    pushImportantRef.current();
+  };
+  const transferTdProceeds=(invId,bankId)=>{
+    const inv=(data.investments||[]).find(x=>x.id===invId);
+    if(!inv||inv.confirmedFinalAmount==null)return;
+    const now=new Date().toISOString();
+    setData(d=>({
+      ...d,
+      investments:(d.investments||[]).map(x=>x.id===invId?{...x,status:"closed",transferBankId:bankId,transferredAt:now,updatedAt:now}:x),
+      banks:(d.banks||[]).map(b=>b.id===bankId?{...b,balance:(Number(b.balance)||0)+Number(inv.confirmedFinalAmount),updatedAt:now}:b),
+    }));
     pushImportantRef.current();
   };
   const setProjection=patch=>setData(d=>({...d,projection:{...(d.projection||{monthly:1500,years:20,rate:8}),...patch}}));
@@ -2526,11 +3012,56 @@ function App(){
   /* net worth */
   const sarOf=(amt,ccy)=>{const v=convert(amt,ccy,"SAR");return v==null?0:v;};
   const banksSar=banks.reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
-  const invSar=invs.reduce((s,hld)=>{
+  /* Investment Accounts (Phase 1): one shared valuation loop, called once for
+     the combined (household) total and again — filtered — per owner, so
+     Home's per-profile cards (HeroCard/PortfolioCard/SavingsInvestingCard)
+     never fall back to counting every investment on every profile. */
+  const includeMp2Estimate=!!(data.settings&&data.settings.includeMp2EstimateInNetWorth);
+  /* Per-type valuation, dispatched by hld.type — stocks price live, MP2/TD
+     use their dedicated rate-driven valuation strategies (mp2Valuation/
+     tdValuation) instead of a market price. Net Worth default is MP2's
+     *confirmed* value and TD's *current estimated net* value (spec §11);
+     the Settings toggle swaps MP2 to its estimated value everywhere this
+     runs, since Portfolio/Net Worth/snapshots all share this one function.
+     A "closed" TD (proceeds already transferred to a bank) values at 0 so
+     the money isn't counted in both places. */
+  const investmentValueSar=hld=>{
+    if(hld.type==="mp2"){
+      const v=mp2Valuation(hld,mp2RatesByYear);
+      const chosen=includeMp2Estimate?v.estimatedValue:v.confirmedValue;
+      return convert?(convert(chosen,hld.currency||"PHP","SAR")||0):0;
+    }
+    if(hld.type==="td"){
+      if(hld.status==="closed")return 0;
+      const v=tdValuation(hld);
+      const val=(hld.status==="matured"&&hld.confirmedFinalAmount!=null)?Number(hld.confirmedFinalAmount):v.currentEstValue;
+      return convert?(convert(val,hld.currency||"PHP","SAR")||0):0;
+    }
+    if(hld.type==="gold"){
+      // priced off the live spot quote cached at livePrice[GOLD_TICKER] —
+      // same never-clear-on-failure guarantee as stocks (see setLivePrice).
+      const v=goldValuation(hld,livePrice[GOLD_TICKER]||0,convert);
+      return convert?(convert(v.currentValueUsd,"USD","SAR")||0):0;
+    }
+    // stocks (default)
     const{shares}=holdingStats(hld.trades);
     const price=livePrice[baseKey(hld.ticker)]||0;
-    return s+shares*price*(sarRate||0);
-  },0);
+    return shares*price*(sarRate||0);
+  };
+  const investmentsSarValue=list=>list.reduce((s,hld)=>s+investmentValueSar(hld),0);
+  /* Per-type SAR breakdown for one owner's investments — used by the
+     snapshot capture below (Phase 3 §5) to record a per-type composition
+     alongside each day's total, without a second bespoke reduce. */
+  const investmentBreakdownSar=list=>{
+    const out={stocks:0,mp2:0,td:0,gold:0};
+    (list||[]).forEach(hld=>{
+      const t=(hld.type in out)?hld.type:"stocks";
+      out[t]+=investmentValueSar(hld);
+    });
+    return out;
+  };
+  const invSar=investmentsSarValue(invs);
+  const invSarForOwner=useCallback(owner=>investmentsSarValue(investmentsForProfile(invs,owner)),[invs,livePrice,sarRate,convert,mp2RatesByYear,includeMp2Estimate]);
   const assetSar=assets.filter(a=>a.kind==="asset").reduce((s,a)=>s+sarOf(a.value,a.currency),0);
   const liabSar=assets.filter(a=>a.kind==="liability").reduce((s,a)=>s+sarOf(liabilityBalance(a),a.currency),0);
   const netWorth=banksSar+invSar+assetSar-liabSar;
@@ -2570,6 +3101,56 @@ function App(){
     return()=>clearTimeout(t);
   },[netWorth,banksSar,invSar,assetSar,liabSar,netWorthReady]);
 
+  /* ── Daily per-profile snapshots (Phase 3 §5) ──────────────────────────────
+     Separate from the monthly `history` auto-pull above: captures Me/Wife/
+     Household each as their own row, once per calendar day, with a per-type
+     investment breakdown, feeding the new range-selectable charts. Same
+     debounce-then-write-only-if-changed shape as the effect above, just
+     looped over 3 profiles and keyed by day instead of month. */
+  const ownerNetWorthSar=owner=>{
+    const ownerBanksSar=banks.filter(b=>b.owner===owner).reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+    return ownerBanksSar+invSarForOwner(owner)+assetSar-liabSar;
+  };
+  const snapshots=data.snapshots||[];
+  useEffect(()=>{
+    if(!netWorthReady)return;
+    const t=setTimeout(()=>{
+      const today=new Date().toISOString().slice(0,10);
+      setData(d=>{
+        let snaps=[...(d.snapshots||[])];
+        let changed=false;
+        ["me","wife","household"].forEach(profile=>{
+          const pInvs=investmentsForProfile(invs,profile);
+          const net=profile==="household"?netWorth:ownerNetWorthSar(profile);
+          const investmentsVal=profile==="household"?invSar:invSarForOwner(profile);
+          const profileBanksSar=profile==="household"?banksSar:banks.filter(b=>b.owner===profile).reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+          const breakdown=investmentBreakdownSar(pInvs);
+          const rounded={
+            net:Math.round(net),
+            investments:Math.round(investmentsVal),
+            banks:Math.round(profileBanksSar),
+            assets:Math.round(assetSar),
+            liabilities:Math.round(liabSar),
+            byType:{stocks:Math.round(breakdown.stocks),mp2:Math.round(breakdown.mp2),td:Math.round(breakdown.td),gold:Math.round(breakdown.gold)},
+          };
+          const idx=snaps.findIndex(s=>s.date===today&&s.profile===profile);
+          if(idx>=0){
+            const ex=snaps[idx];
+            const same=ex.net===rounded.net&&ex.investments===rounded.investments&&ex.banks===rounded.banks&&ex.assets===rounded.assets&&ex.liabilities===rounded.liabilities&&JSON.stringify(ex.byType)===JSON.stringify(rounded.byType);
+            if(!same){snaps[idx]={...ex,...rounded,updatedAt:new Date().toISOString()};changed=true;}
+          }else{
+            snaps.push({id:uid(),date:today,profile,...rounded,updatedAt:new Date().toISOString(),auto:true});
+            changed=true;
+          }
+        });
+        if(!changed)return d;
+        const retention=(d.settings&&d.settings.snapshotRetention)||{dailyDays:35,weeklyDays:365};
+        return{...d,snapshots:compressSnapshots(snaps,retention)};
+      });
+    },1500);
+    return()=>clearTimeout(t);
+  },[netWorth,banksSar,invSar,assetSar,liabSar,invs,netWorthReady]);
+
   /* ── automatic market-data refresh ────────────────────────────────────────
      Keeps stock quotes and FX rates from silently going stale for people who
      never open Investments/Currency and just live on Home. Piggybacks on the
@@ -2594,7 +3175,15 @@ function App(){
   const refreshMarketDataIfStale=async({force=false,onPhase}={})=>{
     let failed=false;
     if(!quotesRefreshingRef.current){
-      const tickers=[...new Set(invs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean))];
+      // Gold rides the same stock-quote refresh cycle/staleness window (spec
+      // §3: "reuse the existing refresh workflow") — the settings toggle only
+      // gates the *automatic* passive refresh; a forced/manual refresh always
+      // includes it, same as stocks have no per-ticker opt-out either.
+      const goldAutoRefresh=!(data.settings&&data.settings.goldAutoRefresh===false);
+      const tickers=[...new Set([
+        ...invs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean),
+        ...((force||goldAutoRefresh)&&invs.some(h=>h.type==="gold")?[GOLD_TICKER]:[]),
+      ])];
       if(tickers.length&&(force||Date.now()-(livePriceAt||0)>QUOTES_STALE_MS)){
         quotesRefreshingRef.current=true;
         if(onPhase)onPhase("quotes");
@@ -2793,13 +3382,17 @@ function App(){
         </nav>
 
         <TabPane tab={tab}>
-          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods}}/>}
+          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
-          {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap}}/>}
-          {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}}/>}
+          {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap,snapshots,owners:data.owners,
+            mp2Rates,mp2RatesByYear,addMp2Rate,updateMp2Rate,removeMp2Rate,
+            addMp2Contribution,updateMp2Contribution,removeMp2Contribution,recordMp2Payout,
+            confirmTdMaturity,transferTdProceeds,banks,
+            includeMp2Estimate}}/>}
+          {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>`SAR ${Math.round(Number(n)||0).toLocaleString("en-US")}`}}/>}
@@ -2943,6 +3536,69 @@ function Sparkline({data,color,area,height=40,fill}){
   );
 }
 
+/* ── Range-selectable history chart (Phase 3 §7/§8) ────────────────────────
+   Shared by both Net Worth and Portfolio-over-time sections rather than two
+   near-identical components — the only thing that differs between them is
+   which numeric field to plot and how to format it. Reads from
+   data.snapshots (profile-filtered, passed in already bucketed by date), not
+   the older monthly `history`/`portHistory` — those keep serving the
+   MoM-stat/manual-entry features they always did (see decisions.md).
+   Bucketing per range (§7) + memoization (§8) both live in
+   bucketSnapshotsForRange(), a pure function outside this component so
+   useMemo can cheaply skip recompute when neither the snapshot array nor the
+   selected range changed. Derived chart points are only ever held in this
+   component's own memo — never written back to `data` (§11: only raw
+   snapshots persist). */
+const RANGES=["1W","1M","3M","1Y","MAX"];
+function HistoryRangeChart({snapshots,profile,field,money,color,height=200,emptyText}){
+  const[range,setRange]=useState("1M");
+  const profileSnaps=useMemo(()=>(snapshots||[]).filter(s=>s.profile===profile).sort((a,b)=>a.date.localeCompare(b.date)),[snapshots,profile]);
+  const bucketed=useMemo(()=>bucketSnapshotsForRange(profileSnaps,range),[profileSnaps,range]);
+  const fmtLabel=(dateStr,r)=>{
+    const d=new Date(dateStr+"T00:00:00");
+    if(r==="MAX")return d.toLocaleDateString("en-US",{month:"short",year:"2-digit"});
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  };
+  const pts=bucketed.map(s=>({label:fmtLabel(s.date,range),value:s[field]}));
+  const first=bucketed[0],last=bucketed[bucketed.length-1];
+  const pctChange=first&&first[field]?((last[field]-first[field])/Math.abs(first[field]))*100:null;
+  const trending=last&&first?last[field]>=first[field]:true;
+  const chartColor=color||(trending?P.jade:P.wine);
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",gap:4}}>
+          {RANGES.map(r=>(
+            <button key={r} onClick={()=>setRange(r)} className={range===r?"":"neu-btn"}
+              style={{borderRadius:999,padding:"3px 10px",fontSize:12,border:"none",
+                ...(range===r?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>{r}</button>
+          ))}
+        </div>
+        {pctChange!=null&&(
+          <span className="tnum" style={{fontSize:13,fontWeight:600,color:trending?P.jade:P.wine}}>
+            {trending?"▲":"▼"} {Math.abs(pctChange).toFixed(1)}%
+          </span>
+        )}
+      </div>
+      {pts.length>=2?(
+        <div style={{width:"100%",height}}>
+          <ResponsiveContainer>
+            <LineChart data={pts} margin={{top:8,right:8,bottom:0,left:-12}}>
+              <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
+              <XAxis dataKey="label" tick={{fontSize:10,fill:P.neuSub}}/>
+              <YAxis tick={{fontSize:10,fill:P.neuSub}} tickFormatter={v=>money(v,true)}/>
+              <Tooltip formatter={v=>money(v)}/>
+              <Line type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2.5} dot={pts.length<=40?{r:3,fill:chartColor}:false}/>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ):(
+        <p style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
+      )}
+    </div>
+  );
+}
+
 /* 3-way Me / Wife / Household pill switcher for Home only. The underlying
    data model only ever has 2 profiles ("me"/"wife" — see PROFILE_KEY); there
    is no literal "household" profile anywhere else in the app. "Household" is
@@ -2977,7 +3633,7 @@ function HomeProfileToggle({profile,setProfile,owners}){
    month) — a data-staleness artifact, not a bug in the momPct formula
    itself. In that case we still show the raw amount change but hide the %
    rather than print something misleading. */
-function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDisplay,convert,ratesErr}){
+function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDisplay,convert,ratesErr,onOpen}){
   const ref=useRef(null);
   const val=netWorthByProfile(profile);
   useFlash(Math.round(val),ref);
@@ -2998,10 +3654,15 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
      what made the Hero read as "very wide and dominant" while still being
      mostly empty. `.hero-split` collapses back to a single column on mobile. */
   return(
-    <div className="home-card" style={homeCardStyle({padding:16})}>
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle({padding:16}),cursor:"pointer"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
         <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Net worth · {label}</div>
-        <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+        <div onClick={e=>e.stopPropagation()}>
+          <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+        </div>
       </div>
       <div className="hero-split">
         <div style={{minWidth:0}}>
@@ -3040,8 +3701,9 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
    Any ticker missing a previousClose (no refresh has run yet, or a provider
    didn't supply it) is simply excluded from the sum rather than fabricated;
    if NO ticker has one, the whole line is hidden. */
-function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay,portHistory,isOnline}){
-  const rows=(invs||[]).map(hld=>{
+function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay,portHistory,snapshots,profile,isOnline,isHousehold,mp2RatesByYear,includeMp2Estimate,onOpen}){
+  const stockInvs=(invs||[]).filter(x=>(x.type||"stocks")==="stocks");
+  const rows=stockInvs.map(hld=>{
     const{shares,totalCost}=holdingStats(hld.trades);
     const key=baseKey(hld.ticker||"");
     const price=livePrice[key]||0;
@@ -3055,9 +3717,36 @@ function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay
   const totGainPct=totCost>0?(totGain/totCost)*100:0;
   const todayRows=rows.filter(r=>r.todayGain!=null);
   const todayGain=todayRows.length?todayRows.reduce((s,r)=>s+r.todayGain,0):null;
+  /* MP2/TD — no daily market price, so they only ever feed the headline
+     total and their own subline (section 10), never the today/overall gain
+     stats above (those stay stock-only, per "do not portray MP2 projections
+     or TD accrual as daily market gains"). */
+  const mp2Invs=(invs||[]).filter(x=>x.type==="mp2");
+  const tdInvs=(invs||[]).filter(x=>x.type==="td");
+  const mp2ValUsd=mp2Invs.reduce((s,hld)=>{
+    const v=mp2Valuation(hld,mp2RatesByYear||{});
+    const chosen=includeMp2Estimate?v.estimatedValue:v.confirmedValue;
+    return s+(convert?(convert(chosen,hld.currency||"PHP","USD")||0):0);
+  },0);
+  const tdValUsd=tdInvs.reduce((s,hld)=>{
+    if(hld.status==="closed")return s;
+    const v=tdValuation(hld);
+    const val=(hld.status==="matured"&&hld.confirmedFinalAmount!=null)?Number(hld.confirmedFinalAmount):v.currentEstValue;
+    return s+(convert?(convert(val,hld.currency||"PHP","USD")||0):0);
+  },0);
+  const goldInvs=(invs||[]).filter(x=>x.type==="gold");
+  const goldValUsd=goldInvs.reduce((s,hld)=>s+goldValuation(hld,livePrice[GOLD_TICKER]||0,convert).currentValueUsd,0);
+  const grandTotal=totVal+mp2ValUsd+tdValUsd+goldValUsd;
   const primary=(homeDisplay&&homeDisplay.portfolio&&homeDisplay.portfolio.primary)||"USD";
-  const displayVal=primary==="USD"?totVal:(convert?convert(totVal,"USD",primary):null);
-  const pts=[...(portHistory||[])].sort((a,b)=>a.month.localeCompare(b.month)).map(h=>({value:h.value}));
+  const displayVal=primary==="USD"?grandTotal:(convert?convert(grandTotal,"USD",primary):null);
+  /* portHistory is a single whole-portfolio snapshot series (see addPortSnap
+     in App()) is now superseded here (Phase 3) by the per-profile daily
+     snapshots — each Home profile (Me/Wife/Household) plots its own real
+     trend instead of Household borrowing the shared monthly series and Me/
+     Wife showing no chart at all. Compact by design (spec §9): just the
+     mini sparkline, no range selector — that lives on the full Portfolio
+     tab's HistoryRangeChart. */
+  const pts=(snapshots||[]).filter(s=>s.profile===profile).sort((a,b)=>a.date.localeCompare(b.date)).map(s=>({value:s.investments}));
   const fresh=freshnessText(livePriceAt,isOnline);
   /* Wide-card composition: value on the left, today's/overall gain as aligned
      stat columns beside it, then the chart absorbing whatever height the row
@@ -3071,121 +3760,119 @@ function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay
     </div>
   );
   return(
-    <div className="home-card" style={homeCardStyle()}>
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle(),cursor:"pointer"}}>
       <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:6}}>
-        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Portfolio</div>
+        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Investments</div>
         {fresh&&<div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fresh}</div>}
       </div>
       <div style={{display:"flex",alignItems:"flex-end",gap:20,flexWrap:"wrap",rowGap:10}}>
         <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.ink,lineHeight:1.1}}>
-          {displayVal!=null?`${primary} ${Math.round(displayVal).toLocaleString("en-US")}`:`$${Math.round(totVal).toLocaleString("en-US")}`}
+          {displayVal!=null?`${primary} ${Math.round(displayVal).toLocaleString("en-US")}`:`$${Math.round(grandTotal).toLocaleString("en-US")}`}
         </div>
         <div style={{display:"flex",gap:18,flexWrap:"wrap",rowGap:8}}>
-          {todayGain!=null&&stat("Today",
+          {todayGain!=null&&stat("Today (stocks)",
             `${todayGain>=0?"▲":"▼"} $${Math.round(Math.abs(todayGain)).toLocaleString("en-US")}`,
             todayGain>=0?P.gr:P.red)}
-          {stat("Overall",
+          {stat("Overall (stocks)",
             `${totGain>=0?"▲":"▼"} $${Math.round(Math.abs(totGain)).toLocaleString("en-US")}`,
             totGain>=0?P.gr:P.red)}
-          {stat("Return",`${totGain>=0?"+":""}${totGainPct.toFixed(1)}%`,totGain>=0?P.gr:P.red)}
+          {stat("Return (stocks)",`${totGain>=0?"+":""}${totGainPct.toFixed(1)}%`,totGain>=0?P.gr:P.red)}
         </div>
       </div>
+      {(mp2Invs.length>0||tdInvs.length>0||goldInvs.length>0)&&(
+        <div style={{display:"flex",gap:16,flexWrap:"wrap",marginTop:8,fontSize:11,color:P.faint}} className="tnum">
+          <span>Market ${Math.round(totVal).toLocaleString("en-US")}</span>
+          {mp2Invs.length>0&&<span>MP2 ${Math.round(mp2ValUsd).toLocaleString("en-US")}</span>}
+          {tdInvs.length>0&&<span>Time deposits ${Math.round(tdValUsd).toLocaleString("en-US")}</span>}
+          {goldInvs.length>0&&<span>Gold ${Math.round(goldValUsd).toLocaleString("en-US")}</span>}
+        </div>
+      )}
       {pts.length>=2
         ?<Sparkline data={pts} color={totGain>=0?P.gr:P.red} area height={64} fill/>
         :<div className="home-fill" style={{fontSize:11,color:P.faint,marginTop:10,display:"flex",alignItems:"flex-end"}}>
-           Chart appears once there are 2+ portfolio snapshots
+           Trend appears after 2+ days of history (captured automatically once a day)
          </div>}
     </div>
   );
 }
 
-/* c. Asset Allocation Card — replaces the old Cash Card. Donut + legend,
-   same pattern/colors as the existing Pie usage in BudgetView (SEG palette,
-   Cell+Tooltip) and the composition bar in NetWorthView (banksSar/invSar/
-   assetSar/liabSar — reused as-is, not recomputed).
-   Goals do NOT get their own slice: addContribution() (App()) only appends
-   to goal.contributions, it never debits data.banks — a goal's "saved"
-   amount is money still physically sitting in a bank balance that's already
-   counted in the Cash slice, just earmarked. Giving Goals its own slice on
-   top of Cash would double-count that money. Instead it's surfaced as a
-   one-line annotation under the legend so it doesn't disappear entirely.
-   Liabilities are shown as a small line below the donut rather than forced
-   into a negative pie slice (Recharts pies don't handle negative values). */
-function AssetAllocationCard({banks,invSar,assetSar,liabSar,goals,profile,cur,convert,homeDisplay}){
-  const sarOf=(amt,ccy)=>{const v=convert?convert(amt,ccy,"SAR"):null;return v==null?0:v;};
-  const cashSar=(banks||[]).reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
-  const parts=[
-    {name:"Cash",value:cashSar,color:SEG[0]},
-    {name:"Investments",value:invSar||0,color:SEG[3]},
-    {name:"Other assets",value:assetSar||0,color:SEG[5]},
-  ].filter(p=>p.value>0);
-  const gross=cashSar+(invSar||0)+(assetSar||0);
-  const goalList=profile==="household"?(goals||[]):(goals||[]).filter(g=>g.owner===profile);
-  const goalsSavedRaw=goalList.reduce((s,g)=>s+(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s2,c)=>s2+(Number(c.amount)||0),0),0);
-  const goalsSavedSar=cur==="SAR"?goalsSavedRaw:sarOf(goalsSavedRaw,cur||"SAR");
-  // Reuses the same homeDisplay.cash{primary} field the old Cash Card used
-  // (still just "a currency code to show this card's total in" — same
-  // meaning, now attached to this card instead) so the existing Settings
-  // control isn't left pointing at a removed component.
-  const primary=(homeDisplay&&homeDisplay.cash&&homeDisplay.cash.primary)||"SAR";
-  const grossDisplay=primary==="SAR"?gross:(convert?convert(gross,"SAR",primary):null);
-  /* Built for a narrow (1/3-width) column: donut centred with the total sitting
-     INSIDE the ring rather than stranded on its own line, then a full-width
-     legend beneath where each row has room for name / value / % without
-     cramping. The legend carries .home-fill so, when this card is stretched to
-     match a taller Portfolio neighbour, the rows breathe instead of leaving a
-     dead band at the bottom. */
-  const totalStr=grossDisplay!=null
-    ?`${primary} ${Math.round(grossDisplay).toLocaleString("en-US")}`
-    :`SAR ${Math.round(gross).toLocaleString("en-US")}`;
-  // Legend amounts must read in the same currency as the total above them —
-  // parts[] are SAR internally, so convert for display only (never restated
-  // into the stored data).
-  const partDisplay=v=>{
-    const c=primary==="SAR"?v:(convert?convert(v,"SAR",primary):null);
-    return Math.round(c==null?v:c).toLocaleString("en-US");
+/* c. Savings & Investing Card (Phase 4) — replaces the old Asset Allocation
+   donut. That card answered "what do I own"; this one answers "am I actually
+   saving/investing this month", which the roadmap explicitly wants computed
+   from real category activity (savingsInvestingFor(), module scope) rather
+   than an Income-Expenses guess — see that function's comment for why name-
+   matched categories are the source of truth instead of a derived leftover
+   number.
+   Household sums both owners' rollups the same way TrackedSpendingCard does
+   (every expense row carries exactly one owner, so summing never double-
+   counts). Circular progress = savings rate against income; the horizontal
+   two-tone bar is Saved vs Invested so the split reads at a glance without a
+   legend. */
+function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsCategories,investmentCategories,homeDisplay,convert,cur,onOpen}){
+  const sum=useMemo(()=>{
+    const ctx={planForMonth,expenses,payPeriods};
+    if(profile==="household"){
+      const a=savingsInvestingFor("me",ctx,savingsCategories,investmentCategories);
+      const b=savingsInvestingFor("wife",ctx,savingsCategories,investmentCategories);
+      return{saved:a.saved+b.saved,invested:a.invested+b.invested,income:a.income+b.income};
+    }
+    return savingsInvestingFor(profile,ctx,savingsCategories,investmentCategories);
+  },[profile,planForMonth,expenses,payPeriods,savingsCategories,investmentCategories]);
+
+  const primary=(homeDisplay&&homeDisplay.savingsInvesting&&homeDisplay.savingsInvesting.primary)||cur;
+  // Display-only conversion; stored amounts are always in `cur` (same pattern as TrackedSpendingCard).
+  const show=v=>{
+    const c=primary===cur?v:(convert?convert(v,cur,primary):null);
+    return`${primary} ${Math.round(c==null?v:c).toLocaleString("en-US")}`;
   };
+  const total=sum.saved+sum.invested;
+  const rate=sum.income>0?(total/sum.income)*100:0;
+  const savedShare=total>0?(sum.saved/total)*100:50;
+  const noCatsConfigured=(savingsCategories||[]).length===0&&(investmentCategories||[]).length===0;
+
   return(
-    <div className="home-card" style={homeCardStyle({padding:14})}>
-      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:8}}>Asset allocation</div>
-      {gross<=0?
-        <div style={{fontSize:13,color:P.faint,padding:"8px 0"}}>Add a bank, investment, or asset to see your allocation.</div>
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle({padding:14}),cursor:"pointer"}}>
+      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:8}}>Savings &amp; Investing</div>
+      {noCatsConfigured?
+        <div className="home-fill" style={{fontSize:13,color:P.faint,display:"flex",alignItems:"center"}}>
+          Choose your savings and investment categories in Settings to track this.
+        </div>
       :(
         <>
-          {/* Sized in explicit pixels with no ResponsiveContainer: inside this
-              stretched flex column the container intermittently measures before
-              layout settles, and because the Pie's radii are pixel values that
-              stale measurement renders the ring off-centre and clipped. The box
-              is a fixed square anyway, so nothing responsive is needed. */}
-          <div style={{position:"relative",width:132,height:132,flexShrink:0,margin:"0 auto"}}>
-            <PieChart width={132} height={132}>
-              <Pie data={parts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={64} innerRadius={44} paddingAngle={2} isAnimationActive={false}>
-                {parts.map((d,i)=><Cell key={i} fill={d.color}/>)}
-              </Pie>
-              <Tooltip formatter={v=>`SAR ${Math.round(v).toLocaleString("en-US")}`}/>
-            </PieChart>
-            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",
-              alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-              <div style={{fontSize:10,color:P.faint}}>Total</div>
-              <div className="tnum" style={{fontSize:13,fontWeight:600,color:P.ink}}>{totalStr}</div>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{position:"relative",width:64,height:64,flexShrink:0}}>
+              <ProgressRing pct={Math.min(100,rate)} size={64} stroke={7} color={P.jade}/>
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{rate.toFixed(0)}%</span>
+              </div>
+            </div>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:11,color:P.faint}}>Savings rate this month</div>
+              <div className="tnum" style={{fontSize:13,fontWeight:600,color:P.ink,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {show(total)} of {show(sum.income)}
+              </div>
             </div>
           </div>
-          <div className="home-fill" style={{marginTop:10,display:"flex",flexDirection:"column",justifyContent:"center",gap:2}}>
-            {parts.map(d=>(
-              <div key={d.name} style={{display:"flex",alignItems:"center",gap:7,fontSize:12,padding:"3px 0"}}>
-                <span style={{width:8,height:8,borderRadius:999,background:d.color,flexShrink:0}}/>
-                <span style={{flex:1,color:P.sub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
-                <span className="tnum" style={{color:P.faint,whiteSpace:"nowrap"}}>{partDisplay(d.value)}</span>
-                <span className="tnum" style={{color:P.ink,fontWeight:600,minWidth:30,textAlign:"right"}}>{((d.value/gross)*100).toFixed(0)}%</span>
-              </div>
-            ))}
+          <div className="home-fill" style={{marginTop:12,display:"flex",flexDirection:"column",justifyContent:"center",gap:8,minHeight:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,color:P.faint}}>
+              <span className="tnum">Saved {show(sum.saved)}</span>
+              <span className="tnum">Invested {show(sum.invested)}</span>
+            </div>
+            <div style={{height:8,borderRadius:999,background:P.sfA,overflow:"hidden",display:"flex"}}>
+              {total>0?(<>
+                <div style={{width:`${savedShare}%`,background:P.gr,transition:"width .4s ease"}}/>
+                <div style={{width:`${100-savedShare}%`,background:P.br,transition:"width .4s ease"}}/>
+              </>):null}
+            </div>
           </div>
         </>
       )}
-      {liabSar>0&&
-        <div className="tnum" style={{fontSize:12,color:P.red,marginTop:8}}>− Liabilities: SAR {Math.round(liabSar).toLocaleString("en-US")}</div>}
-      {goalsSavedSar>0&&
-        <div style={{fontSize:11,color:P.faint,marginTop:6}}>Includes SAR {Math.round(goalsSavedSar).toLocaleString("en-US")} earmarked in goals (part of Cash)</div>}
     </div>
   );
 }
@@ -3312,7 +3999,7 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
    documented proxy this picks the active goal CLOSEST TO COMPLETION (surfaces
    the goal most likely to need one last push) — an arbitrary-but-reasonable
    stand-in until a real priority field exists. */
-function GoalsSummaryCard({goals,profile}){
+function GoalsSummaryCard({goals,profile,onOpen}){
   const list=profile==="household"?(goals||[]):(goals||[]).filter(g=>g.owner===profile);
   const withSaved=list.map(g=>{
     const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
@@ -3326,7 +4013,10 @@ function GoalsSummaryCard({goals,profile}){
      footer detail) so the two read as a matched pair on the same grid row
      rather than one dense card beside a nearly empty one. */
   return(
-    <div className="home-card" style={homeCardStyle({padding:14})}>
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle({padding:14}),cursor:"pointer"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:6}}>
         <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Goals</div>
         <div style={{fontSize:12,color:P.faint}}>{completedCount} completed · {active.length} active</div>
@@ -3473,21 +4163,35 @@ function GoalContributionSheet({goals,addContribution,onClose}){
 /* Composition root — see the block comment above for the "small sibling
    components" rationale. Adding a new card later = write <YCard/> above and
    add one line to the JSX below. */
-function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods}){
+function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
   const[profile,setProfile]=useState(budgetOwner);
   const setProfileSynced=p=>{setProfile(p);if(p==="me"||p==="wife")setBudgetOwner(p);};
   const[goalSheet,setGoalSheet]=useState(false);
   const[qaSheet,setQaSheet]=useState(false);
   useScrollLock(goalSheet);
   const homeDisplay=data.homeDisplay||{};
+  const homeSettings=data.homeSettings||{};
+  const visibility=homeSettings.cardVisibility||{};
+  const isVisible=key=>visibility[key]!==false;
+  const savingsCategories=homeSettings.savingsCategories||[];
+  const investmentCategories=homeSettings.investmentCategories||[];
+
+  /* Investment Accounts (Phase 1): everything below is filtered by the
+     selected profile using the same investmentsForProfile()/invSarForOwner()
+     helpers App() already computed — no calculation is re-derived here,
+     just sliced per owner so each card only ever shows its own profile's
+     accounts (banks were already owner-tagged; investments now are too). */
+  const profileInvs=useMemo(()=>investmentsForProfile(invs,profile),[invs,profile]);
+  const profileBanks=useMemo(()=>profile==="household"?(banks||[]):(banks||[]).filter(b=>b.owner===profile),[banks,profile]);
+  const profileInvSar=profile==="household"?invSar:invSarForOwner(profile);
 
   const netWorthByProfile=useCallback(profileKey=>{
     if(profileKey==="household")return netWorth;
     const ownerBanksSar=(banks||[]).filter(b=>b.owner===profileKey).reduce((s,b)=>{
       const v=convert?convert(b.balance,b.currency,"SAR"):null;return s+(v==null?0:v);
     },0);
-    return ownerBanksSar+invSar+assetSar-liabSar;
-  },[banks,invSar,assetSar,liabSar,convert,netWorth]);
+    return ownerBanksSar+invSarForOwner(profileKey)+assetSar-liabSar;
+  },[banks,invSarForOwner,assetSar,liabSar,convert,netWorth]);
 
   /* Drill-down for the Tracked Spending card. Expenses derives its own
      viewMonth from bucketNow(payPeriods,budgetOwner) and re-anchors whenever
@@ -3500,6 +4204,20 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,asset
     setTab("expenses");
   },[profile,setBudgetOwner,setTab]);
 
+  /* Savings & Investing's drill-down (§4/§10): same owner/tab handoff as
+     Tracked Spending, plus a one-shot filter request so Expenses opens
+     already scoped to the selected savings+investment categories instead of
+     showing everything. ExpenseTrackerView applies this itself (matches
+     category names to this month's category ids) and doesn't otherwise
+     change — Expenses stays out of scope for this phase. */
+  const openExpensesFiltered=useCallback(()=>{
+    if(profile==="me"||profile==="wife")setBudgetOwner(profile);
+    if(setExpensesFilterRequest){
+      setExpensesFilterRequest({catNames:[...savingsCategories,...investmentCategories],nonce:Date.now()});
+    }
+    setTab("expenses");
+  },[profile,setBudgetOwner,setTab,setExpensesFilterRequest,savingsCategories,investmentCategories]);
+
   const actions={
     onExpense:()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);},
     onIncome:()=>setTab("budget"),
@@ -3510,24 +4228,33 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,asset
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div className="home-grid">
-        <div className="home-cell cell-hero">
-          <HeroCard profile={profile} setProfile={setProfileSynced} owners={owners}
-            netWorthByProfile={netWorthByProfile} history={history} homeDisplay={homeDisplay} convert={convert} ratesErr={ratesErr}/>
-        </div>
-        <div className="home-cell cell-portfolio">
-          <PortfolioCard invs={invs} livePrice={livePrice} livePriceAt={livePriceAt} prevClose={prevClose} convert={convert} homeDisplay={homeDisplay} portHistory={portHistory} isOnline={isOnline}/>
-        </div>
-        <div className="home-cell cell-allocation">
-          <AssetAllocationCard banks={banks} invSar={invSar} assetSar={assetSar} liabSar={liabSar} goals={goals} profile={profile} cur={cur} convert={convert} homeDisplay={homeDisplay}/>
-        </div>
-        <div className="home-cell cell-budget">
-          <TrackedSpendingCard profile={profile} owners={owners} payPeriods={payPeriods}
-            planForMonth={planForMonth} expenses={expenses}
-            homeDisplay={homeDisplay} convert={convert} cur={cur} onOpen={openExpenses}/>
-        </div>
-        <div className="home-cell cell-goals">
-          <GoalsSummaryCard goals={goals} profile={profile}/>
-        </div>
+        {isVisible("hero")&&
+          <div className="home-cell cell-hero">
+            <HeroCard profile={profile} setProfile={setProfileSynced} owners={owners}
+              netWorthByProfile={netWorthByProfile} history={history} homeDisplay={homeDisplay} convert={convert} ratesErr={ratesErr}
+              onOpen={()=>setTab("networth")}/>
+          </div>}
+        {isVisible("portfolio")&&
+          <div className="home-cell cell-portfolio">
+            <PortfolioCard invs={profileInvs} livePrice={livePrice} livePriceAt={livePriceAt} prevClose={prevClose} convert={convert} homeDisplay={homeDisplay} portHistory={portHistory} snapshots={data.snapshots} profile={profile} isOnline={isOnline} isHousehold={profile==="household"} mp2RatesByYear={mp2RatesByYear} includeMp2Estimate={includeMp2Estimate}
+              onOpen={()=>setTab("investments")}/>
+          </div>}
+        {isVisible("savingsInvesting")&&
+          <div className="home-cell cell-savings">
+            <SavingsInvestingCard profile={profile} payPeriods={payPeriods} planForMonth={planForMonth} expenses={expenses}
+              savingsCategories={savingsCategories} investmentCategories={investmentCategories}
+              homeDisplay={homeDisplay} convert={convert} cur={cur} onOpen={openExpensesFiltered}/>
+          </div>}
+        {isVisible("trackedSpending")&&
+          <div className="home-cell cell-budget">
+            <TrackedSpendingCard profile={profile} owners={owners} payPeriods={payPeriods}
+              planForMonth={planForMonth} expenses={expenses}
+              homeDisplay={homeDisplay} convert={convert} cur={cur} onOpen={openExpenses}/>
+          </div>}
+        {isVisible("goals")&&
+          <div className="home-cell cell-goals">
+            <GoalsSummaryCard goals={goals} profile={profile} onOpen={()=>setTab("goals")}/>
+          </div>}
         <div className="home-cell cell-qa">
           <QuickActions {...actions}/>
         </div>
@@ -4029,7 +4756,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger}){
+function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger,filterRequest}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -4067,6 +4794,22 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   /* which plan applies to the viewed month */
   const monthPlan=planForMonth(viewMonth,budgetOwner);
   const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner&&!m.deletedAt&&m.planId);
+
+  /* Phase 4: Home's Savings & Investing card drill-down arrives here as a
+     one-shot {catNames,nonce} request rather than owning any filter state
+     itself — it names categories, this view resolves them to this month's
+     actual category ids (names are stable across cloned plans, ids aren't;
+     see savingsInvestingFor()) and expands the log so the result is visible
+     immediately instead of behind the collapsed-by-default log. `nonce`
+     lets tapping the card again re-apply the same filter even if the user
+     had since changed it here. */
+  useEffect(()=>{
+    if(!filterRequest)return;
+    const ids=(monthPlan.categories||[]).filter(c=>(filterRequest.catNames||[]).includes(c.name)).map(c=>c.id);
+    if(ids.length===0)return;
+    setFilterCat(ids.length===1?ids[0]:ids);
+    setLogExpanded(true);
+  },[filterRequest]);
 
   /* move a category earlier(-1)/later(+1) in the viewed month's plan —
      the transaction log below groups by this same order */
@@ -4237,7 +4980,9 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   /* transaction log grouped by bucket (calendar month or pay period) */
   const ownerExpenses=expenses.filter(e=>(e.owner||'me')===budgetOwner);
-  const allFiltered=filterCat==="all"?[...ownerExpenses]:ownerExpenses.filter(e=>e.catId===filterCat);
+  const allFiltered=filterCat==="all"?[...ownerExpenses]
+    :Array.isArray(filterCat)?ownerExpenses.filter(e=>filterCat.includes(e.catId))
+    :ownerExpenses.filter(e=>e.catId===filterCat);
   const byMonth={};
   allFiltered.forEach(tx=>{
     if(!tx.date)return;
@@ -4611,9 +5356,13 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
       {logExpanded&&(
         <>
           <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8,flexWrap:"wrap",gap:8}}>
-            <select value={filterCat} onChange={e=>setFilterCat(e.target.value)}
+            {/* Multi-category filters (Home's Savings & Investing drill-down) don't
+                map onto this single-select — shown as one extra option that falls
+                back to "All categories" the moment the user picks anything else. */}
+            <select value={Array.isArray(filterCat)?"__multi__":filterCat} onChange={e=>{if(e.target.value!=="__multi__")setFilterCat(e.target.value);}}
               style={{...neu(999),padding:"4px 10px",fontSize:12,border:"none",color:P.neuSub}}>
               <option value="all">All categories</option>
+              {Array.isArray(filterCat)&&<option value="__multi__">{filterCat.length} categories (from Home)</option>}
               {envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
               {untrackedEnvelopes.map(e=><option key={e.id} value={e.id}>{e.name} (untracked)</option>)}
             </select>
@@ -5251,15 +6000,44 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
 }
 
 /* ── INVESTMENTS VIEW — trade log ── */
-function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection,setProjection,portHistory,addPortSnap}){
+function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection,setProjection,portHistory,addPortSnap,snapshots,owners,
+  mp2Rates,mp2RatesByYear,addMp2Rate,updateMp2Rate,removeMp2Rate,
+  addMp2Contribution,updateMp2Contribution,removeMp2Contribution,recordMp2Payout,
+  confirmTdMaturity,transferTdProceeds,banks,includeMp2Estimate}){
   const[loading,setLoading]=useState(false);
   const[err,setErr]=useState("");
   const[updatedAt,setUpdatedAt]=useState(null);
   const[tradeModal,setTradeModal]=useState(null); // invId
-  useScrollLock(!!tradeModal);
+  const[contribModal,setContribModal]=useState(null); // invId (MP2)
+  const[payoutModal,setPayoutModal]=useState(null); // invId (MP2)
+  const[maturityModal,setMaturityModal]=useState(null); // invId (TD)
+  const[showRates,setShowRates]=useState(false);
+  useScrollLock(!!tradeModal||!!contribModal||!!payoutModal||!!maturityModal||showRates);
   const[tradeForm,setTradeForm]=useState({type:"buy",shares:"",price:"",date:new Date().toISOString().slice(0,10)});
   const[expandedId,setExpandedId]=useState(null);
   const[fetchingName,setFetchingName]=useState({});
+
+  /* Section 8 filters — owner / account type / active-matured status.
+     Status only meaningfully applies to Time Deposit (stocks/MP2 don't have
+     a status field), so it's a no-op filter for the other two types. */
+  const[ownerFilter,setOwnerFilter]=useState("all");
+  const[typeFilter,setTypeFilter]=useState("all");
+  const[statusFilter,setStatusFilter]=useState("all"); // all | active | matured
+  const passFilters=hld=>{
+    if(ownerFilter!=="all"&&(hld.owner||"me")!==ownerFilter)return false;
+    if(typeFilter!=="all"&&(hld.type||"stocks")!==typeFilter)return false;
+    if(statusFilter!=="all"&&hld.type==="td"){
+      const st=hld.status||"active";
+      if(statusFilter==="active"&&st!=="active")return false;
+      if(statusFilter==="matured"&&st==="active")return false;
+    }
+    return true;
+  };
+  const filteredInvs=invs.filter(passFilters);
+  const stocksInvs=filteredInvs.filter(x=>(x.type||"stocks")==="stocks");
+  const mp2Invs=filteredInvs.filter(x=>x.type==="mp2");
+  const tdInvs=filteredInvs.filter(x=>x.type==="td");
+  const goldInvs=filteredInvs.filter(x=>x.type==="gold");
 
   /* Look up a company / fund name for a ticker.
      1) Cloudflare proxy → Yahoo (best for ETFs like VWRA, using the mapped symbol)
@@ -5291,7 +6069,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 
   const usd=n=>`$${(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
-  const rows=invs.map(hld=>{
+  const rows=stocksInvs.map(hld=>{
     const{shares,avgCost,totalCost}=holdingStats(hld.trades);
     const price=livePrice[baseKey(hld.ticker||"")]||0;
     const value=shares*price;
@@ -5304,8 +6082,30 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   const totGain=totVal-totCost;
   const totGainPct=totCost>0?(totGain/totCost)*100:0;
 
+  /* Non-market accounts, converted to USD (the hero's currency) for the
+     combined "Total investments" line — kept visually separate from the
+     stock-only cost/gain stats below it (section 9: never blend a market
+     gain % with MP2/TD accrual into one misleading number). */
+  const mp2TotalUsd=mp2Invs.reduce((s,hld)=>{
+    const v=mp2Valuation(hld,mp2RatesByYear);
+    const chosen=includeMp2Estimate?v.estimatedValue:v.confirmedValue;
+    return s+(convert?(convert(chosen,hld.currency||"PHP","USD")||0):0);
+  },0);
+  const tdTotalUsd=tdInvs.reduce((s,hld)=>{
+    if(hld.status==="closed")return s;
+    const v=tdValuation(hld);
+    const val=(hld.status==="matured"&&hld.confirmedFinalAmount!=null)?Number(hld.confirmedFinalAmount):v.currentEstValue;
+    return s+(convert?(convert(val,hld.currency||"PHP","USD")||0):0);
+  },0);
+  const goldPriceUsd=livePrice[GOLD_TICKER]||0;
+  const goldTotalUsd=goldInvs.reduce((s,hld)=>s+goldValuation(hld,goldPriceUsd,convert).currentValueUsd,0);
+  const grandTotalUsd=totVal+mp2TotalUsd+tdTotalUsd+goldTotalUsd;
+
   const refresh=async()=>{
-    const tickers=[...new Set(invs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean))];
+    const tickers=[...new Set([
+      ...stocksInvs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean),
+      ...(goldInvs.length?[GOLD_TICKER]:[]),
+    ])];
     if(!tickers.length){setErr("Add a ticker symbol first.");return;}
     setLoading(true);setErr("");
     try{
@@ -5317,7 +6117,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       else if(hit<tickers.length)setErr(`Got ${hit}/${tickers.length} prices — remaining tickers not found.`);
       else setErr("");
       // auto-capture portfolio snapshot for the history chart
-      const newTotVal=invs.reduce((s,hld)=>{
+      const newTotVal=stocksInvs.reduce((s,hld)=>{
         const{shares}=holdingStats(hld.trades);
         const p=q[baseKey(hld.ticker||"")]||livePrice[baseKey(hld.ticker||"")]||0;
         return s+shares*p;
@@ -5350,23 +6150,44 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       {/* hero */}
       <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.deep,color:"#fff",
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Portfolio value (USD)</div>
-        <span key={Math.round(totVal)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{usd(totVal)}</span>
+        {/* "Investments" not "Stock portfolio" once MP2/TD are in the mix
+            (section 9) — the stock-only cost/gain line below stays clearly
+            separate so a market % is never blended with MP2/TD accrual. */}
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total investments (USD)</div>
+        <span key={Math.round(grandTotalUsd)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{usd(grandTotalUsd)}</span>
         {(sarRate||convert)&&(
           <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:P.deepHi}}>
-            {sarRate&&<span>≈ SAR {Math.round(totVal*sarRate).toLocaleString("en-US")}</span>}
-            {(()=>{const php=convert?convert(totVal,"USD","PHP"):null;return php!=null?<span>≈ ₱{Math.round(php).toLocaleString("en-US")}</span>:null;})()}
+            {sarRate&&<span>≈ SAR {Math.round(grandTotalUsd*sarRate).toLocaleString("en-US")}</span>}
+            {(()=>{const php=convert?convert(grandTotalUsd,"USD","PHP"):null;return php!=null?<span>≈ ₱{Math.round(php).toLocaleString("en-US")}</span>:null;})()}
+          </div>
+        )}
+        {(mp2Invs.length>0||tdInvs.length>0||goldInvs.length>0)&&(
+          <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:14,marginTop:8,fontSize:12,color:P.deepHi,opacity:.85}}>
+            <span>Market {usd(totVal)}</span>
+            {mp2Invs.length>0&&<span>MP2 {usd(mp2TotalUsd)}{includeMp2Estimate?" (est.)":" (confirmed)"}</span>}
+            {tdInvs.length>0&&<span>Time deposits {usd(tdTotalUsd)}</span>}
+            {goldInvs.length>0&&<span>Gold {usd(goldTotalUsd)}</span>}
           </div>
         )}
         <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:20,fontSize:14}} className="tnum">
-          <span style={{color:P.deepHi}}>Cost {usd(totCost)}</span>
+          <span style={{color:P.deepHi}}>Market cost {usd(totCost)}</span>
           <span style={{color:totGain>=0?"#6FC6DA":"#E89B8C",fontWeight:600}}>
-            {totGain>=0?"▲":"▼"} {usd(Math.abs(totGain))} ({totGainPct.toFixed(1)}%)
+            {totGain>=0?"▲":"▼"} {usd(Math.abs(totGain))} ({totGainPct.toFixed(1)}%) <span style={{opacity:.7,fontWeight:400}}>· stocks/ETF only</span>
           </span>
         </div>
       </div>
 
-      {/* portfolio history chart */}
+      {/* Portfolio trend (Phase 3) — range-selectable, off the new daily
+          per-profile snapshots, distinct from the monthly-only chart below
+          (kept as-is, off portHistory, for backward compatibility). */}
+      <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 12px"}}>Portfolio trend</h3>
+        <HistoryRangeChart snapshots={snapshots} profile="household" field="investments"
+          money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
+          emptyText="Trend appears once 2+ days of portfolio history have been captured (captured automatically once a day)."/>
+      </div>
+
+      {/* portfolio history chart (legacy, monthly-only, captured when you refresh prices) */}
       {portHistory.length>0&&(()=>{
         const pts=[...portHistory].sort((a,b)=>a.month.localeCompare(b.month));
         const first=pts[0].value,last=pts[pts.length-1].value;
@@ -5401,9 +6222,29 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         );
       })()}
 
+      {/* Section 8 filters: owner / account type / active-matured status */}
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+        <select value={ownerFilter} onChange={e=>setOwnerFilter(e.target.value)} style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+          <option value="all">All owners</option>
+          {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
+        </select>
+        <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)} style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+          <option value="all">All types</option>
+          {INVESTMENT_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+        </select>
+        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+          <option value="all">Active + matured</option>
+          <option value="active">Active only</option>
+          <option value="matured">Matured/closed only</option>
+        </select>
+        <button onClick={()=>setShowRates(true)} className="neu-btn" style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:5,padding:"5px 10px",fontSize:12,fontWeight:500,color:P.neuSub}}>
+          <I.Settings size={12}/>MP2 declared rates
+        </button>
+      </div>
+
       {/* controls */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-        <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Holdings</h2>
+        <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Stocks / ETF</h2>
         <button onClick={refresh} disabled={loading} className="neu-btn"
           style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade,opacity:loading?.6:1}}>
           <I.Refresh size={14} style={loading?{animation:"spin .9s linear infinite"}:null}/>
@@ -5414,6 +6255,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       {updatedAt&&!err&&<div style={{fontSize:11,color:P.neuSub,marginBottom:8}}>Prices updated {new Date(updatedAt).toLocaleTimeString()}</div>}
 
       {/* holdings list */}
+      {(typeFilter==="all"||typeFilter==="stocks")&&
       <div style={{...neu(16),overflow:"hidden",marginBottom:16}}>
         {rows.map(r=>(
           <div key={r.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
@@ -5431,6 +6273,20 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                 <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.neuSub,flex:1,minWidth:0}}/>
                 <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{usd(r.value)}</span>
                 <button onClick={()=>removeInv(r.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+              </div>
+              {/* Investment Account ownership + type — the minimum fields Phase 1
+                  adds to an existing holding; everything else on this row is
+                  unchanged. Type defaults to Stocks/ETF and is the only type with
+                  real valuation today (see INVESTMENT_TYPES comment). */}
+              <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:8}}>
+                <select value={r.owner||"me"} onChange={e=>updateInv(r.id,{owner:e.target.value})}
+                  style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+                  {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
+                </select>
+                <select value={r.type||"stocks"} onChange={e=>updateInv(r.id,{type:e.target.value})}
+                  style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+                  {INVESTMENT_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                </select>
               </div>
               <div style={{marginTop:6,display:"flex",flexWrap:"wrap",alignItems:"center",gap:14,fontSize:13,color:P.neuSub}} className="tnum">
                 <span>{r.shares.toFixed(4)} shares</span>
@@ -5474,10 +6330,66 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
             )}
           </div>
         ))}
-        <button onClick={addInv} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
+        <button onClick={()=>addInv("stocks")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
           <I.Plus size={14}/>Add holding
         </button>
-      </div>
+      </div>}
+
+      {/* MP2 accounts */}
+      {(typeFilter==="all"||typeFilter==="mp2")&&(
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Pag-IBIG MP2</h2>
+          </div>
+          <div style={{...neu(16),overflow:"hidden"}}>
+            {mp2Invs.map(hld=>(
+              <Mp2AccountCard key={hld.id} hld={hld} owners={owners} updateInv={updateInv} removeInv={removeInv}
+                mp2RatesByYear={mp2RatesByYear} includeMp2Estimate={includeMp2Estimate}
+                onAddContribution={()=>setContribModal(hld.id)}
+                onRemoveContribution={cid=>removeMp2Contribution(hld.id,cid)}
+                onPayout={()=>setPayoutModal(hld.id)}/>
+            ))}
+            <button onClick={()=>addInv("mp2")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
+              <I.Plus size={14}/>Add MP2 account
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Time Deposit accounts */}
+      {(typeFilter==="all"||typeFilter==="td")&&(
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Time Deposits</h2>
+          </div>
+          <div style={{...neu(16),overflow:"hidden"}}>
+            {tdInvs.map(hld=>(
+              <TdAccountCard key={hld.id} hld={hld} owners={owners} updateInv={updateInv} removeInv={removeInv} banks={banks}
+                onConfirmMaturity={()=>setMaturityModal(hld.id)} onTransfer={bankId=>transferTdProceeds(hld.id,bankId)}/>
+            ))}
+            <button onClick={()=>addInv("td")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
+              <I.Plus size={14}/>Add Time Deposit
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Gold accounts (Phase 3) */}
+      {(typeFilter==="all"||typeFilter==="gold")&&(
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Gold</h2>
+          </div>
+          <div style={{...neu(16),overflow:"hidden"}}>
+            {goldInvs.map(hld=>(
+              <GoldAccountCard key={hld.id} hld={hld} owners={owners} updateInv={updateInv} removeInv={removeInv} goldPriceUsd={goldPriceUsd} priceAt={updatedAt} convert={convert}/>
+            ))}
+            <button onClick={()=>addInv("gold")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
+              <I.Plus size={14}/>Add Gold account
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* projection */}
       <div style={{...neu(16),padding:16}}>
@@ -5544,7 +6456,537 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         </div>
         </Portal>
       )}
+
+      {/* Add MP2 contribution modal */}
+      {contribModal&&(
+        <Mp2ContributionModal
+          hld={invs.find(x=>x.id===contribModal)}
+          onClose={()=>setContribModal(null)}
+          onSubmit={(amount,date,note)=>{addMp2Contribution(contribModal,amount,date,note);setContribModal(null);}}/>
+      )}
+
+      {/* Record MP2 annual dividend payout modal */}
+      {payoutModal&&(
+        <Mp2PayoutModal
+          hld={invs.find(x=>x.id===payoutModal)}
+          banks={banks}
+          mp2RatesByYear={mp2RatesByYear}
+          onClose={()=>setPayoutModal(null)}
+          onSubmit={payload=>{recordMp2Payout(payoutModal,payload);setPayoutModal(null);}}/>
+      )}
+
+      {/* Confirm Time Deposit maturity modal */}
+      {maturityModal&&(
+        <TdMaturityModal
+          hld={invs.find(x=>x.id===maturityModal)}
+          onClose={()=>setMaturityModal(null)}
+          onSubmit={payload=>{confirmTdMaturity(maturityModal,payload);setMaturityModal(null);}}/>
+      )}
+
+      {/* MP2 declared dividend rates */}
+      {showRates&&(
+        <Mp2RatesModal
+          rates={mp2Rates}
+          addMp2Rate={addMp2Rate}
+          updateMp2Rate={updateMp2Rate}
+          removeMp2Rate={removeMp2Rate}
+          onClose={()=>setShowRates(false)}/>
+      )}
     </div>
+  );
+}
+
+/* ── MP2 account card — no live market price, so the summary is the
+   confirmed/estimated split from mp2Valuation() rather than a ticker+shares
+   row. Clearly labels which number is official vs projected (section 3/4). */
+function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp2Estimate,onAddContribution,onRemoveContribution,onPayout}){
+  const[expanded,setExpanded]=useState(false);
+  const v=mp2Valuation(hld,mp2RatesByYear);
+  const ccy=hld.currency||"PHP";
+  const money=n=>`${ccy} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
+  const contributions=(hld.contributions||[]).filter(c=>!c.deletedAt).sort((a,b)=>a.date.localeCompare(b.date));
+  const maturityLabel=hld.maturityDate?new Date(hld.maturityDate+"T00:00:00").toLocaleDateString("en-US",{month:"long",year:"numeric"}):"—";
+  const daysToMaturity=hld.maturityDate?Math.ceil((new Date(hld.maturityDate+"T00:00:00")-new Date())/86400000):null;
+  return(
+    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"12px 16px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <input value={hld.name||""} placeholder="Account name" onChange={e=>updateInv(hld.id,{name:e.target.value})}
+          className="bare" style={{fontSize:14,fontWeight:700,flex:1,minWidth:0,color:P.neuInk}}/>
+        <button onClick={()=>removeInv(hld.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
+        <select value={hld.owner||"me"} onChange={e=>updateInv(hld.id,{owner:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+          {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
+        </select>
+        <input value={hld.nickname||""} placeholder="Nickname / masked ref (optional)" onChange={e=>updateInv(hld.id,{nickname:e.target.value})}
+          className="bare" style={{fontSize:12,color:P.neuSub,minWidth:120,flex:1}}/>
+        <select value={hld.payoutMode||"compounded"} onChange={e=>updateInv(hld.id,{payoutMode:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+          <option value="compounded">5-year compounded</option>
+          <option value="annual">Annual dividend payout</option>
+        </select>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:8,fontSize:12,color:P.neuSub}}>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Start date
+          <input type="date" value={hld.startDate||""} onChange={e=>updateInv(hld.id,{startDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Maturity date
+          <input type="date" value={hld.maturityDate||""} onChange={e=>updateInv(hld.id,{maturityDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Projection rate %/yr
+          <input type="number" step="0.1" value={hld.projectionRate??""} onChange={e=>updateInv(hld.id,{projectionRate:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
+        </label>
+      </div>
+      {hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate)&&(
+        <div style={{fontSize:11,color:P.wine,marginBottom:8}}>Maturity date must be after the start date.</div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+        <div>
+          <div style={{fontSize:11,color:P.neuSub}}>Confirmed value</div>
+          <div className="tnum" style={{fontSize:16,fontWeight:700,color:P.neuInk}}>{money(v.confirmedValue)}</div>
+          <div style={{fontSize:10,color:P.neuSub}}>Based on officially declared rates only</div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:P.neuSub}}>Estimated value</div>
+          <div className="tnum" style={{fontSize:16,fontWeight:700,color:P.jade}}>{money(v.estimatedValue)}</div>
+          <div style={{fontSize:10,color:P.neuSub}}>Based on projected rate — not yet officially declared</div>
+        </div>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:P.neuSub}} className="tnum">
+        <span>Total contributions {money(v.totalContrib)}</span>
+        <span>Confirmed dividends {money(v.confirmedDividends)}</span>
+        <span>Est. accrued dividends {money(v.estimatedDividends)}</span>
+        {hld.payoutMode==="annual"&&v.paid>0&&<span>Paid out {money(v.paid)}</span>}
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:P.neuSub}}>
+        <span>Matures {maturityLabel}</span>
+        {daysToMaturity!=null&&<span>{daysToMaturity>0?`${daysToMaturity} days remaining`:"Matured"}</span>}
+      </div>
+      {v.undeclaredYears.length>0&&(
+        <div style={{fontSize:11,color:P.amber||P.neuSub,marginBottom:8,padding:"6px 10px",background:"rgba(0,0,0,.04)",borderRadius:8}}>
+          No official rate declared yet for {v.undeclaredYears.join(", ")} — estimated value uses the projection rate for {v.undeclaredYears.length>1?"those years":"that year"}.
+        </div>
+      )}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+        <button onClick={onAddContribution} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
+          <I.Plus size={12}/>Add contribution
+        </button>
+        {contributions.length>0&&(
+          <button onClick={()=>setExpanded(e=>!e)} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
+            {expanded?"Hide":"Show"} {contributions.length} contribution{contributions.length!==1?"s":""}
+          </button>
+        )}
+        {hld.payoutMode==="annual"&&(
+          <button onClick={onPayout} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.br}}>
+            <I.Bank size={12}/>Record annual dividend payout
+          </button>
+        )}
+      </div>
+      <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
+        style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
+      {expanded&&contributions.length>0&&(
+        <div style={{marginTop:8,borderRadius:8,overflow:"hidden",background:"rgba(0,0,0,.03)"}}>
+          {contributions.map(c=>(
+            <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",fontSize:12,borderTop:"1px solid rgba(0,0,0,.05)"}}>
+              <span className="tnum" style={{color:P.neuSub}}>{c.date}</span>
+              <span className="tnum" style={{fontWeight:600,color:P.neuInk,marginLeft:"auto"}}>{money(c.amount)}</span>
+              {c.note&&<span style={{color:P.neuSub,fontSize:11}}>{c.note}</span>}
+              <button onClick={()=>onRemoveContribution(c.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={12}/></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Time Deposit account card — status-driven: Active shows live estimates,
+   Matured/Closed shows the user-confirmed actual figures instead (section 7). */
+function TdAccountCard({hld,owners,updateInv,removeInv,banks,onConfirmMaturity,onTransfer}){
+  const v=tdValuation(hld);
+  const ccy=hld.currency||"PHP";
+  const money=n=>`${ccy} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
+  const status=hld.status||"active";
+  const usingConfirmed=status!=="active"&&hld.confirmedFinalAmount!=null;
+  const displayValue=usingConfirmed?Number(hld.confirmedFinalAmount):v.currentEstValue;
+  return(
+    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"12px 16px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <input value={hld.name||""} placeholder="Account name" onChange={e=>updateInv(hld.id,{name:e.target.value})}
+          className="bare" style={{fontSize:14,fontWeight:700,flex:1,minWidth:0,color:P.neuInk}}/>
+        <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".04em",padding:"2px 8px",borderRadius:999,
+          background:status==="active"?P.jadeS||"rgba(0,0,0,.06)":"rgba(0,0,0,.08)",color:status==="active"?P.jade:P.neuSub}}>{status}</span>
+        <button onClick={()=>removeInv(hld.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
+        <select value={hld.owner||"me"} onChange={e=>updateInv(hld.id,{owner:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+          {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
+        </select>
+        <input value={hld.institution||""} placeholder="Bank / institution" onChange={e=>updateInv(hld.id,{institution:e.target.value})}
+          className="bare" style={{fontSize:12,color:P.neuSub,minWidth:100,flex:1}}/>
+        <select value={hld.compounding||"maturity"} onChange={e=>updateInv(hld.id,{compounding:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}} disabled={status!=="active"}>
+          <option value="maturity">At maturity</option>
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="annually">Annually</option>
+        </select>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:8,fontSize:12,color:P.neuSub}}>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Principal
+          <input type="number" min="0" value={hld.principal??""} onChange={e=>updateInv(hld.id,{principal:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:100,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Annual rate %
+          <input type="number" step="0.01" min="0" value={hld.rate??""} onChange={e=>updateInv(hld.id,{rate:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Withholding tax %
+          <input type="number" step="0.01" min="0" max="100" value={hld.taxRate??""} onChange={e=>updateInv(hld.id,{taxRate:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Start date
+          <input type="date" value={hld.startDate||""} onChange={e=>updateInv(hld.id,{startDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Maturity date
+          <input type="date" value={hld.maturityDate||""} onChange={e=>updateInv(hld.id,{maturityDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+        </label>
+      </div>
+      {hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate)&&(
+        <div style={{fontSize:11,color:P.wine,marginBottom:8}}>Maturity date must be after the start date.</div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+        <div>
+          <div style={{fontSize:11,color:P.neuSub}}>{usingConfirmed?"Confirmed value":"Current estimated value"}</div>
+          <div className="tnum" style={{fontSize:16,fontWeight:700,color:P.neuInk}}>{money(displayValue)}</div>
+          {!usingConfirmed&&<div style={{fontSize:10,color:P.neuSub}}>Estimate until maturity or bank confirmation</div>}
+        </div>
+        <div>
+          <div style={{fontSize:11,color:P.neuSub}}>Maturity value</div>
+          <div className="tnum" style={{fontSize:16,fontWeight:700,color:P.jade}}>{money(v.maturityValue)}</div>
+          <div style={{fontSize:10,color:P.neuSub}}>Estimate — full term</div>
+        </div>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:P.neuSub}} className="tnum">
+        <span>Gross accrued {money(v.grossAccrued)}</span>
+        <span>Withholding tax {money(v.taxAmt)}</span>
+        <span>Net accrued {money(v.netAccrued)}</span>
+        <span>{status==="active"?`Matures in ${v.daysRemaining} days`:hld.maturedAt?`Matured ${new Date(hld.maturedAt).toLocaleDateString()}`:""}</span>
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
+        {status==="active"&&v.daysRemaining<=0&&(
+          <button onClick={onConfirmMaturity} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.br}}>
+            <I.Bank size={12}/>Confirm matured
+          </button>
+        )}
+        {status==="active"&&v.daysRemaining>0&&(
+          <button onClick={onConfirmMaturity} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
+            Confirm matured early
+          </button>
+        )}
+        {status==="matured"&&(
+          <TdTransferControl banks={banks} onTransfer={onTransfer}/>
+        )}
+        {status==="closed"&&hld.transferBankId&&(
+          <span style={{fontSize:11,color:P.neuSub}}>Proceeds transferred to {(banks||[]).find(b=>b.id===hld.transferBankId)?.name||"bank"}</span>
+        )}
+      </div>
+      <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
+        style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
+    </div>
+  );
+}
+
+function TdTransferControl({banks,onTransfer}){
+  const[bankId,setBankId]=useState((banks&&banks[0]&&banks[0].id)||"");
+  if(!banks||!banks.length)return<span style={{fontSize:11,color:P.neuSub}}>Add a bank account to transfer proceeds.</span>;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <select value={bankId} onChange={e=>setBankId(e.target.value)} style={{...neu(8),padding:"3px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+        {banks.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+      </select>
+      <button onClick={()=>bankId&&onTransfer(bankId)} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
+        <I.Refresh size={12}/>Transfer proceeds
+      </button>
+    </div>
+  );
+}
+
+/* ── Gold account card (Phase 3) — physical bars/coins only. No live market
+   price series like stocks (a single spot quote, not a per-holding
+   ticker/trade log), so the summary is purchase-vs-current value off
+   goldValuation(), mirroring how TdAccountCard/Mp2AccountCard summarize
+   rate-driven (not trade-driven) accounts. Purity is entered as karat
+   (24K/22K/custom) since that's how gold is actually quoted, converted to a
+   0–1 fraction only inside goldValuation(). */
+function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,convert}){
+  const v=goldValuation(hld,goldPriceUsd,convert);
+  const ccy=hld.currency||"USD";
+  const money=(n,c=ccy)=>`${c} ${Math.round(Number(n)||0).toLocaleString("en-US")}`;
+  const weightInvalid=!(Number(hld.weight)>0);
+  const costInvalid=!(Number(hld.purchaseCost)>0);
+  const karatInvalid=!(Number(hld.karat)>0&&Number(hld.karat)<=24);
+  const setPurityType=pt=>{
+    const karat=pt==="24k"?24:pt==="22k"?22:(Number(hld.karat)||18);
+    updateInv(hld.id,{purityType:pt,karat});
+  };
+  return(
+    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"12px 16px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <input value={hld.name||""} placeholder="Account name" onChange={e=>updateInv(hld.id,{name:e.target.value})}
+          className="bare" style={{fontSize:14,fontWeight:700,flex:1,minWidth:0,color:P.neuInk}}/>
+        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{v.hasPrice?money(convert?(convert(v.currentValueUsd,"USD",ccy)||v.currentValueUsd):v.currentValueUsd):"—"}</span>
+        <button onClick={()=>removeInv(hld.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.4}}><I.X size={15}/></button>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
+        <select value={hld.owner||"me"} onChange={e=>updateInv(hld.id,{owner:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+          {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
+        </select>
+        <select value={ccy} onChange={e=>updateInv(hld.id,{currency:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+          {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:4,fontSize:12,color:P.neuSub}}>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Weight
+          <input type="number" min="0" step="0.001" value={hld.weight??""} onChange={e=>updateInv(hld.id,{weight:Number(e.target.value)})}
+            className="tnum" style={{...neuInset(6),width:90,padding:"3px 6px",fontSize:12,color:weightInvalid?P.wine:P.neuInk}}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Unit
+          <select value={hld.weightUnit||"g"} onChange={e=>updateInv(hld.id,{weightUnit:e.target.value})} style={{...neu(6),padding:"3px 6px",fontSize:12,border:"none",color:P.neuInk}}>
+            {GOLD_UNITS.map(([v2,l])=><option key={v2} value={v2}>{l}</option>)}
+          </select>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Purity
+          <select value={hld.purityType||"24k"} onChange={e=>setPurityType(e.target.value)} style={{...neu(6),padding:"3px 6px",fontSize:12,border:"none",color:P.neuInk}}>
+            <option value="24k">24K</option>
+            <option value="22k">22K</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        {hld.purityType==="custom"&&(
+          <label style={{display:"flex",flexDirection:"column",gap:2}}>Karat
+            <input type="number" min="1" max="24" step="0.1" value={hld.karat??""} onChange={e=>updateInv(hld.id,{karat:Number(e.target.value)})}
+              className="tnum" style={{...neuInset(6),width:60,padding:"3px 6px",fontSize:12,color:karatInvalid?P.wine:P.neuInk}}/>
+          </label>
+        )}
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Purchase date
+          <input type="date" value={hld.purchaseDate||""} onChange={e=>updateInv(hld.id,{purchaseDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:2}}>Purchase cost ({ccy})
+          <input type="number" min="0" value={hld.purchaseCost??""} onChange={e=>updateInv(hld.id,{purchaseCost:Number(e.target.value)})}
+            className="tnum" style={{...neuInset(6),width:100,padding:"3px 6px",fontSize:12,color:costInvalid?P.wine:P.neuInk}}/>
+        </label>
+      </div>
+      {(weightInvalid||costInvalid||karatInvalid)&&(
+        <div style={{fontSize:11,color:P.wine,marginBottom:6}}>
+          {weightInvalid&&"Weight must be greater than 0. "}
+          {costInvalid&&"Purchase cost must be greater than 0. "}
+          {karatInvalid&&"Karat must be between 1 and 24."}
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+        <div>
+          <div style={{fontSize:11,color:P.neuSub}}>Purchase value</div>
+          <div className="tnum" style={{fontSize:16,fontWeight:700,color:P.neuInk}}>{money(hld.purchaseCost)}</div>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:P.neuSub}}>Current estimated value</div>
+          <div className="tnum" style={{fontSize:16,fontWeight:700,color:P.jade}}>
+            {v.hasPrice?money(convert?(convert(v.currentValueUsd,"USD",ccy)||v.currentValueUsd):v.currentValueUsd):"No price yet"}
+          </div>
+        </div>
+      </div>
+      {v.hasPrice&&(
+        <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:v.gainUsd>=0?P.jade:P.wine,fontWeight:600}} className="tnum">
+          <span>{v.gainUsd>=0?"▲":"▼"} {money(Math.abs(convert?(convert(v.gainUsd,"USD",ccy)||v.gainUsd):v.gainUsd))} ({v.gainPct.toFixed(1)}%)</span>
+          <span style={{color:P.neuSub,fontWeight:400}}>Spot ${goldPriceUsd?Number(goldPriceUsd).toFixed(2):"—"}/oz{priceAt?` · updated ${new Date(priceAt).toLocaleTimeString()}`:""}</span>
+        </div>
+      )}
+      {!v.hasPrice&&<div style={{fontSize:11,color:P.neuSub,marginBottom:8}}>No gold price cached yet — tap "Refresh prices" above.</div>}
+      <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
+        style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
+    </div>
+  );
+}
+
+/* ── Add MP2 contribution modal ── */
+function Mp2ContributionModal({hld,onClose,onSubmit}){
+  const[amount,setAmount]=useState("");
+  const[date,setDate]=useState(new Date().toISOString().slice(0,10));
+  const[note,setNote]=useState("");
+  const valid=Number(amount)>0&&!!date;
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Add contribution — {hld?.name||"MP2"}</h3>
+            <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({hld?.currency||"PHP"})</div>
+            <input type="number" min="0" value={amount} onChange={e=>setAmount(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+            {amount!==""&&!(Number(amount)>0)&&<div style={{fontSize:11,color:P.wine,marginTop:4}}>Enter a positive amount.</div>}
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Contribution date</div>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note (optional)</div>
+            <input value={note} onChange={e=>setNote(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+          </div>
+          <button onClick={()=>valid&&onSubmit(amount,date,note)} disabled={!valid}
+            style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none",opacity:valid?1:.5}}>
+            Add contribution
+          </button>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+/* ── Record MP2 annual dividend payout modal (section 5) — always an
+   explicit confirm, never automatic; bank is optional so the receipt can be
+   logged even before the money is actually moved. */
+function Mp2PayoutModal({hld,banks,mp2RatesByYear,onClose,onSubmit}){
+  const thisYear=new Date().getFullYear();
+  const[year,setYear]=useState(thisYear);
+  const declared=(hld?.rateOverrides&&hld.rateOverrides[year]!=null)?hld.rateOverrides[year]:mp2RatesByYear[year];
+  const[amount,setAmount]=useState("");
+  const[date,setDate]=useState(new Date().toISOString().slice(0,10));
+  const[bankId,setBankId]=useState("");
+  const valid=Number(amount)>0&&!!date;
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Record dividend payout — {hld?.name||"MP2"}</h3>
+            <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+          </div>
+          <div style={{fontSize:11,color:P.sub,marginBottom:12,lineHeight:1.5}}>
+            Only records what's actually been paid. This won't touch a bank balance unless you pick an account below.
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Dividend year{declared!=null?` — declared rate ${declared}%`:" — no declared rate yet"}</div>
+            <input type="number" value={year} onChange={e=>setYear(Number(e.target.value))}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount received ({hld?.currency||"PHP"})</div>
+            <input type="number" min="0" value={amount} onChange={e=>setAmount(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Date received</div>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Deposit to bank account (optional)</div>
+            <select value={bankId} onChange={e=>setBankId(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}>
+              <option value="">Don't touch any bank balance</option>
+              {(banks||[]).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+          <button onClick={()=>valid&&onSubmit({year,amount,date,bankId})} disabled={!valid}
+            style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none",opacity:valid?1:.5}}>
+            Record payout
+          </button>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+/* ── Confirm Time Deposit maturity modal (section 7) — the person enters
+   what the bank actually credited; nothing here touches a bank balance
+   until they separately tap Transfer proceeds (TdTransferControl above),
+   kept as its own explicit step per "do not automatically alter bank
+   balances without confirmation". */
+function TdMaturityModal({hld,onClose,onSubmit}){
+  const v=hld?tdValuation(hld):null;
+  const[interest,setInterest]=useState(v?String(Math.round(v.netAccrued)):"");
+  const[finalAmount,setFinalAmount]=useState(v?String(Math.round(v.currentEstValue)):"");
+  const valid=Number(finalAmount)>0;
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Confirm matured — {hld?.name||"Time Deposit"}</h3>
+            <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Actual credited interest ({hld?.currency||"PHP"})</div>
+            <input type="number" value={interest} onChange={e=>setInterest(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Final amount received ({hld?.currency||"PHP"})</div>
+            <input type="number" value={finalAmount} onChange={e=>setFinalAmount(e.target.value)}
+              style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+            {!valid&&<div style={{fontSize:11,color:P.wine,marginTop:4}}>Enter a positive final amount.</div>}
+          </div>
+          <button onClick={()=>valid&&onSubmit({confirmedInterest:interest||0,confirmedFinalAmount:finalAmount})} disabled={!valid}
+            style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none",opacity:valid?1:.5}}>
+            Mark as matured
+          </button>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+/* ── MP2 declared dividend rates — one shared table (data.mp2DividendRates),
+   add/edit/delete + history (section 3). Editing an existing year in place
+   rather than allowing duplicate years keeps "one rate per year" true
+   without extra validation plumbing. */
+function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
+  const[year,setYear]=useState(new Date().getFullYear());
+  const[rate,setRate]=useState("");
+  const sorted=[...(rates||[])].sort((a,b)=>b.year-a.year);
+  const existing=sorted.find(r=>r.year===Number(year));
+  const submit=()=>{
+    if(!(Number(rate)>0)&&Number(rate)!==0)return;
+    if(existing)updateMp2Rate(existing.id,{rate:Number(rate)});
+    else addMp2Rate(year,rate);
+    setRate("");
+  };
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>MP2 declared dividend rates</h3>
+            <button onClick={onClose} style={{background:"transparent",border:"none",color:P.sub}}><I.X size={18}/></button>
+          </div>
+          <div style={{fontSize:11,color:P.sub,marginBottom:12,lineHeight:1.5}}>
+            One official rate per year, shared by every MP2 account unless an account overrides it. Never a projection — only enter what Pag-IBIG has actually declared.
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            <input type="number" value={year} onChange={e=>setYear(Number(e.target.value))} placeholder="Year"
+              style={{width:90,borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+            <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)} placeholder="Rate %"
+              style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+            <button onClick={submit} style={{borderRadius:10,padding:"8px 14px",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none"}}>
+              {existing?"Update":"Add"}
+            </button>
+          </div>
+          <div style={{maxHeight:260,overflowY:"auto",borderRadius:10,background:"rgba(0,0,0,.03)"}}>
+            {sorted.length===0&&<div style={{padding:12,fontSize:13,color:P.sub}}>No declared rates yet.</div>}
+            {sorted.map(r=>(
+              <div key={r.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderTop:"1px solid rgba(0,0,0,.05)"}}>
+                <span className="tnum" style={{fontWeight:600,color:P.ink}}>{r.year}</span>
+                <span className="tnum" style={{color:P.jade,fontWeight:600,marginLeft:8}}>{r.rate}%</span>
+                <button onClick={()=>{setYear(r.year);setRate(String(r.rate));}} style={{marginLeft:"auto",background:"transparent",border:"none",color:P.sub,fontSize:12}}>Edit</button>
+                <button onClick={()=>removeMp2Rate(r.id)} style={{background:"transparent",border:"none",color:P.wine,opacity:.6}}><I.X size={14}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Portal>
   );
 }
 
@@ -5627,7 +7069,7 @@ function AssetRow({a,updateAsset,removeAsset}){
 }
 
 /* ── NET WORTH VIEW — installment liabilities ── */
-function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,captureSnapshot,addPastSnap,removeSnap}){
+function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}){
   const[gran,setGran]=useState("month");
   const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
   const[pv,setPv]=useState("");
@@ -5675,6 +7117,13 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         ))}
       </div>
 
+      <div className="fade-up-1b" style={{...neu(16),padding:16,marginBottom:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Net worth trend</h3>
+        <HistoryRangeChart snapshots={snapshots} profile="household" field="net"
+          money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
+          emptyText="Trend appears once 2+ days of history have been captured (captured automatically once a day)."/>
+      </div>
+
       <div className="fade-up-2" style={{...neu(16),overflow:"hidden",marginBottom:16}}>
         <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub}}>Assets</div>
         {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
@@ -5686,7 +7135,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
 
       <div className="fade-up-3" style={{...neu(16),padding:16}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <h3 style={{fontSize:14,fontWeight:600,margin:0,color:P.neuSub}}>Net worth over time</h3>
+          <h3 style={{fontSize:14,fontWeight:600,margin:0,color:P.neuSub}}>Monthly snapshot log</h3>
           <div style={{display:"flex",gap:4}}>
             {["month","year"].map(gv=>(
               <button key={gv} onClick={()=>setGran(gv)} className={gran===gv?"":"neu-btn"}
@@ -6590,8 +8039,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 </select>
               </div>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
-                <span style={{fontSize:13,color:P.ink}}>Asset Allocation card</span>
-                <select value={(hd.cash&&hd.cash.primary)||"PHP"} onChange={e=>setHD("cash",{primary:e.target.value})} style={selStyle}>
+                <span style={{fontSize:13,color:P.ink}}>Savings &amp; Investing card</span>
+                <select value={(hd.savingsInvesting&&hd.savingsInvesting.primary)||"PHP"} onChange={e=>setHD("savingsInvesting",{primary:e.target.value})} style={selStyle}>
                   {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
@@ -6603,6 +8052,111 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               </div>
             </>);
           })()}
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Savings &amp; Investing categories</div>
+        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+          Which budget categories count toward the Home Savings &amp; Investing card. Matched by
+          category name each month — not Income minus Expenses, and not the "Invest &amp; Grow" target in Budget.
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+          {(()=>{
+            const hs=data.homeSettings||{};
+            const allNames=[...new Set((data.plans||[]).flatMap(p=>(p.categories||[]).map(c=>c.name)))].sort();
+            const toggleName=(field,name)=>setData(d=>{
+              const cur=(d.homeSettings&&d.homeSettings[field])||[];
+              const next=cur.includes(name)?cur.filter(n=>n!==name):[...cur,name];
+              return{...d,homeSettings:{...(d.homeSettings||{}),[field]:next}};
+            });
+            const picker=(label,field)=>{
+              const sel=hs[field]||[];
+              return(
+                <div style={{borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                  <div style={{fontSize:12,color:P.sub,marginBottom:6}}>{label}</div>
+                  {allNames.length===0?
+                    <div style={{fontSize:12,color:P.faint}}>Add categories in Budget first.</div>
+                  :(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {allNames.map(name=>{
+                        const active=sel.includes(name);
+                        return(
+                          <button key={name} onClick={()=>toggleName(field,name)}
+                            style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
+                              background:active?P.grS:P.sf,color:active?P.grD:P.sub,border:`1px solid ${active?P.grS:P.line}`}}>
+                            {name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            };
+            return(<>
+              {picker("Savings categories","savingsCategories")}
+              {picker("Investment categories","investmentCategories")}
+            </>);
+          })()}
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Home card visibility</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+          {(()=>{
+            const vis=(data.homeSettings&&data.homeSettings.cardVisibility)||{};
+            const toggleCard=key=>setData(d=>({...d,homeSettings:{...(d.homeSettings||{}),
+              cardVisibility:{...((d.homeSettings&&d.homeSettings.cardVisibility)||{}),[key]:vis[key]===false}}}));
+            const cards=[["hero","Net Worth"],["portfolio","Portfolio"],["savingsInvesting","Savings & Investing"],["trackedSpending","Tracked Spending"],["goals","Goals"]];
+            return cards.map(([key,label])=>{
+              const on=vis[key]!==false;
+              return(
+                <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                  <span style={{fontSize:13,color:P.ink}}>{label}</span>
+                  <button onClick={()=>toggleCard(key)}
+                    style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
+                      background:on?P.gr:P.sf,color:on?"#fff":P.sub,border:`1px solid ${on?P.gr:P.line}`}}>
+                    {on?"Shown":"Hidden"}
+                  </button>
+                </div>
+              );
+            });
+          })()}
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Investments</div>
+        <button onClick={()=>setData(d=>({...d,settings:{...(d.settings||{}),includeMp2EstimateInNetWorth:!(d.settings&&d.settings.includeMp2EstimateInNetWorth)}}))}
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:13,marginBottom:16,
+            background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,textAlign:"left"}}>
+          <span>Include estimated MP2 earnings in Net Worth<br/>
+            <span style={{fontSize:11,color:P.faint,fontWeight:400}}>Off by default — Net Worth and Portfolio use MP2's confirmed value only</span>
+          </span>
+          <span style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,flexShrink:0,marginLeft:8,
+            background:(data.settings&&data.settings.includeMp2EstimateInNetWorth)?P.gr:P.sf,color:(data.settings&&data.settings.includeMp2EstimateInNetWorth)?"#fff":P.sub,
+            border:`1px solid ${(data.settings&&data.settings.includeMp2EstimateInNetWorth)?P.gr:P.line}`}}>
+            {(data.settings&&data.settings.includeMp2EstimateInNetWorth)?"On":"Off"}
+          </span>
+        </button>
+        <button onClick={()=>setData(d=>({...d,settings:{...(d.settings||{}),goldAutoRefresh:!(d.settings?d.settings.goldAutoRefresh!==false:true)}}))}
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:13,marginBottom:16,
+            background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,textAlign:"left"}}>
+          <span>Automatically refresh gold price<br/>
+            <span style={{fontSize:11,color:P.faint,fontWeight:400}}>On by default — gold rides the same background refresh as stock quotes. Turn off to only update it with the manual "Refresh prices" button in Investments.</span>
+          </span>
+          <span style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,flexShrink:0,marginLeft:8,
+            background:(data.settings?data.settings.goldAutoRefresh!==false:true)?P.gr:P.sf,color:(data.settings?data.settings.goldAutoRefresh!==false:true)?"#fff":P.sub,
+            border:`1px solid ${(data.settings?data.settings.goldAutoRefresh!==false:true)?P.gr:P.line}`}}>
+            {(data.settings?data.settings.goldAutoRefresh!==false:true)?"On":"Off"}
+          </span>
+        </button>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"9px 12px",fontSize:13,marginBottom:16,
+          background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
+          <span>Detailed (daily) snapshot history<br/>
+            <span style={{fontSize:11,color:P.faint,fontWeight:400}}>How many recent days keep day-by-day resolution before older history compresses to weekly, then monthly</span>
+          </span>
+          <select value={(data.settings&&data.settings.snapshotRetention&&data.settings.snapshotRetention.dailyDays)||35}
+            onChange={e=>setData(d=>({...d,settings:{...(d.settings||{}),snapshotRetention:{...((d.settings&&d.settings.snapshotRetention)||{weeklyDays:365}),dailyDays:Number(e.target.value)}}}))}
+            style={{borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink,flexShrink:0}}>
+            <option value={14}>14 days</option>
+            <option value={35}>35 days</option>
+            <option value={60}>60 days</option>
+            <option value={90}>90 days</option>
+          </select>
         </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Cloudflare KV Sync</div>
         {kvReady
