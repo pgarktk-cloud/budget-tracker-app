@@ -3230,7 +3230,14 @@ function App(){
     if(!netWorthReady)return;
     const t=setTimeout(()=>{
       const today=new Date().toISOString().slice(0,10);
-      setData(d=>{
+      // setDataRaw, not setData: this is an automatic background snapshot,
+      // not a real user edit, so it must not stamp dataUpdatedAt — doing so
+      // would make merely opening the app look like "just edited" and skew
+      // tryAutoMergeAll's preferLocal choice toward whichever device was
+      // simply opened most recently rather than actually edited most
+      // recently. Persistence/dirty-marking (the [data,loaded] effect) still
+      // runs normally since skipSave.current is untouched here.
+      setDataRaw(d=>{
         let snaps=[...(d.snapshots||[])];
         let changed=false;
         ["me","wife","household"].forEach(profile=>{
