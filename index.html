@@ -1979,7 +1979,7 @@ function App(){
     if(!loaded||purgedThisSessionRef.current||hasUnsyncedChanges)return;
     purgedThisSessionRef.current=true;
     const purged=purgeOldTombstones(dataRef.current);
-    if(fingerprint(purged)!==fingerprint(dataRef.current))setData(purged);
+    if(fingerprint(purged)!==fingerprint(dataRef.current))setDataRaw(purged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[loaded,hasUnsyncedChanges]);
 
@@ -3202,7 +3202,10 @@ function App(){
     if(!netWorthReady)return;
     const t=setTimeout(()=>{
       const month=new Date().toISOString().slice(0,7);
-      setData(d=>{
+      // setDataRaw: automatic background recompute, not a user edit — see
+      // the note on the daily-snapshot effect above for why this must not
+      // stamp dataUpdatedAt.
+      setDataRaw(d=>{
         const existing=(d.history||[]).find(h=>h.month===month);
         const rounded=Math.round(netWorth);
         if(existing&&existing.net===rounded&&existing.banks===Math.round(banksSar)&&existing.investments===Math.round(invSar)&&existing.assets===Math.round(assetSar)&&existing.liabilities===Math.round(liabSar)){
@@ -3354,7 +3357,10 @@ function App(){
   // never touches records from prior months, so history stays untouched.
   useEffect(()=>{
     if(!loaded)return;
-    setData(d=>{
+    // setDataRaw: automatic background generation, not a user edit — see the
+    // note on the daily-snapshot effect above for why this must not stamp
+    // dataUpdatedAt.
+    setDataRaw(d=>{
       const items=((d.household||{}).expenses||[]).filter(e=>!e.deletedAt&&e.trackInBills);
       if(items.length===0)return d;
       const already=new Set((d.bills||[]).filter(b=>!b.deletedAt&&b.monthKey===currentBillMonthKey).map(b=>b.itemId));
