@@ -3559,10 +3559,13 @@ function HistoryRangeChart({snapshots,profile,field,money,color,height=200,empty
     if(r==="MAX")return d.toLocaleDateString("en-US",{month:"short",year:"2-digit"});
     return d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
   };
-  const pts=bucketed.map(s=>({label:fmtLabel(s.date,range),value:s[field]}));
+  // `field` may be a dot path (e.g. "byType.gold") to reach into snapshot.byType
+  const at=s=>field.split(".").reduce((o,k)=>o==null?undefined:o[k],s);
+  const pts=bucketed.map(s=>({label:fmtLabel(s.date,range),value:at(s)}));
   const first=bucketed[0],last=bucketed[bucketed.length-1];
-  const pctChange=first&&first[field]?((last[field]-first[field])/Math.abs(first[field]))*100:null;
-  const trending=last&&first?last[field]>=first[field]:true;
+  const firstVal=first?at(first):undefined,lastVal=last?at(last):undefined;
+  const pctChange=first&&firstVal?((lastVal-firstVal)/Math.abs(firstVal))*100:null;
+  const trending=last&&first?lastVal>=firstVal:true;
   const chartColor=color||(trending?P.jade:P.wine);
   return(
     <div>
@@ -6186,6 +6189,20 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
           money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
           emptyText="Trend appears once 2+ days of portfolio history have been captured (captured automatically once a day)."/>
       </div>
+
+      {/* Gold value over time (roadmap Phase 4 candidate) — same snapshot
+          system/component as Portfolio trend above, pointed at the
+          per-type breakdown captured alongside it (snapshot.byType.gold),
+          not a new chart implementation. Only shown once a Gold account
+          exists, matching the "Gold {usd(...)}" hero line's own gating. */}
+      {goldInvs.length>0&&(
+        <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
+          <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 12px"}}>Gold value over time</h3>
+          <HistoryRangeChart snapshots={snapshots} profile="household" field="byType.gold" color={P.amber}
+            money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
+            emptyText="Trend appears once 2+ days of gold value history have been captured (captured automatically once a day)."/>
+        </div>
+      )}
 
       {/* portfolio history chart (legacy, monthly-only, captured when you refresh prices) */}
       {portHistory.length>0&&(()=>{
