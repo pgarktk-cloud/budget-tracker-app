@@ -1767,11 +1767,11 @@ function tryAutoMergeAll(local,remote){
     return{
       ...base,
       expenses:mergeArrayById(local.expenses,remote.expenses),
-      goals:mergeArrayByIdWithChild(local.goals,remote.goals,"contributions",c=>c.date||""),
+      goals:mergeArrayByIdWithChild(local.goals,remote.goals,"contributions",c=>c.updatedAt||c.date||""),
       investments:mergeArrayByIdWithChildren(local.investments,remote.investments,[
-        {key:"trades",tsOf:t=>t.date||""},
-        {key:"contributions",tsOf:c=>c.date||""},
-        {key:"paidDividends",tsOf:p=>p.date||""},
+        {key:"trades",tsOf:t=>t.updatedAt||t.date||""},
+        {key:"contributions",tsOf:c=>c.updatedAt||c.date||""},
+        {key:"paidDividends",tsOf:p=>p.updatedAt||p.date||""},
       ]),
       banks:mergeArrayById(local.banks,remote.banks),
       assets:mergeArrayById(local.assets,remote.assets),
@@ -2875,12 +2875,14 @@ function App(){
     pushImportantRef.current();
   };
   const addContribution=(goalId,amount,note="")=>{
-    const contrib={id:uid(),date:new Date().toISOString().slice(0,10),amount:Number(amount),note};
-    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib],updatedAt:new Date().toISOString()}:g)}));
+    const now=new Date().toISOString();
+    const contrib={id:uid(),date:now.slice(0,10),amount:Number(amount),note,updatedAt:now};
+    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib],updatedAt:now}:g)}));
     pushImportantRef.current();
   };
   const removeContribution=(goalId,cid)=>{
-    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:g)}));
+    const now=new Date().toISOString();
+    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:now,updatedAt:now}:c),updatedAt:now}:g)}));
     triggerUndo("Deleted contribution",{collection:"goals",id:goalId,childKey:"contributions",childId:cid});
     pushImportantRef.current();
   };
@@ -2904,9 +2906,10 @@ function App(){
     if(inv)triggerUndo(`Deleted "${inv.ticker||inv.name||"investment"}"`,{collection:"investments",id});
     pushImportantRef.current();
   };
-  const addTrade=(invId,trade)=>{setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade}],updatedAt:new Date().toISOString()}:x)}));pushImportantRef.current();};
+  const addTrade=(invId,trade)=>{const now=new Date().toISOString();setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:[...(x.trades||[]),{id:uid(),...trade,updatedAt:now}],updatedAt:now}:x)}));pushImportantRef.current();};
   const removeTrade=(invId,tid)=>{
-    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:new Date().toISOString()}:t),updatedAt:new Date().toISOString()}:x)}));
+    const now=new Date().toISOString();
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,trades:(x.trades||[]).map(t=>t.id===tid?{...t,deletedAt:now,updatedAt:now}:t),updatedAt:now}:x)}));
     triggerUndo("Deleted trade",{collection:"investments",id:invId,childKey:"trades",childId:tid});
     pushImportantRef.current();
   };
@@ -2926,7 +2929,8 @@ function App(){
     pushImportantRef.current();
   };
   const removeMp2Contribution=(invId,cid)=>{
-    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,contributions:(x.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:new Date().toISOString()}:c),updatedAt:new Date().toISOString()}:x)}));
+    const now=new Date().toISOString();
+    setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,contributions:(x.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:now,updatedAt:now}:c),updatedAt:now}:x)}));
     triggerUndo("Deleted contribution",{collection:"investments",id:invId,childKey:"contributions",childId:cid});
     pushImportantRef.current();
   };
@@ -2957,7 +2961,7 @@ function App(){
      confirm action per section 5 of the spec. */
   const recordMp2Payout=(invId,{year,amount,date,bankId,note=""})=>{
     const now=new Date().toISOString();
-    const receipt={id:uid(),year:Number(year),amount:Number(amount),date,note,bankId:bankId||null,createdAt:now};
+    const receipt={id:uid(),year:Number(year),amount:Number(amount),date,note,bankId:bankId||null,createdAt:now,updatedAt:now};
     setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,paidDividends:[...(x.paidDividends||[]),receipt],updatedAt:now}:x)}));
     if(bankId)setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===bankId?{...b,balance:(Number(b.balance)||0)+Number(amount),updatedAt:now}:b)}));
     pushImportantRef.current();
