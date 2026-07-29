@@ -1,9 +1,12 @@
-// Bump CACHE_VERSION any time index.html (or anything in APP_SHELL) changes,
-// so returning users pick up the new shell instead of being stuck on an old
+// Bump BUILD_ID any time index.html (or anything in APP_SHELL) changes, so
+// returning users pick up the new shell instead of being stuck on an old
 // cached copy. The activate step below purges any cache that doesn't match
-// the current version.
-const CACHE_VERSION = 'v19';
-const CACHE_NAME = `allocation-shell-${CACHE_VERSION}`;
+// the current build. Keep this in sync with APP_VERSION/BUILD_ID in
+// index.html and with version.json — all three should be bumped together
+// on every deploy so the displayed build and the cached app release always
+// correspond.
+const BUILD_ID = '2026.07.29.0832';
+const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
   './',
@@ -53,11 +56,24 @@ function isAppShellRequest(request) {
     (url.pathname === '/' || url.pathname.endsWith('/index.html'));
 }
 
+function isVersionCheckRequest(request) {
+  const url = new URL(request.url);
+  return url.origin === self.location.origin && url.pathname.endsWith('/version.json');
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
   // Only handle safe, cacheable GET requests over http(s).
   if (request.method !== 'GET' || !request.url.startsWith('http')) return;
+
+  // version.json is the update-check signal — it must always come straight
+  // from the network so an installed PWA can detect a newer deployed build.
+  // Never let it enter the cache, and never serve it from the cache.
+  if (isVersionCheckRequest(request)) {
+    event.respondWith(fetch(request));
+    return;
+  }
 
   if (isAppShellRequest(request)) {
     event.respondWith(
