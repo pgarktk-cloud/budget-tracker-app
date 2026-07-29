@@ -932,6 +932,15 @@ function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNam
   return{month,saved,invested,income:Number((plan&&plan.income)||0)};
 }
 
+/* ── App version / build ──
+   Single source of truth for the version shown in Settings → About and
+   compared against version.json. Bump both on every deploy — BUILD_ID
+   must also be copied into sw.js's BUILD_ID (used in the cache name) so
+   the displayed build and the cached app release always correspond, and
+   into version.json so the app can detect when a newer build is live.  */
+const APP_VERSION="1.4.2";
+const BUILD_ID="2026.07.29.0832";
+
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
 const PROXY_URL="https://alloc-kv.jastinefodra21.workers.dev";
@@ -8431,6 +8440,15 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const fileRef=useRef(null);
+  const[versionCheck,setVersionCheck]=useState({status:"checking"});
+  useEffect(()=>{
+    let cancelled=false;
+    fetch(`./version.json?t=${Date.now()}`,{cache:"no-store"})
+      .then(r=>r.ok?r.json():Promise.reject(new Error("bad response")))
+      .then(j=>{if(!cancelled)setVersionCheck({status:"ok",version:j.version,buildId:j.buildId});})
+      .catch(()=>{if(!cancelled)setVersionCheck({status:"error"});});
+    return()=>{cancelled=true;};
+  },[]);
   const flash=m=>{setMsg(m);setTimeout(()=>setMsg(""),2500);};
   const download=()=>{
     const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
@@ -8735,6 +8753,16 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
           <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to sample data"}
         </button>
+        <div style={{marginTop:16,paddingTop:12,borderTop:`1px solid ${P.line}`,fontSize:11,color:P.faint,lineHeight:1.7}}>
+          <div>Version {APP_VERSION} · Build {BUILD_ID}</div>
+          <div>Latest server build: {versionCheck.status==="ok"?versionCheck.buildId:versionCheck.status==="checking"?"checking…":"couldn't check"}</div>
+          {versionCheck.status==="ok"&&
+            <div>Status: {versionCheck.buildId===BUILD_ID?"Up to date":"Update available"}</div>}
+          {versionCheck.status==="ok"&&versionCheck.buildId!==BUILD_ID&&
+            <button onClick={()=>window.location.reload()} style={{...btn,width:"100%",marginTop:8}}>
+              <I.Refresh size={14}/>Update Available — Reload
+            </button>}
+        </div>
       </div>
     </div>
   );
