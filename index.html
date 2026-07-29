@@ -238,10 +238,14 @@ select{transition:background .22s;}
 .sub-row-meta{display:flex;align-items:center;gap:10px;flex-shrink:0;justify-content:space-between;}
 @media(max-width:768px){
   .cat-row-name{flex-basis:100%;}
-  .cat-row-meta{flex-basis:100%;padding-left:18px;}
+  .cat-row-meta{flex-basis:100%;padding-left:18px;flex-wrap:wrap;row-gap:8px;}
+  .cat-row-figures{flex:1 1 auto;}
+  .cat-row-actions{flex:1 1 auto;justify-content:flex-end;}
   .sub-row-name{flex-basis:100%;}
-  .sub-row-meta{flex-basis:100%;padding-left:14px;}
+  .sub-row-meta{flex-basis:100%;padding-left:14px;flex-wrap:wrap;row-gap:6px;}
 }
+.status-pill-fixed{min-width:104px;justify-content:center;}
+@media(max-width:400px){.status-pill-fixed{min-width:0;padding:0 8px;}}
 
 /* ── Home tab: responsive dashboard grid ──
    One shared 6-column track at every breakpoint, so every card snaps to the
@@ -314,6 +318,60 @@ select{transition:background .22s;}
 }
 
 #root{padding-top:env(safe-area-inset-top);}
+
+/* ── Floating action button ──
+   Shared by App's global FAB and Home's own FAB (mutually exclusive, never
+   both mounted). Fixed position with all four safe-area insets respected so
+   it never drifts under a notch/home-indicator on the sides either. Callers
+   still own their bottom/onClick — this only standardizes size/shadow/inset math. */
+.fab-btn{
+  position:fixed;
+  right:calc(env(safe-area-inset-right) + 16px);
+  bottom:calc(env(safe-area-inset-bottom) + 24px);
+  z-index:70;width:56px;height:56px;border-radius:999px;color:#fff;border:none;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 6px 20px rgba(12,22,40,.35);cursor:pointer;
+}
+
+/* ── Status pill (Tracked / Not tracked, etc.) ──
+   One shape for every on/off status badge: same height, padding, icon gap,
+   type and radius — only the color+bg (passed via inline style) differs. */
+.status-pill{
+  display:inline-flex;align-items:center;gap:5px;border-radius:999px;
+  padding:0 10px;height:28px;font-size:11px;font-weight:600;line-height:1;
+  white-space:nowrap;box-sizing:border-box;
+}
+
+/* ── Segmented control (Home profile toggle: Me / Wife / Household) ──
+   Fixed overall width + equal-width columns so switching segments never
+   resizes or reflows the row; a single absolutely-positioned indicator
+   slides between columns instead of each button re-styling itself. */
+.seg-control{
+  position:relative;display:grid;grid-template-columns:repeat(3,1fr);
+  width:220px;max-width:100%;background:var(--sfA);border-radius:999px;padding:3px;
+  flex-shrink:0;
+}
+.seg-indicator{
+  position:absolute;top:3px;left:3px;bottom:3px;width:calc((100% - 6px)/3);
+  border-radius:999px;transition:transform .25s cubic-bezier(.22,1,.36,1),background .2s ease;
+  z-index:0;
+}
+.seg-btn{
+  position:relative;z-index:1;border:none;background:transparent;border-radius:999px;
+  padding:4px 4px;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;transition:color .15s;min-width:0;
+}
+@media(max-width:380px){.seg-control{width:100%;}}
+
+/* ── Transaction row (Amount | Status | Dropdown | Delete) ──
+   Name/note takes the flexible middle column; amount/status/dropdown/delete
+   never shrink below a usable size and never wrap onto their own line, so
+   the row degrades by truncating the name text first, not by clipping the
+   trailing controls. */
+.tx-row{display:flex;align-items:center;gap:8px;padding:10px 16px;box-sizing:border-box;max-width:100%;}
+.tx-row-main{flex:1 1 auto;min-width:0;}
+.tx-row-amount{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.tx-row-actions{display:flex;align-items:center;gap:2px;flex-shrink:0;}
 #loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:999;font-family:-apple-system,sans-serif;color:#56657E;font-size:14px;transition:background .25s;}
 .loader{width:32px;height:32px;border:3px solid #DADEE0;border-top-color:#1E6E5C;border-radius:50%;animation:spin .8s linear infinite;}
 </style>
@@ -3471,7 +3529,8 @@ function App(){
           </div>
         );
       })()}
-      <div style={{maxWidth:920,margin:"0 auto",padding:"0 16px 80px"}}>
+      <div style={{maxWidth:920,margin:"0 auto",boxSizing:"border-box",
+        padding:"0 calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 96px) calc(env(safe-area-inset-left) + 16px)"}}>
 
         {/* header */}
         <header style={{paddingTop:28,paddingBottom:16}}>
@@ -3480,7 +3539,7 @@ function App(){
               <I.Wallet size={18} sw={2.2}/>
               <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Where'dItGo</span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
               {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
               <button onClick={toggleTheme} title={theme==="dark"?"Switch to light mode":"Switch to dark mode"}
                 aria-label={theme==="dark"?"Switch to light mode":"Switch to dark mode"}
@@ -3496,7 +3555,7 @@ function App(){
               </button>
               <button onClick={()=>saveToCloud()} disabled={!kvReady||syncOp==="push"}
                 title={kvReady?(!isOnline?"Offline — will sync when back online":syncStatus==="failed"?`Sync failed${lastSyncError?`: ${lastSyncError}`:""}`:hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL and sync token to enable sync"}
-                style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,
+                style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,
                   background:!kvReady?P.sf:!isOnline?P.sf:syncStatus==="failed"?P.amberS:P.grS,
                   color:!kvReady?P.sub:!isOnline?P.sub:syncStatus==="failed"?P.amber:P.grD,
                   border:`1px solid ${!kvReady?P.line:P.grS}`,opacity:kvReady?1:.5}}>
@@ -3605,11 +3664,8 @@ function App(){
           instead of jumping straight to Expenses) and a desktop Quick Actions
           bar, so the global FAB steps aside there to avoid two + buttons. */}
       {tab!=="expenses"&&tab!=="home"&&
-        <button aria-label="Quick add transaction" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
-          style={{position:"fixed",right:16,bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:70,
-            width:56,height:56,borderRadius:999,background:P.gr,color:"#fff",border:"none",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            boxShadow:"0 6px 20px rgba(12,22,40,.35)",cursor:"pointer"}}>
+        <button aria-label="Quick add transaction" className="fab-btn" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
+          style={{background:P.gr}}>
           <I.Plus size={24}/>
         </button>}
     </div>
@@ -3633,7 +3689,7 @@ function App(){
    spacing between cards (grid replaced the old single-column stack), so a
    card only needs its own marginBottom if it's rendered somewhere the grid
    doesn't apply (kept overridable for that reason). */
-function homeCardStyle(overrides){return{...neu(20),padding:18,marginBottom:0,...overrides};}
+function homeCardStyle(overrides){return{...neu(20),padding:16,marginBottom:0,...overrides};}
 
 /* Turns a livePriceAt/ratesAt timestamp (+ online state) into the small
    muted freshness line shown on Home's live-priced/FX-derived cards. Never
@@ -3791,13 +3847,13 @@ function HistoryRangeChart({snapshots,profile,field,money,color,height=200,empty
    this card and doesn't change budgetOwner. */
 function HomeProfileToggle({profile,setProfile,owners}){
   const opts=[["me",owners.me||"Me",P.gr],["wife",owners.wife||"Wife",P.br],["household","Household",P.amber]];
+  const idx=Math.max(0,opts.findIndex(([key])=>key===profile));
   return(
-    <div role="group" aria-label="Profile" style={{display:"flex",gap:4,background:P.sfA,borderRadius:999,padding:3}}>
+    <div role="group" aria-label="Profile" className="seg-control">
+      <div className="seg-indicator" style={{transform:`translateX(${idx*100}%)`,background:opts[idx][2]}}/>
       {opts.map(([key,label,color])=>(
-        <button key={key} onClick={()=>setProfile(key)} aria-pressed={profile===key}
-          style={{borderRadius:999,padding:"4px 10px",fontSize:11,fontWeight:600,border:"none",whiteSpace:"nowrap",
-            background:profile===key?color:"transparent",color:profile===key?"#fff":color,
-            transition:"background .15s,color .15s"}}>
+        <button key={key} onClick={()=>setProfile(key)} aria-pressed={profile===key} className="seg-btn"
+          style={{color:profile===key?"#fff":color}}>
           {label}
         </button>
       ))}
@@ -3840,10 +3896,10 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
     <div className="home-card home-tappable" role="button" tabIndex={0}
       onClick={onOpen}
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
-      style={{...homeCardStyle({padding:16}),cursor:"pointer"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
-        <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Net worth · {label}</div>
-        <div onClick={e=>e.stopPropagation()}>
+      style={{...homeCardStyle(),cursor:"pointer"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,minHeight:28}}>
+        <div style={{fontSize:12,color:P.sub,fontWeight:600,flex:"1 1 auto",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Net worth · {label}</div>
+        <div onClick={e=>e.stopPropagation()} style={{flexShrink:0}}>
           <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
         </div>
       </div>
@@ -3947,7 +4003,7 @@ function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay
       onClick={onOpen}
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
       style={{...homeCardStyle(),cursor:"pointer"}}>
-      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:6}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10,minHeight:18}}>
         <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Investments</div>
         {fresh&&<div style={{fontSize:11,color:P.faint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fresh}</div>}
       </div>
@@ -4020,8 +4076,8 @@ function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsC
     <div className="home-card home-tappable" role="button" tabIndex={0}
       onClick={onOpen}
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
-      style={{...homeCardStyle({padding:14}),cursor:"pointer"}}>
-      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:8}}>Savings &amp; Investing</div>
+      style={{...homeCardStyle(),cursor:"pointer"}}>
+      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:10,minHeight:18,display:"flex",alignItems:"center"}}>Savings &amp; Investing</div>
       {noCatsConfigured?
         <div className="home-fill" style={{fontSize:13,color:P.faint,display:"flex",alignItems:"center"}}>
           Choose your savings and investment categories in Settings to track this.
@@ -4115,8 +4171,8 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
     <div className="home-card home-tappable" role="button" tabIndex={0}
       onClick={onOpen}
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
-      style={{...homeCardStyle({padding:14}),cursor:"pointer"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+      style={{...homeCardStyle(),cursor:"pointer"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
         <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Tracked Spending</div>
         <div style={{fontSize:11,color:P.faint}}>{periodLabelText} · {profileLabel}</div>
       </div>
@@ -4199,8 +4255,8 @@ function GoalsSummaryCard({goals,profile,onOpen}){
     <div className="home-card home-tappable" role="button" tabIndex={0}
       onClick={onOpen}
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
-      style={{...homeCardStyle({padding:14}),cursor:"pointer"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:6}}>
+      style={{...homeCardStyle(),cursor:"pointer"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:6}}>
         <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Goals</div>
         <div style={{fontSize:12,color:P.faint}}>{completedCount} completed · {active.length} active</div>
       </div>
@@ -4456,11 +4512,8 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
           this by living outside TabPane; Portal is how the rest of this file
           escapes transformed/clipped ancestors. */}
       <Portal>
-        <button aria-label="Quick add" className="home-fab" onClick={()=>setQaSheet(true)}
-          style={{position:"fixed",right:16,bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:70,
-            width:56,height:56,borderRadius:999,background:P.gr,color:"#fff",border:"none",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            boxShadow:"0 6px 20px rgba(12,22,40,.35)",cursor:"pointer"}}>
+        <button aria-label="Quick add" className="fab-btn home-fab" onClick={()=>setQaSheet(true)}
+          style={{background:P.gr}}>
           <I.Plus size={24}/>
         </button>
       </Portal>
@@ -4760,7 +4813,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600,color:P.neuInk}}/>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(groupTotal)}</span>
-                <IconButton icon={I.Trash} label={`Delete ${g.name||"group"}`} onClick={()=>setConfirmDelete({type:"group",id:g.id,name:g.name||"this group"})} size={14} style={{color:P.wine,opacity:.6}}/>
+                <IconButton icon={I.Trash} label={`Delete ${g.name||"group"}`} onClick={()=>setConfirmDelete({type:"group",id:g.id,name:g.name||"this group"})} size={14} style={{color:P.wine,opacity:.5}}/>
               </div>
             </div>
 
@@ -4803,7 +4856,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                           title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
                           aria-label={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking"}
                           aria-pressed={c.trackExpenses===false}
-                          style={{display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"6px 10px",fontSize:11,fontWeight:600,minHeight:32,
+                          className="status-pill status-pill-fixed" style={{cursor:"pointer",
                             border:`1px solid ${c.trackExpenses===false?P.line:P.grS}`,background:c.trackExpenses===false?"transparent":P.grS,
                             color:c.trackExpenses===false?P.neuSub:P.grD}}>
                           {c.trackExpenses===false?<I.EyeOff size={13}/>:<I.Receipt size={13}/>}
@@ -4817,7 +4870,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                         </button>
                         <IconButton icon={I.Trash} label={`Delete ${c.name||"category"}`}
                           onClick={()=>setConfirmDelete({type:"cat",id:c.id,name:c.name||"this category"})} size={15}
-                          style={{color:P.wine,opacity:.65}}/>
+                          style={{color:P.wine,opacity:.5}}/>
                       </div>
                     </div>
                   </div>
@@ -4843,7 +4896,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                             </div>
                             <IconButton icon={I.Trash} label={`Delete ${sub.name||"sub-item"}`}
                               onClick={()=>setConfirmDelete({type:"sub",id:c.id,subId:sub.id,name:sub.name||"this item"})} size={13}
-                              style={{color:P.wine,opacity:.55}}/>
+                              style={{color:P.wine,opacity:.5}}/>
                           </div>
                         </div>
                       ))}
@@ -4943,7 +4996,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
                 {cur} {(p.income||0).toLocaleString("en-US")}
               </span>
               {ownerPlans.length>1&&(
-                <IconButton icon={I.X} label={`Delete ${p.name||"plan"}`} onClick={()=>removePlan(p.id)} size={14} style={{color:P.red,opacity:.6,padding:6,minWidth:32,minHeight:32}}/>
+                <IconButton icon={I.X} label={`Delete ${p.name||"plan"}`} onClick={()=>removePlan(p.id)} size={14} style={{color:P.red,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
               )}
             </div>
           ))}
@@ -5207,11 +5260,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     const dotColor=env?.color||(goal?GOALS_GROUP_COLOR:P.faint);
     const subLabel=env?env.name:goal?goal.name:"";
     return(
-      <div key={tx.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",
-        borderBottom:idx<total-1?"1px solid rgba(0,0,0,.06)":"none"}}>
+      <div key={tx.id} className="tx-row"
+        style={{borderBottom:idx<total-1?"1px solid rgba(0,0,0,.06)":"none"}}>
         <div style={{width:8,height:8,borderRadius:999,
           background:dotColor,flexShrink:0}}/>
-        <div style={{flex:1,minWidth:0}}>
+        <div className="tx-row-main">
           <div style={{fontSize:14,fontWeight:500,color:P.neuInk,
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
             {tx.name}
@@ -5222,9 +5275,11 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             {tx.date}{subLabel?` · ${subLabel}`:""}{tx.note?` · ${tx.note}`:""}
           </div>
         </div>
-        <span className="tnum" style={{fontSize:14,fontWeight:600,color:tx.isExtraFunds?P.jade:P.neuInk}}>{tx.isExtraFunds?"+":""}{fmt(tx.amount)}</span>
-        <IconButton icon={I.Edit} label={`Edit ${tx.name||"transaction"}`} onClick={()=>openEdit(tx)} size={13} style={{color:P.jade,opacity:.6,padding:6,minWidth:32,minHeight:32}}/>
-        <IconButton icon={I.X} label={`Delete ${tx.name||"transaction"}`} onClick={()=>removeExpenseTx(tx.id)} size={14} style={{color:P.wine,opacity:.6,padding:6,minWidth:32,minHeight:32,marginLeft:4}}/>
+        <span className="tnum tx-row-amount" style={{fontSize:14,fontWeight:600,color:tx.isExtraFunds?P.jade:P.neuInk,flexShrink:0}}>{tx.isExtraFunds?"+":""}{fmt(tx.amount)}</span>
+        <div className="tx-row-actions">
+          <IconButton icon={I.Edit} label={`Edit ${tx.name||"transaction"}`} onClick={()=>openEdit(tx)} size={13} style={{color:P.jade,opacity:.6,padding:6,minWidth:32,minHeight:32,flexShrink:0}}/>
+          <IconButton icon={I.X} label={`Delete ${tx.name||"transaction"}`} onClick={()=>removeExpenseTx(tx.id)} size={14} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32,flexShrink:0}}/>
+        </div>
       </div>
     );
   };
@@ -6007,7 +6062,7 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
   const[confirmDeleteId,setConfirmDeleteId]=useState(null);
   const total=hh.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
   const mine=total*(hh.splitMine/100),theirs=total-mine;
-  const card={background:P.neuBg,borderRadius:16,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`};
+  const card=neu(16);
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div style={{...card,padding:16,marginBottom:16}}>
@@ -6048,7 +6103,7 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
           Each row is two lines: name+amount, then a full-width "Track in Bills" toggle
           and a separated overflow delete button, so a stray tap can't hit delete instead
           of the toggle (previously an X sat right next to the amount field). */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:10,marginBottom:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(240px,100%),1fr))",gap:10,marginBottom:10}}>
         {hh.expenses.map(e=>(
           <div key={e.id} style={{...card,padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -6062,12 +6117,12 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
               <button onClick={()=>updateExpense(e.id,{trackInBills:!e.trackInBills})}
                 aria-pressed={!!e.trackInBills}
-                style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"7px 12px",fontSize:12,fontWeight:600,
+                className="status-pill" style={{minWidth:0,cursor:"pointer",
                   border:`1px solid ${e.trackInBills?P.grS:P.line}`,background:e.trackInBills?P.grS:"transparent",
-                  color:e.trackInBills?P.grD:P.faint,minHeight:32}}>
+                  color:e.trackInBills?P.grD:P.faint}}>
                 <I.PiggyBank size={13}/>{e.trackInBills?"Tracked in Bills":"Track in Bills"}
               </button>
-              <IconButton icon={I.Trash} label={`Delete ${e.name||"recurring expense"}`} onClick={()=>setConfirmDeleteId(e.id)} size={15} style={{color:P.red,opacity:.55}}/>
+              <IconButton icon={I.Trash} label={`Delete ${e.name||"recurring expense"}`} onClick={()=>setConfirmDeleteId(e.id)} size={15} style={{color:P.red,opacity:.5}}/>
             </div>
           </div>
         ))}
@@ -6135,7 +6190,7 @@ function AdjustReserveSheet({currentReserve,fmt,onClose,onConfirm}){
   );
 }
 function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey,fmt,owners}){
-  const card={background:P.neuBg,borderRadius:16,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`};
+  const card=neu(16);
   const monthKeys=useMemo(()=>{
     const set=new Set(bills.map(b=>b.monthKey));
     set.add(currentMonthKey);
@@ -6305,7 +6360,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
     const accent=b.owner==="me"?P.jade:P.br;
     const accentS=b.owner==="me"?P.jadeS:P.brS;
     return(
-      <div key={b.id} style={{...neu(18),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
+      <div key={b.id} style={{...neu(16),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
         {/* accent strip — reads as the "card network" band of a wallet pass */}
         <div style={{height:5,background:accent}}/>
         <div style={{padding:16,flex:1,display:"flex",flexDirection:"column",gap:10}}>
@@ -6407,10 +6462,10 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
               <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
               <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(280px,100%),1fr))",gap:12}}>
               {items.map(Card)}
               <button onClick={()=>addBank(ok)} className="neu-btn"
-                style={{borderRadius:18,minHeight:150,color:P.jade,
+                style={{borderRadius:16,minHeight:150,color:P.jade,
                   display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
                 <I.Plus size={20}/>Add {owners[ok]}'s account
               </button>
@@ -7422,7 +7477,7 @@ function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
                 <span className="tnum" style={{fontWeight:600,color:P.ink}}>{r.year}</span>
                 <span className="tnum" style={{color:P.jade,fontWeight:600,marginLeft:8}}>{r.rate}%</span>
                 <button onClick={()=>{setYear(r.year);setRate(String(r.rate));}} style={{marginLeft:"auto",background:"transparent",border:"none",color:P.sub,fontSize:12}}>Edit</button>
-                <IconButton icon={I.X} label={`Delete ${r.year} rate`} onClick={()=>removeMp2Rate(r.id)} size={14} style={{color:P.wine,opacity:.6,padding:6,minWidth:32,minHeight:32}}/>
+                <IconButton icon={I.X} label={`Delete ${r.year} rate`} onClick={()=>removeMp2Rate(r.id)} size={14} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
               </div>
             ))}
           </div>
@@ -7615,7 +7670,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
             {sorted.map(s=>(
               <span key={s.id} className="tnum neu-btn" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",fontSize:12,color:P.neuSub,borderRadius:999}}>
                 {fmtMo(s.month)} · {sar(s.net)}
-                <IconButton icon={I.X} label={`Delete ${fmtMo(s.month)} snapshot`} onClick={()=>removeSnap(s.id)} size={11} style={{color:P.wine,opacity:.6,padding:6,minWidth:32,minHeight:32}}/>
+                <IconButton icon={I.X} label={`Delete ${fmtMo(s.month)} snapshot`} onClick={()=>removeSnap(s.id)} size={11} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
               </span>
             ))}
           </div>
@@ -7631,7 +7686,7 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
   const setAmount=setFxAmount,setFrom=setFxFrom,setTo=setFxTo;
   const result=convert(amount,from,to);
   const one=convert(1,from,to);
-  const card={background:P.neuBg,borderRadius:16,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`};
+  const card=neu(16);
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div className="fade-up" style={{...card,padding:16,marginBottom:16}}>
@@ -7664,7 +7719,7 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
       </div>
       <div className="fade-up-1" style={{...card,padding:16}}>
         <div style={{fontSize:13,fontWeight:600,color:P.neuSub,marginBottom:10}}>Quick rates</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(150px,100%),1fr))",gap:10}}>
           {[["USD","SAR"],["SAR","PHP"],["USD","PHP"],["AED","PHP"]].map(([f,t])=>{
             const v=convert(1,f,t);
             return(
@@ -7764,7 +7819,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
               <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s goals</h2>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:10}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(148px,100%),1fr))",gap:10}}>
               {list.map(g=>(
                 <GoalSquare key={g.id} {...{g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
               ))}
@@ -7967,7 +8022,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
         (grows at the cash rate). A GoTrade contribution and a Seabank
         contribution compound differently — this keeps them separate.
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(160px,100%),1fr))",gap:10}}>
         {targets.map(t=>{
           const{monthlyInvest,monthlyCash,count}=splitMonthly(t);
           const{hitMonth}=computeTargetForecast(invSar,banksSar,monthlyInvest,monthlyCash,t.investRate,t.cashRate,t.targetAmount);
