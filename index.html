@@ -336,11 +336,62 @@ select{transition:background .22s;}
 .fab-btn{
   position:fixed;
   right:calc(env(safe-area-inset-right) + 16px);
-  bottom:calc(env(safe-area-inset-bottom) + 24px);
-  z-index:70;width:56px;height:56px;border-radius:999px;color:#fff;border:none;
+  /* clears the fixed bottom nav rather than sitting on top of it */
+  bottom:calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 16px);
+  /* above the bottom nav (30), below .sheet-bg/.modal-bg (40). It used to be
+     70, which floated it over every open sheet's scrim — visually wrong and
+     still tappable through the overlay. */
+  z-index:35;width:56px;height:56px;border-radius:999px;color:#fff;border:none;
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 6px 20px rgba(12,22,40,.35);cursor:pointer;
 }
+
+/* ── Bottom tab bar ──
+   Fixed, thumb-reachable navigation. Replaces a wrapping row of 11 ~30px
+   pills that sat in normal document flow under the header: on a phone that
+   was four to five rows of chrome before any content began, and because it
+   scrolled away with the page, switching tabs from halfway down a long view
+   meant scrolling back to the top first. Five primary destinations plus a
+   More button; everything else lives in the More sheet.
+   z-index 30 is deliberately *below* .sheet-bg/.modal-bg (40) so an open
+   dialog covers the bar instead of leaving it floating over the scrim. */
+:root{--bottom-nav-h:56px;}
+.bottom-nav{
+  position:fixed;left:0;right:0;bottom:0;z-index:30;
+  padding-bottom:env(safe-area-inset-bottom);
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
+  background:var(--glassBgStrong);
+  backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
+  border-top:1px solid var(--glassBorder);
+}
+/* The bar spans the window (so the glass reaches both edges) but the row of
+   destinations is capped and centred — full-width on a laptop would fling
+   six items across 1400px. On a phone the cap never binds. */
+.bottom-nav-inner{
+  display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
+  max-width:560px;margin:0 auto;
+}
+.bottom-nav-btn{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  height:var(--bottom-nav-h);min-height:44px;
+  border:none;background:transparent;padding:0 2px;cursor:pointer;
+  font-size:10px;font-weight:600;line-height:1;
+  min-width:0;
+}
+/* the global button:active scale would shrink the whole cell — too loud for
+   a bar you tap constantly; the color change is enough feedback. */
+.bottom-nav-btn:active{transform:none;}
+.bottom-nav-btn>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* More sheet: destinations as a two-column grid of tappable rows. */
+.more-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+.more-item{
+  display:flex;align-items:center;gap:10px;
+  padding:14px 12px;min-height:56px;border:none;border-radius:14px;
+  font-size:14px;font-weight:600;text-align:left;cursor:pointer;min-width:0;
+}
+.more-item>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* ── Status pill (Tracked / Not tracked, etc.) ──
    One shape for every on/off status badge: same height, padding, icon gap,
@@ -469,8 +520,26 @@ function useDialogA11y(onClose,active=true){
   return ref;
 }
 
-/* Tab direction tracker so we can slide left or right */
-const TAB_ORDER=["budget","expenses","household","bills","banks","investments","networth","goals","targets","currency"];
+/* ── Which tabs go where ──
+   PRIMARY are the five in the bottom bar; MORE live behind the More sheet.
+   Chosen from actual weekly use, not from what the data model happens to
+   contain: Bills is touched a few times a month, Household only when the
+   split changes, Currency rarely. Net Worth moved to More because Home now
+   owns the "how rich am I" question and Home already links straight into it
+   (as it does for Goals).
+   HIDDEN is reachable by code but has no nav entry. Forecast (`targets`)
+   sits here: the tab was retired, but its view and `data.targets` stay put
+   — deleting them would orphan saved records and mean touching
+   CONFLICT_COLLECTIONS for no user-visible gain. Note this does make the
+   Forecast view unreachable from the UI; that was the explicit ask. */
+const PRIMARY_TABS=["home","budget","expenses","banks","investments"];
+const MORE_TABS=["networth","goals","bills","household","currency"];
+const HIDDEN_TABS=["targets"];
+/* Tab direction tracker so we can slide left or right.
+   Every tab must appear here, including "home" — it was missing, so
+   indexOf returned -1 and every transition into or out of Home computed its
+   slide direction against a phantom position before the first tab. */
+const TAB_ORDER=[...PRIMARY_TABS,...MORE_TABS,...HIDDEN_TABS];
 function TabPane({tab,children}){
   const prevTab=useRef(tab);
   const dir=useRef("right");
@@ -697,6 +766,62 @@ const evalMathExpr=(raw,fallback=0)=>{
     return(typeof val==="number"&&isFinite(val))?val:fallback;
   }catch(e){return fallback;}
 };
+/* NumField — a numeric field that can actually be emptied.
+   `<input type="number" value={n} onChange={e=>set(Number(e.target.value))}/>`
+   is a trap: Number("") is 0, so backspacing the last digit writes 0 straight
+   back into state and React repaints "0". The box can never be blank, and
+   replacing a value means selecting the leftover 0 first or you end up
+   typing "0500". Roughly 25 fields across the app had that shape.
+   This keeps keystrokes in a local string draft, leaves the real state alone
+   until blur/Enter, and commits through evalMathExpr — so "1200+350" works
+   here too, matching the expense form (see submitTx) and UpdateBalanceSheet.
+   Focus selects the current text, so tapping a field and typing replaces it.
+   Blur on an emptied box restores the previous value rather than writing 0:
+   clearing is nearly always a prelude to typing, not an edit in itself. Pass
+   allowEmpty for fields that are legitimately blank when unset (an MP2
+   principal that hasn't been entered yet is not the same as one worth 0).
+   type is "text" + inputMode so phones still get a numeric keypad, without
+   the desktop spinner, and so operators can be typed at all.
+   `live` also commits on every keystroke. Needed wherever something outside
+   the field reacts to the value before blur — a submit button gated on
+   `disabled={!valid}` (tapping a disabled button doesn't reliably blur the
+   field, so a blur-only commit strands you with a filled box and a dead
+   button) or a running conversion/preview. The draft still drives what's
+   displayed, so emptying the box still shows empty. */
+function NumField({value,onCommit,allowEmpty=false,integer=false,min,max,live=false,
+                   inputMode="decimal",onFocus,onBlur,onKeyDown,step,...rest}){
+  const[draft,setDraft]=useState(null);
+  const shown=draft!==null?draft:(value==null?"":String(value));
+  const parse=raw=>{
+    let v=evalMathExpr(raw,Number(value)||0);
+    if(integer)v=Math.round(v);
+    if(min!=null)v=Math.max(min,v);
+    if(max!=null)v=Math.min(max,v);
+    return v;
+  };
+  const commit=e=>{
+    if(draft!==null){
+      const t=draft.trim();
+      setDraft(null);
+      if(t===""){ if(allowEmpty)onCommit(""); }
+      else onCommit(parse(t));
+    }
+    onBlur&&onBlur(e);
+  };
+  return<input type="text" inputMode={inputMode} value={shown}
+    onChange={e=>{
+      const raw=e.target.value;
+      setDraft(raw);
+      if(!live)return;
+      const t=raw.trim();
+      if(t==="")onCommit(allowEmpty?"":0);
+      else onCommit(parse(t));
+    }}
+    onFocus={e=>{e.target.select();onFocus&&onFocus(e);}}
+    onBlur={commit}
+    onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();onKeyDown&&onKeyDown(e);}}
+    {...rest}/>;
+}
 const STORAGE_KEY="salaryPlanner:v3";
 const monthLabel=()=>new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
 const FX_CODES=["USD","SAR","PHP","AED","EUR","GBP","JPY","INR","AUD","CAD","SGD"];
@@ -958,8 +1083,8 @@ function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNam
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.5.0";
-const BUILD_ID="2026.07.30.0002";
+const APP_VERSION="1.6.0";
+const BUILD_ID="2026.07.30.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2019,6 +2144,86 @@ const loadSyncMeta=()=>{
 };
 const saveSyncMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m));}catch(e){}};
 
+/* ── Tab registry ──
+   One place naming every tab, including the hidden one, so the bottom bar,
+   the More sheet and any future entry point all read the same labels/icons.
+   `short` is what the bottom bar shows when the full label won't survive a
+   ~65px cell on a 390px phone; everything else uses `label`. */
+const TAB_META={
+  home:{label:"Home",short:"Home",icon:I.Home},
+  budget:{label:"Budget",short:"Budget",icon:I.Wallet},
+  expenses:{label:"Expenses",short:"Expenses",icon:I.Receipt},
+  banks:{label:"Banks",short:"Banks",icon:I.Bank},
+  investments:{label:"Investments",short:"Invest",icon:I.Trending},
+  networth:{label:"Net Worth",short:"Net Worth",icon:I.Gem},
+  goals:{label:"Goals",short:"Goals",icon:I.Target},
+  bills:{label:"Bills",short:"Bills",icon:I.PiggyBank},
+  household:{label:"Household",short:"Household",icon:I.Users},
+  currency:{label:"Currency",short:"Currency",icon:I.Swap},
+  targets:{label:"Forecast",short:"Forecast",icon:I.TrendUp},
+};
+
+/* The More sheet. Portalled for the usual containing-block reason (see
+   Portal near the top) — it is opened from the bottom bar, which lives
+   outside TabPane, but portalling keeps it correct if that ever changes. */
+function MoreSheet({tab,onPick,onClose}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" aria-label="More sections"
+          tabIndex={-1} onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>More</h3>
+            <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
+              style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+          </div>
+          <div className="more-grid">
+            {MORE_TABS.map(id=>{
+              const meta=TAB_META[id],Icon=meta.icon,on=tab===id;
+              return(
+                <button key={id} className="more-item" onClick={()=>onPick(id)}
+                  aria-current={on?"page":undefined}
+                  style={on?{background:P.jade,color:"#fff"}:{...neu(14),color:P.neuInk}}>
+                  <Icon size={17}/><span>{meta.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+/* Bottom bar: five primary tabs + More. Rendered outside the page container
+   so it is fixed to the viewport, not to the scrolling column. */
+function BottomNav({tab,setTab,onMore}){
+  const moreActive=MORE_TABS.includes(tab);
+  return(
+    <nav className="bottom-nav" aria-label="Sections">
+      <div className="bottom-nav-inner" role="tablist">
+      {PRIMARY_TABS.map(id=>{
+        const meta=TAB_META[id],Icon=meta.icon,on=tab===id;
+        return(
+          <button key={id} className="bottom-nav-btn" role="tab" aria-selected={on}
+            onClick={()=>setTab(id)} style={{color:on?P.jade:P.neuSub}}>
+            <Icon size={19} sw={on?2.3:1.9}/><span>{meta.short}</span>
+          </button>
+        );
+      })}
+      <button className="bottom-nav-btn" onClick={onMore}
+        aria-haspopup="dialog" aria-expanded={false}
+        aria-label={moreActive?`More — ${TAB_META[tab].label} selected`:"More sections"}
+        style={{color:moreActive?P.jade:P.neuSub}}>
+        <I.MoreHorizontal size={19} sw={moreActive?2.3:1.9}/><span>More</span>
+      </button>
+      </div>
+    </nav>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════════════
    MAIN APP
    ════════════════════════════════════════════════════════════════════════ */
@@ -2039,6 +2244,7 @@ function App(){
   });
   const[loaded,setLoaded]=useState(false);
   const[tab,setTab]=useState("home");
+  const[showMore,setShowMore]=useState(false);
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[showPendingDiff,setShowPendingDiff]=useState(false);
@@ -3569,18 +3775,8 @@ function App(){
   const pct=n=>plan.income>0?((Number(n)||0)/plan.income)*100:0;
   const setInvestTarget=patch=>setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));
 
-  const TABS=[
-    ["home","Home",I.Home],
-    ["budget","Budget",I.Wallet],["expenses","Expenses",I.Receipt],["household","Household",I.Users],
-    ["bills","Bills",I.PiggyBank],
-    ["banks","Banks",I.Bank],["investments","Investments",I.Trending],
-    ["networth","Net Worth",I.Gem],["goals","Goals",I.Target],
-    ["targets","Forecast",I.TrendUp],
-    ["currency","Currency",I.Swap],
-  ];
-
   return(
-    <div style={{background:P.bg,color:P.ink,minHeight:"100vh"}}>
+    <div style={{background:P.bg,color:P.ink,minHeight:"100dvh"}}>
       {cloudWaiting&&(
         <div style={{position:"fixed",inset:0,zIndex:1000,background:P.bg,display:"flex",
           flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24,textAlign:"center"}}>
@@ -3642,8 +3838,9 @@ function App(){
           </div>
         );
       })()}
+      {/* bottom padding clears the fixed nav *and* the FAB that floats above it */}
       <div style={{maxWidth:920,margin:"0 auto",boxSizing:"border-box",
-        padding:"0 calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 96px) calc(env(safe-area-inset-left) + 16px)"}}>
+        padding:"0 calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 96px) calc(env(safe-area-inset-left) + 16px)"}}>
 
         {/* header */}
         <header style={{paddingTop:28,paddingBottom:16}}>
@@ -3712,7 +3909,7 @@ function App(){
               <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>Income</div>
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
-                <input type="number" value={plan.income} onChange={e=>patchPlan({income:Number(e.target.value)})}
+                <NumField value={plan.income} onCommit={v=>patchPlan({income:v})} min={0}
                   onBlur={()=>pushImportantRef.current()}
                   className="bare tnum serif" style={{fontSize:30,fontWeight:600,width:170,textAlign:"right",color:P.ink}}/>
               </div>
@@ -3720,17 +3917,13 @@ function App(){
           </div>
         </header>
 
-        {/* tabs */}
-        <nav role="tablist" aria-label="Sections" style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:20}}>
-          {TABS.map(([id,label,Icon])=>(
-            <button key={id} onClick={()=>setTab(id)} className="glass-btn" role="tab" aria-selected={tab===id}
-              style={tab===id
-                ?{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",fontSize:14,fontWeight:600,color:P.jade}
-                :{display:"flex",alignItems:"center",gap:6,padding:"6px 14px",fontSize:14,fontWeight:500,color:P.neuSub,background:"transparent",backdropFilter:"none",WebkitBackdropFilter:"none",border:"1px solid transparent",boxShadow:"none"}}>
-              <Icon size={14}/>{label}
-            </button>
-          ))}
-        </nav>
+        {/* Section title — the bottom bar names the destination in 10px type,
+            which is enough to navigate by but not enough to orient by once
+            you have scrolled. */}
+        <div style={{margin:"16px 0 12px",display:"flex",alignItems:"center",gap:8,color:P.ink}}>
+          {(()=>{const Icon=TAB_META[tab].icon;return<Icon size={18} sw={2.1}/>;})()}
+          <h2 style={{margin:0,fontSize:18,fontWeight:700,letterSpacing:"-.01em"}}>{TAB_META[tab].label}</h2>
+        </div>
 
         <TabPane tab={tab}>
           {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
@@ -3762,7 +3955,7 @@ function App(){
         retentionDays={TOMBSTONE_RETENTION_DAYS} onClose={()=>setShowRecentlyDeleted(false)}/>}
       {undoAction&&
         <div style={{position:"fixed",left:16,right:16,maxWidth:420,margin:"0 auto",
-          bottom:"calc(env(safe-area-inset-bottom) + 24px)",zIndex:80,
+          bottom:"calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 24px)",zIndex:80,
           display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,
           background:P.deep,color:"#fff",borderRadius:12,padding:"12px 14px",
           boxShadow:"0 8px 24px rgba(12,22,40,.32)"}}>
@@ -3781,6 +3974,9 @@ function App(){
           style={{background:P.gr}}>
           <I.Plus size={24}/>
         </button>}
+      <BottomNav tab={tab} setTab={setTab} onMore={()=>setShowMore(true)}/>
+      {showMore&&<MoreSheet tab={tab} onClose={()=>setShowMore(false)}
+        onPick={id=>{setTab(id);setShowMore(false);}}/>}
     </div>
   );
 }
@@ -4789,8 +4985,8 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           <div style={{display:"flex",alignItems:"baseline",gap:6}}>
             <span style={{fontSize:12,color:P.neuSub,textTransform:"uppercase",letterSpacing:".08em"}}>Income</span>
             <span style={{fontSize:13,color:P.neuSub}}>{cur}</span>
-            <input type="number" value={income} disabled={!editable}
-              onChange={e=>setIncome(e.target.value)}
+            <NumField value={income} disabled={!editable} min={0}
+              onCommit={setIncome}
               onBlur={()=>syncNow&&syncNow()}
               className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:editable?P.neuInk:P.neuSub,
                 ...(editable?neuInset(8):{}),padding:editable?"2px 8px":undefined}}/>
@@ -4876,8 +5072,8 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                   <span style={{fontSize:12,color:P.neuSub}}>Target</span>
-                  <input type="number" value={thresholdPct}
-                    onChange={e=>setInvestTarget({thresholdPct:Number(e.target.value)||0})}
+                  <NumField value={thresholdPct} min={0} max={100}
+                    onCommit={v=>setInvestTarget({thresholdPct:v})}
                     className="bare tnum" style={{...neuInset(6),width:50,fontSize:13,fontWeight:600,textAlign:"right",padding:"2px 4px",color:P.neuInk}}/>
                   <span style={{fontSize:12,color:P.neuSub}}>% of income</span>
                 </div>
@@ -4954,9 +5150,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                             /* when subs exist, show computed total (read-only style) */
                             ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.jade}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
                             /* no subs — manual input as before */
-                            :<input type="text" inputMode="decimal" value={c.amount} onChange={e=>updateCat(c.id,{amount:e.target.value})}
-                              onBlur={e=>updateCat(c.id,{amount:evalMathExpr(e.target.value,0)})}
-                              onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                            :<NumField value={c.amount} onCommit={v=>updateCat(c.id,{amount:v})} min={0}
                               className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
                           }
                         </div>
@@ -5002,9 +5196,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                           <div className="sub-row-meta">
                             <div style={{display:"flex",alignItems:"center",gap:4}}>
                               <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
-                              <input type="text" inputMode="decimal" value={sub.amount} onChange={e=>handleSubChange(c.id,sub.id,{amount:e.target.value})}
-                                onBlur={e=>handleSubChange(c.id,sub.id,{amount:evalMathExpr(e.target.value,0)})}
-                                onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                              <NumField value={sub.amount} onCommit={v=>handleSubChange(c.id,sub.id,{amount:v})} min={0}
                                 className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
                             </div>
                             <IconButton icon={I.Trash} label={`Delete ${sub.name||"sub-item"}`}
@@ -6222,9 +6414,7 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{width:10,height:10,borderRadius:999,background:e.color,flexShrink:0}}/>
               <input value={e.name} onChange={ev=>updateExpense(e.id,{name:ev.target.value})} className="bare" style={{flex:1,minWidth:0,fontSize:14}}/>
-              <input type="text" inputMode="decimal" value={e.amount} onChange={ev=>updateExpense(e.id,{amount:ev.target.value})}
-                onBlur={ev=>updateExpense(e.id,{amount:evalMathExpr(ev.target.value,0)})}
-                onKeyDown={ev=>{if(ev.key==="Enter")ev.currentTarget.blur();}}
+              <NumField value={e.amount} onCommit={v=>updateExpense(e.id,{amount:v})} min={0}
                 className="bare tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600}}/>
             </div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
@@ -6324,8 +6514,9 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
   const monthDiff=totalAllocated-totalPaid;
   const[showAdjust,setShowAdjust]=useState(false);
   const[showHistory,setShowHistory]=useState(false);
-  const[openingDraft,setOpeningDraft]=useState(String(openingReserve));
-  useEffect(()=>{setOpeningDraft(String(openingReserve));},[openingReserve]);
+  /* no local draft here any more — NumField keeps its own while you type and
+     only commits a number on blur, so the old openingDraft state + resync
+     effect were duplicating what the field already does. */
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
@@ -6336,9 +6527,7 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
           <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.faint}}>
             <span>Opening reserve</span>
-            <input type="text" inputMode="decimal" value={openingDraft} onChange={e=>setOpeningDraft(e.target.value)}
-              onBlur={()=>setOpeningReserve(evalMathExpr(openingDraft,openingReserve))}
-              onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+            <NumField value={openingReserve} onCommit={setOpeningReserve}
               className="bare tnum" style={{width:70,fontSize:12,fontWeight:600,color:P.ink}}/>
           </div>
         </div>
@@ -6409,9 +6598,7 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
                   </div>
                   <div style={{flex:"1 1 90px"}}>
                     <div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Paid</div>
-                    <input type="text" inputMode="decimal" value={b.paid} onChange={e=>updateBill(b.id,{paid:e.target.value})}
-                      onBlur={e=>updateBill(b.id,{paid:evalMathExpr(e.target.value,0)})}
-                      onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                    <NumField value={b.paid} onCommit={v=>updateBill(b.id,{paid:v})} min={0}
                       className="bare tnum" style={{fontSize:14,fontWeight:600,color:P.ink,width:"100%"}}/>
                   </div>
                   <div style={{flex:"1 1 90px"}}>
@@ -6627,9 +6814,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:12,color:P.neuSub}}>Balance ({b.currency})</span>
-              <input type="text" inputMode="decimal" value={b.balance} onChange={e=>updateBank(b.id,{balance:e.target.value})}
-                onBlur={e=>{updateBank(b.id,{balance:evalMathExpr(e.target.value,0)});syncNow&&syncNow();}}
-                onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+              <NumField value={b.balance} onCommit={v=>{updateBank(b.id,{balance:v});syncNow&&syncNow();}}
                 className="bare tnum" style={{...neuInset(8),flex:1,textAlign:"right",fontSize:14,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
             </div>
             <button onClick={()=>{removeBank(b.id);setOpenId(null);}} className="neu-btn"
@@ -7114,9 +7299,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       <div style={{...neu(16),padding:16}}>
         <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 8px"}}>Growth projection ({projection.rate||8}%/yr)</h3>
         <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:10,fontSize:13}}>
-          <label style={{color:P.neuSub}}>+$/mo <input type="number" value={projection.monthly} onChange={e=>setProjection({monthly:Number(e.target.value)})} className="bare tnum" style={{width:80,fontWeight:600,color:P.neuInk}}/></label>
-          <label style={{color:P.neuSub}}>Years <input type="number" value={projection.years} onChange={e=>setProjection({years:Number(e.target.value)})} className="bare tnum" style={{width:56,fontWeight:600,color:P.neuInk}}/></label>
-          <label style={{color:P.neuSub}}>Rate % <input type="number" value={projection.rate??8} onChange={e=>setProjection({rate:Number(e.target.value)})} className="bare tnum" style={{width:48,fontWeight:600,color:P.neuInk}} step="0.5" min="0" max="30"/></label>
+          <label style={{color:P.neuSub}}>+$/mo <NumField value={projection.monthly} onCommit={v=>setProjection({monthly:v})} min={0} className="bare tnum" style={{width:80,fontWeight:600,color:P.neuInk}}/></label>
+          <label style={{color:P.neuSub}}>Years <NumField value={projection.years} onCommit={v=>setProjection({years:v})} integer min={1} max={100} className="bare tnum" style={{width:56,fontWeight:600,color:P.neuInk}}/></label>
+          <label style={{color:P.neuSub}}>Rate % <NumField value={projection.rate??8} onCommit={v=>setProjection({rate:v})} className="bare tnum" style={{width:48,fontWeight:600,color:P.neuInk}} min={0} max={30}/></label>
           <span className="tnum" style={{marginLeft:"auto",fontWeight:600,color:P.jade}}>→ ${series[series.length-1].toLocaleString("en-US")}</span>
         </div>
         <div style={{width:"100%",height:180}}>
@@ -7252,7 +7437,7 @@ function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp
           <input type="date" value={hld.maturityDate||""} onChange={e=>updateInv(hld.id,{maturityDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
         </label>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Projection rate %/yr
-          <input type="number" step="0.1" value={hld.projectionRate??""} onChange={e=>updateInv(hld.id,{projectionRate:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
+          <NumField value={hld.projectionRate??""} onCommit={v=>updateInv(hld.id,{projectionRate:v})} allowEmpty min={0} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
         </label>
       </div>
       {hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate)&&(
@@ -7351,13 +7536,13 @@ function TdAccountCard({hld,owners,updateInv,removeInv,banks,onConfirmMaturity,o
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:8,fontSize:12,color:P.neuSub}}>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Principal
-          <input type="number" min="0" value={hld.principal??""} onChange={e=>updateInv(hld.id,{principal:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:100,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+          <NumField value={hld.principal??""} onCommit={v=>updateInv(hld.id,{principal:v})} allowEmpty min={0} className="tnum" style={{...neuInset(6),width:100,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
         </label>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Annual rate %
-          <input type="number" step="0.01" min="0" value={hld.rate??""} onChange={e=>updateInv(hld.id,{rate:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+          <NumField value={hld.rate??""} onCommit={v=>updateInv(hld.id,{rate:v})} allowEmpty min={0} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
         </label>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Withholding tax %
-          <input type="number" step="0.01" min="0" max="100" value={hld.taxRate??""} onChange={e=>updateInv(hld.id,{taxRate:Number(e.target.value)})} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
+          <NumField value={hld.taxRate??""} onCommit={v=>updateInv(hld.id,{taxRate:v})} allowEmpty min={0} max={100} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
         </label>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Start date
           <input type="date" value={hld.startDate||""} onChange={e=>updateInv(hld.id,{startDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
@@ -7462,7 +7647,7 @@ function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,co
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:4,fontSize:12,color:P.neuSub}}>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Weight
-          <input type="number" min="0" step="0.001" value={hld.weight??""} onChange={e=>updateInv(hld.id,{weight:Number(e.target.value)})}
+          <NumField value={hld.weight??""} onCommit={v=>updateInv(hld.id,{weight:v})} allowEmpty min={0}
             className="tnum" style={{...neuInset(6),width:90,padding:"3px 6px",fontSize:12,color:weightInvalid?P.wine:P.neuInk}}/>
         </label>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Unit
@@ -7479,7 +7664,9 @@ function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,co
         </label>
         {hld.purityType==="custom"&&(
           <label style={{display:"flex",flexDirection:"column",gap:2}}>Karat
-            <input type="number" min="1" max="24" step="0.1" value={hld.karat??""} onChange={e=>updateInv(hld.id,{karat:Number(e.target.value)})}
+            {/* deliberately unclamped — clamping to 1..24 would make the
+                "Karat must be between 1 and 24" message below unreachable */}
+            <NumField value={hld.karat??""} onCommit={v=>updateInv(hld.id,{karat:v})} allowEmpty
               className="tnum" style={{...neuInset(6),width:60,padding:"3px 6px",fontSize:12,color:karatInvalid?P.wine:P.neuInk}}/>
           </label>
         )}
@@ -7487,7 +7674,7 @@ function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,co
           <input type="date" value={hld.purchaseDate||""} onChange={e=>updateInv(hld.id,{purchaseDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
         </label>
         <label style={{display:"flex",flexDirection:"column",gap:2}}>Purchase cost ({ccy})
-          <input type="number" min="0" value={hld.purchaseCost??""} onChange={e=>updateInv(hld.id,{purchaseCost:Number(e.target.value)})}
+          <NumField value={hld.purchaseCost??""} onCommit={v=>updateInv(hld.id,{purchaseCost:v})} allowEmpty min={0}
             className="tnum" style={{...neuInset(6),width:100,padding:"3px 6px",fontSize:12,color:costInvalid?P.wine:P.neuInk}}/>
         </label>
       </div>
@@ -7540,7 +7727,7 @@ function Mp2ContributionModal({hld,onClose,onSubmit}){
           </div>
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({hld?.currency||"PHP"})</div>
-            <input type="number" min="0" value={amount} onChange={e=>setAmount(e.target.value)}
+            <NumField value={amount} onCommit={setAmount} allowEmpty live min={0}
               style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
             {amount!==""&&!(Number(amount)>0)&&<div style={{fontSize:11,color:P.wine,marginTop:4}}>Enter a positive amount.</div>}
           </div>
@@ -7589,12 +7776,12 @@ function Mp2PayoutModal({hld,banks,mp2RatesByYear,onClose,onSubmit}){
           </div>
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Dividend year{declared!=null?` — declared rate ${declared}%`:" — no declared rate yet"}</div>
-            <input type="number" value={year} onChange={e=>setYear(Number(e.target.value))}
+            <NumField value={year} onCommit={setYear} live integer inputMode="numeric"
               style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
           </div>
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount received ({hld?.currency||"PHP"})</div>
-            <input type="number" min="0" value={amount} onChange={e=>setAmount(e.target.value)}
+            <NumField value={amount} onCommit={setAmount} allowEmpty live min={0}
               style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
           </div>
           <div style={{marginBottom:12}}>
@@ -7641,12 +7828,12 @@ function TdMaturityModal({hld,onClose,onSubmit}){
           </div>
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Actual credited interest ({hld?.currency||"PHP"})</div>
-            <input type="number" value={interest} onChange={e=>setInterest(e.target.value)}
+            <NumField value={interest} onCommit={setInterest} allowEmpty live min={0}
               style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
           </div>
           <div style={{marginBottom:16}}>
             <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Final amount received ({hld?.currency||"PHP"})</div>
-            <input type="number" value={finalAmount} onChange={e=>setFinalAmount(e.target.value)}
+            <NumField value={finalAmount} onCommit={setFinalAmount} allowEmpty live min={0}
               style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
             {!valid&&<div style={{fontSize:11,color:P.wine,marginTop:4}}>Enter a positive final amount.</div>}
           </div>
@@ -7688,9 +7875,9 @@ function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
             One official rate per year, shared by every MP2 account unless an account overrides it. Never a projection — only enter what Pag-IBIG has actually declared.
           </div>
           <div style={{display:"flex",gap:8,marginBottom:16}}>
-            <input type="number" value={year} onChange={e=>setYear(Number(e.target.value))} placeholder="Year"
+            <NumField value={year} onCommit={setYear} live integer inputMode="numeric" placeholder="Year"
               style={{width:90,borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
-            <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)} placeholder="Rate %"
+            <NumField value={rate} onCommit={setRate} allowEmpty live min={0} placeholder="Rate %"
               style={{flex:1,borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
             <button onClick={submit} style={{borderRadius:10,padding:"8px 14px",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none"}}>
               {existing?"Update":"Add"}
@@ -7727,7 +7914,7 @@ function AssetRow({a,updateAsset,removeAsset}){
       {a.kind==="asset"?(
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontSize:12,color:P.neuSub}}>{a.currency}</span>
-          <input type="number" value={a.value} onChange={e=>updateAsset(a.id,{value:Number(e.target.value)})}
+          <NumField value={a.value} onCommit={v=>updateAsset(a.id,{value:v})}
             className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
         </div>
       ):(
@@ -7749,13 +7936,13 @@ function AssetRow({a,updateAsset,removeAsset}){
             <div style={{display:"flex",flexWrap:"wrap",gap:10,fontSize:13}}>
               <label style={{color:P.neuSub,display:"flex",flexDirection:"column",gap:3}}>
                 <span style={{fontSize:11}}>Monthly payment ({a.currency})</span>
-                <input type="number" value={a.monthly||""} onChange={e=>updateAsset(a.id,{monthly:Number(e.target.value)})}
+                <NumField value={a.monthly||""} onCommit={v=>updateAsset(a.id,{monthly:v})} allowEmpty min={0}
                   className="bare tnum" style={{...neuInset(6),width:110,fontSize:14,fontWeight:600,padding:"4px 6px",color:P.neuInk}}/>
               </label>
               <label style={{color:P.neuSub,display:"flex",flexDirection:"column",gap:3}}>
                 <span style={{fontSize:11}}>Months remaining (as of)</span>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  <input type="number" value={a.monthsRemaining||""} onChange={e=>updateAsset(a.id,{monthsRemaining:Number(e.target.value)})}
+                  <NumField value={a.monthsRemaining||""} onCommit={v=>updateAsset(a.id,{monthsRemaining:v})} allowEmpty integer min={0} inputMode="numeric"
                     className="bare tnum" style={{...neuInset(6),width:56,fontSize:14,fontWeight:600,padding:"4px 6px",color:P.neuInk}}/>
                   <input type="month" value={(a.asOfDate||"").slice(0,7)} onChange={e=>updateAsset(a.id,{asOfDate:e.target.value+"-01"})}
                     style={{...neuInset(6),fontSize:12,padding:"4px 6px",border:"none",color:P.neuInk}}/>
@@ -7781,7 +7968,7 @@ function AssetRow({a,updateAsset,removeAsset}){
           ):(
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               <span style={{fontSize:12,color:P.neuSub}}>{a.currency}</span>
-              <input type="number" value={a.value||""} onChange={e=>updateAsset(a.id,{value:Number(e.target.value)})}
+              <NumField value={a.value||""} onCommit={v=>updateAsset(a.id,{value:v})} allowEmpty min={0}
                 className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
             </div>
           )}
@@ -7888,7 +8075,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         </div>
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid rgba(0,0,0,.06)"}}>
           <div><div style={{color:P.neuSub,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk}}/></div>
-          <div><div style={{color:P.neuSub,fontSize:10}}>Net worth (SAR)</div><input type="number" value={pv} placeholder="0" onChange={e=>setPv(e.target.value)} className="tnum" style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk,width:120}}/></div>
+          <div><div style={{color:P.neuSub,fontSize:10}}>Net worth (SAR)</div><NumField value={pv} placeholder="0" onCommit={setPv} allowEmpty live min={0} className="tnum" style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk,width:120}}/></div>
           <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} className="neu-btn" style={{padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade}}>Add entry</button>
         </div>
         {sorted.length>0&&(
@@ -7923,7 +8110,8 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
           </button>
         </div>
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
-          <input type="number" value={amount} onChange={e=>setAmount(Number(e.target.value))} className="tnum"
+          {/* live: the conversion result below updates as you type */}
+          <NumField value={amount} onCommit={setAmount} live min={0} className="tnum"
             style={{...neuInset(10),padding:"8px 10px",fontSize:18,fontWeight:600,width:130,border:"none",color:P.neuInk}}/>
           <select value={from} onChange={e=>setFrom(e.target.value)} style={{...neu(10),padding:"8px 10px",fontSize:14,border:"none",color:P.neuInk}}>
             {FX_CODES.map(c=><option key={c}>{c}</option>)}
@@ -8159,12 +8347,12 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
               <div style={{display:"flex",gap:10,marginBottom:14}}>
                 <div style={{flex:1}}>
                   <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Target</div>
-                  <input type="number" value={g.target} onChange={e=>updateGoal(g.id,{target:Number(e.target.value)})}
+                  <NumField value={g.target} onCommit={v=>updateGoal(g.id,{target:v})} min={0}
                     className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Monthly</div>
-                  <input type="number" value={g.monthly} onChange={e=>updateGoal(g.id,{monthly:Number(e.target.value)})}
+                  <NumField value={g.monthly} onCommit={v=>updateGoal(g.id,{monthly:v})} min={0}
                     className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
               </div>
@@ -8299,7 +8487,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
 
             <div style={{display:"flex",gap:12,marginBottom:12,fontSize:13}}>
               <label style={{flex:1,color:P.sub}}>Target amount (SAR)
-                <input type="number" value={open.targetAmount} onChange={e=>updateTarget(open.id,{targetAmount:Number(e.target.value)})}
+                <NumField value={open.targetAmount} onCommit={v=>updateTarget(open.id,{targetAmount:v})} min={0}
                   className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
               <label style={{flex:1,color:P.sub}}>Target date
@@ -8310,11 +8498,11 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
 
             <div style={{display:"flex",gap:12,marginBottom:14,fontSize:13}}>
               <label style={{flex:1,color:P.sub}}>Invest rate %/yr
-                <input type="number" step="0.5" value={open.investRate} onChange={e=>updateTarget(open.id,{investRate:Number(e.target.value)})}
+                <NumField value={open.investRate} onCommit={v=>updateTarget(open.id,{investRate:v})} min={0}
                   className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
               <label style={{flex:1,color:P.sub}}>Cash rate %/yr
-                <input type="number" step="0.25" value={open.cashRate} onChange={e=>updateTarget(open.id,{cashRate:Number(e.target.value)})}
+                <NumField value={open.cashRate} onCommit={v=>updateTarget(open.id,{cashRate:v})} min={0}
                   className="bare tnum" style={{display:"block",width:"100%",fontWeight:600,fontSize:15,marginTop:2,color:P.ink}}/>
               </label>
             </div>
@@ -8745,8 +8933,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 {cfg.enabled&&(
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                     <span style={{fontSize:12,color:P.sub}}>Payday</span>
-                    <input type="number" min="1" max="31" value={cfg.payday}
-                      onChange={e=>setPayPeriod(ok,{payday:Math.min(31,Math.max(1,Number(e.target.value)||1))})}
+                    <NumField value={cfg.payday} onCommit={v=>setPayPeriod(ok,{payday:v})}
+                      integer min={1} max={31} inputMode="numeric"
                       className="tnum" style={{width:56,borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
                     <span style={{fontSize:11,color:P.faint,flexBasis:"100%"}}>of each month{cfg.payday>28?" (clamped to last day in short months)":""}</span>
                   </div>
