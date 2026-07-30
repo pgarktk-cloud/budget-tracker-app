@@ -958,8 +958,8 @@ function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNam
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.4.3";
-const BUILD_ID="2026.07.30.0001";
+const APP_VERSION="1.5.0";
+const BUILD_ID="2026.07.30.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1633,8 +1633,16 @@ const KVSync={
    whether this device has unsaved work. ─────────────────────────────────── */
 const SYNC_META_KEY="salaryPlanner:v3:syncMeta";
 const LAST_SYNCED_DATA_KEY="salaryPlanner:v3:lastSyncedData";
-const cacheSyncedSnapshot=d=>{try{localStorage.setItem(LAST_SYNCED_DATA_KEY,JSON.stringify(d));}catch(e){}};
+/* _syncedSnapObj memoizes the parsed copy so the dirty check (which runs on a
+   450ms debounce after every data change) doesn't re-JSON.parse the entire
+   dataset each time. `undefined` means "not hydrated yet", `null` means
+   "genuinely nothing cached" — they're different states, so don't collapse
+   them. cacheSyncedSnapshot is the only writer of the localStorage key, so
+   the memo can't go stale behind our back. */
+let _syncedSnapObj=undefined;
+const cacheSyncedSnapshot=d=>{try{localStorage.setItem(LAST_SYNCED_DATA_KEY,JSON.stringify(d));_syncedSnapObj=d;}catch(e){}};
 const loadSyncedSnapshot=()=>{try{const raw=localStorage.getItem(LAST_SYNCED_DATA_KEY);if(raw)return JSON.parse(raw);}catch(e){}return null;};
+const syncedSnapshotObj=()=>{if(_syncedSnapObj===undefined)_syncedSnapObj=loadSyncedSnapshot();return _syncedSnapObj;};
 const PRE_CLOUD_BACKUP_KEY="salaryPlanner:v3:preCloudRestore";
 const PROFILE_KEY="allocation:preferredProfile";
 
@@ -1657,13 +1665,22 @@ const sortedByKey=(arr,keyOf)=>Array.isArray(arr)?[...arr].sort((a,b)=>String(ke
    render time anyway) before comparing. Deliberately leaves plan-level
    `categories`/`groups` order alone, since reordering those IS a real edit
    a person might make on purpose. */
-const fingerprint=d=>{
+/* history/snapshots rows written by the two background recompute effects are
+   stamped auto:true; rows a person created by hand (NetWorthView's "Capture
+   this month" / "Add past entry") are not. That flag is the only thing that
+   distinguishes derived data from real data in those two arrays. */
+const stripAutoRows=arr=>Array.isArray(arr)?arr.filter(x=>!(x&&x.auto)):arr;
+/* `ignoreAuto` additionally drops auto-derived history/snapshot rows. See
+   userFingerprint() below for why that mode exists. */
+const fingerprint=(d,{ignoreAuto=false}={})=>{
   try{
     // livePrice/livePriceAt/prevClose are excluded the same way theme is:
     // they're refreshed automatically in the background (manual/auto quote+FX
     // refresh) and must never make the doc look "dirty" or trigger a cloud
     // autosave just because a stock price ticked.
     const{theme,dataUpdatedAt,livePrice,livePriceAt,prevClose,...rest}=d||{};
+    const hist=ignoreAuto?stripAutoRows(rest.history):rest.history;
+    const snaps=ignoreAuto?stripAutoRows(rest.snapshots):rest.snapshots;
     const canon={
       ...rest,
       expenses:sortedById(rest.expenses),
@@ -1682,13 +1699,32 @@ const fingerprint=d=>{
       billAdjustments:sortedById(rest.billAdjustments),
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
-      history:sortedByKey(rest.history,h=>h.month||""),
-      snapshots:sortedByKey(rest.snapshots,s=>`${s.date||""}|${s.profile||""}`),
+      history:sortedByKey(hist,h=>h.month||""),
+      snapshots:sortedByKey(snaps,s=>`${s.date||""}|${s.profile||""}`),
       household:rest.household?{...rest.household,expenses:sortedById(rest.household.expenses)}:rest.household,
     };
     return JSON.stringify(canon);
   }catch(e){return "";}
 };
+/* "Did a *person* change anything?" — as opposed to fingerprint(), which is
+   "are the bytes different at all".
+
+   Every app open refreshes stock quotes (>15min stale) and FX rates (>6h).
+   fingerprint() already ignores livePrice/prevClose directly, but two effects
+   recompute *derived* data from those prices: the current month's `history`
+   row and all three per-profile `snapshots` rows. Those ARE in fingerprint(),
+   so a one-riyal price tick made the whole document look edited — which set
+   hasUnsyncedChanges, which fired the 8s idle autosave, which spent a
+   Cloudflare KV write on data nobody touched. Every single app open, plus
+   again on every tab focus once the quote window went stale.
+
+   Used ONLY for the pending/dirty flag. fingerprint() stays untouched for
+   conflict detection and the sync baseline, because there the raw bytes are
+   exactly what matters — auto rows still need to merge across devices, and
+   downgrading that comparison would let one device's snapshot history quietly
+   replace another's. Auto rows still get uploaded; they just ride along with
+   the next real save instead of provoking one. */
+const userFingerprint=d=>fingerprint(d,{ignoreAuto:true});
 
 /* union records by id; on overlap, whichever has the newer updatedAt (or
    date, as a fallback for records that don't track updatedAt) wins outright.
@@ -1910,6 +1946,40 @@ const CONFLICT_COLLECTIONS=[
   {key:"bills",label:"Bills",nameOf:b=>`${b.itemName||"Bill"}${b.monthKey?` (${b.monthKey})`:""}`},
   {key:"billAdjustments",label:"Bills Reserve adjustments",nameOf:a=>`${a.amount>=0?"+":""}${a.amount||0}${a.date?` (${a.date})`:""}`},
 ];
+/* How many actual records differ between the local doc and the last state we
+   know the cloud has. This is what the "Save to Cloud (n)" badge shows.
+
+   It used to show `changesSinceSave`, a counter incremented once per firing of
+   the debounced dirty-check effect — so it measured "how many times did a
+   write land", not "how much is pending". Two background effects (the history
+   recompute and the snapshot recompute) fire ~300ms apart on app open, which
+   is exactly why it so often read (1) or (2) while the Pending Changes modal
+   found nothing to list.
+
+   Covers CONFLICT_COLLECTIONS plus household.expenses (soft-deleted, id-keyed,
+   and genuinely user-edited — it was simply never in that list). Deliberately
+   excludes history/snapshots: those are derived, and per userFingerprint()
+   they no longer mark the doc dirty on their own. `derived` reports them
+   separately so the modal can explain them rather than pretend they're
+   nothing. */
+function countPendingChanges(local,base){
+  if(!base)return{records:0,derived:0,known:false};
+  let records=0;
+  CONFLICT_COLLECTIONS.forEach(({key})=>{
+    const{onlyLocal,onlyRemote,changed}=diffCollection((local||{})[key],(base||{})[key]);
+    records+=onlyLocal.length+onlyRemote.length+changed.length;
+  });
+  const hhL=((local||{}).household||{}).expenses,hhB=((base||{}).household||{}).expenses;
+  const hh=diffCollection(hhL,hhB);
+  records+=hh.onlyLocal.length+hh.onlyRemote.length+hh.changed.length;
+  let derived=0;
+  [["history",h=>h.month],["snapshots",s=>`${s.date}|${s.profile}`]].forEach(([key,keyOf])=>{
+    const lm=new Map(((local||{})[key]||[]).map(x=>[keyOf(x),x]));
+    const bm=new Map(((base||{})[key]||[]).map(x=>[keyOf(x),x]));
+    lm.forEach((lx,k)=>{const bx=bm.get(k);if(!bx||JSON.stringify(bx)!==JSON.stringify(lx))derived++;});
+  });
+  return{records,derived,known:true};
+}
 function buildConflictDiff(local,remote){
   return CONFLICT_COLLECTIONS.map(({key,label,nameOf})=>{
     const{onlyLocal,onlyRemote,changed}=diffCollection((local||{})[key],(remote||{})[key]);
@@ -2339,17 +2409,31 @@ function App(){
   };
 
   /* persist — LOCAL ONLY. Never calls KVSync.save(). Marks the app dirty
-     whenever the data no longer matches the last cloud-synced snapshot. */
+     whenever the data no longer matches the last cloud-synced snapshot.
+
+     Two conditions, both required, and they answer different questions:
+       fp!==baseline          — did anything change at all?
+       userFingerprint differs — was any of it something a *person* did?
+     The second gate is what stops an automatic quote/FX refresh from
+     recomputing a history/snapshot row, flagging the doc dirty, and burning a
+     Cloudflare KV write on every app open. Derived rows still get uploaded —
+     they're in the payload — they just don't trigger a save by themselves.
+     If there's no cached baseline object yet (brand-new device), fall back to
+     the plain byte comparison so we never under-report a real pending edit. */
   useEffect(()=>{
     if(!loaded)return;
     if(skipSave.current){skipSave.current=false;return;}
     const t=setTimeout(()=>{
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
       const fp=fingerprint(data);
-      const dirty=fp!==lastCloudSnapshotRef.current;
+      const base=syncedSnapshotObj();
+      const bytesDiffer=fp!==lastCloudSnapshotRef.current;
+      const dirty=bytesDiffer&&(!base||userFingerprint(data)!==userFingerprint(base));
       const meta=loadSyncMeta();
       meta.hasUnsyncedChanges=dirty;
-      if(dirty)meta.changesSinceSave=(meta.changesSinceSave||0)+1;
+      // A real record count, not a tally of how many times this effect ran.
+      const{records,known}=countPendingChanges(data,base);
+      meta.changesSinceSave=dirty?(known?records:0):0;
       saveSyncMeta(meta);
       setHasUnsyncedChanges(dirty);
       setChangesSinceSave(meta.changesSinceSave||0);
@@ -6379,8 +6463,95 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
 }
 
 /* ── BANKS VIEW — grid of "digital wallet pass" cards ── */
+/* ── Update-balance sheet ──────────────────────────────────────────────────
+   Replaces the old "tap the balance field, select-all, delete, retype" flow,
+   which is genuinely awkward one-handed on a phone. Add/Subtract cover the
+   common case (a deposit, a withdrawal) without the person having to do the
+   arithmetic themselves; Set stays available for reconciling against a
+   statement. The running preview line is the safety net — it shows the exact
+   figure that will be written before it's committed, so a mistyped amount or
+   a wrong mode is visible rather than silently overwriting a real balance.
+
+   Amounts run through evalMathExpr, same as the inline field it replaces, so
+   "250+80" still works. Portalled for the same containing-block reason as
+   every other sheet in this file — see Portal's note near the top. */
+function UpdateBalanceSheet({account,onClose,onConfirm}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const[mode,setMode]=useState("add");
+  const[amount,setAmount]=useState("");
+  const cur=Number(account.balance)||0;
+  const MODES=[["add","Add",P.jade],["subtract","Subtract",P.wine],["set","Set",P.br]];
+  const idx=Math.max(0,MODES.findIndex(([k])=>k===mode));
+  const parsed=evalMathExpr(amount,NaN);
+  const hasAmount=amount.trim()!==""&&isFinite(parsed);
+  const round2=n=>Math.round(n*100)/100;
+  const next=!hasAmount?cur:round2(mode==="add"?cur+parsed:mode==="subtract"?cur-parsed:parsed);
+  const num=n=>Number(n).toLocaleString("en-US",{maximumFractionDigits:2});
+  // Subtracting past zero is allowed (an overdraft is a real thing) but worth
+  // flagging, since it's more often a mode mistake than an intentional entry.
+  const goesNegative=hasAmount&&next<0;
+  const canSave=hasAmount&&(mode==="set"||parsed!==0)&&next!==cur;
+  const submit=()=>{if(canSave)onConfirm(next);};
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Update balance</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+          {account.name||"Account"}{account.bank?` · ${account.bank}`:""}
+        </div>
+
+        <div role="group" aria-label="Update mode" className="seg-control" style={{width:"100%",marginBottom:14}}>
+          <div className="seg-indicator" style={{transform:`translateX(${idx*100}%)`,background:MODES[idx][2]}}/>
+          {MODES.map(([key,label,color])=>(
+            <button key={key} onClick={()=>setMode(key)} aria-pressed={mode===key} className="seg-btn"
+              style={{color:mode===key?"#fff":color,fontSize:12,padding:"6px 4px"}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:12,color:P.sub,marginBottom:4}}>
+            {mode==="set"?"New balance":"Amount"} ({account.currency})
+          </div>
+          <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus
+            onKeyDown={e=>{if(e.key==="Enter")submit();}} placeholder="0"
+            style={{width:"100%",borderRadius:10,padding:"12px",fontSize:22,fontWeight:600,textAlign:"right",
+              background:"rgba(0,0,0,.05)",border:"none",color:P.ink}} className="tnum"/>
+        </div>
+
+        <div className="tnum" style={{...neuInset(12),padding:"10px 12px",marginBottom:4,fontSize:13,color:P.neuSub,
+          display:"flex",alignItems:"center",justifyContent:"center",gap:6,flexWrap:"wrap"}}>
+          <span>{num(cur)}</span>
+          {mode!=="set"&&<span style={{fontWeight:700,color:MODES[idx][2]}}>{mode==="add"?"+":"−"}</span>}
+          {mode!=="set"&&<span>{hasAmount?num(Math.abs(parsed)):"0"}</span>}
+          <span style={{color:P.faint}}>=</span>
+          <strong style={{fontSize:16,color:goesNegative?P.wine:P.neuInk}}>{num(next)}</strong>
+        </div>
+        <div style={{fontSize:11,color:goesNegative?P.wine:P.faint,marginBottom:16,textAlign:"center",minHeight:15}}>
+          {goesNegative?"This would take the account below zero.":"Supports simple math, e.g. 250+80"}
+        </div>
+
+        <button onClick={submit} disabled={!canSave}
+          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,
+            padding:"12px 0",fontSize:14,fontWeight:600,border:"none",
+            background:canSave?P.jade:P.sfA,color:canSave?"#fff":P.faint,cursor:canSave?"pointer":"default"}}>
+          <I.Check size={14}/>Save balance
+        </button>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
 function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,syncNow}){
   const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
+  const[balanceEditId,setBalanceEditId]=useState(null); // account id whose Update-balance sheet is open
   const sar=n=>formatMoney(n,{code:"SAR"});
   const sarOf=b=>{const v=convert(b.balance,b.currency,"SAR");return v==null?0:v;};
   const total=banks.reduce((s,b)=>s+sarOf(b),0);
@@ -6410,11 +6581,22 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
             </button>
           </div>
 
-          <div>
-            <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
-              {b.currency} {Number(b.balance||0).toLocaleString("en-US")}
+          <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:8}}>
+            <div style={{minWidth:0}}>
+              <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
+                {b.currency} {Number(b.balance||0).toLocaleString("en-US")}
+              </div>
+              {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
             </div>
-            {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
+            {/* Primary action on this card — updating a balance is by far the
+                most frequent thing anyone does here, so it gets a real button
+                rather than living behind the settings gear. */}
+            <button onClick={()=>setBalanceEditId(b.id)} className="neu-btn"
+              aria-label={`Update ${b.name||"account"} balance`}
+              style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,padding:"7px 12px",
+                fontSize:12,fontWeight:600,color:accent}}>
+              <I.Plus size={12}/>Update
+            </button>
           </div>
 
           <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
@@ -6507,6 +6689,16 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
           </section>
         );
       })}
+      {/* Looked up fresh from `banks` rather than captured at open time, so the
+          sheet can't act on a stale balance if a sync lands while it's open.
+          If the account disappears out from under it (deleted on another
+          device), the sheet unmounts instead of writing to a dead record. */}
+      {(()=>{
+        const acct=banks.find(b=>b.id===balanceEditId);
+        if(!acct)return null;
+        return <UpdateBalanceSheet account={acct} onClose={()=>setBalanceEditId(null)}
+          onConfirm={newBalance=>{updateBank(acct.id,{balance:newBalance});setBalanceEditId(null);syncNow&&syncNow();}}/>;
+      })()}
     </div>
   );
 }
@@ -8319,11 +8511,22 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
   const dlgRef=useDialogA11y(onClose);
   const snapshot=useMemo(()=>loadSyncedSnapshot(),[]);
   const diff=useMemo(()=>snapshot?buildConflictDiff(data,snapshot):[],[data,snapshot]);
+  // Derived (auto:true history/snapshot) rows are counted separately: they no
+  // longer mark the doc dirty on their own, but they're still in the payload,
+  // so if a save IS happening they go up with it. Saying so explicitly is the
+  // whole point — the old copy claimed "no changes" while the badge showed a
+  // number, because this data was invisible to the diff.
+  const{derived}=useMemo(()=>countPendingChanges(data,snapshot),[data,snapshot]);
   const buckets=[
     {field:"onlyLocal",title:"Added since last sync",color:P.gr,bg:P.grS},
     {field:"onlyRemote",title:"Removed since last sync",color:P.wine,bg:P.wineS},
     {field:"changed",title:"Edited since last sync",color:P.amber,bg:P.amberS},
   ];
+  const derivedNote=derived>0&&(
+    <p style={{fontSize:11,color:P.faint,marginBottom:14,lineHeight:1.5}}>
+      Plus {derived} automatic {derived===1?"entry":"entries"} (net-worth / portfolio history recomputed from the latest prices). These don't trigger a cloud save on their own — they ride along the next time you save something you actually changed.
+    </p>
+  );
   const btn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
   return(
     <div className="sheet-bg" onClick={onClose}>
@@ -8332,11 +8535,17 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
         {!snapshot?(
           <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No cached copy of the last synced state yet on this device — this'll be available after the next successful sync.</p>
         ):diff.length>0?(
-          <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
-            <DiffCollectionsList diff={diff} buckets={buckets}/>
-          </div>
+          <React.Fragment>
+            <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:derived>0?8:14}}>
+              <DiffCollectionsList diff={diff} buckets={buckets}/>
+            </div>
+            {derivedNote}
+          </React.Fragment>
         ):(
-          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No record-level changes found since the last sync — the pending flag is likely just a settings or timestamp difference.</p>
+          <React.Fragment>
+            <p style={{fontSize:12,color:P.faint,marginBottom:derived>0?8:14}}>Nothing you've edited is waiting to be saved.</p>
+            {derivedNote}
+          </React.Fragment>
         )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onSaveToCloud} style={{...btn,border:"none",background:P.gr,color:"#fff"}}>
