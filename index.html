@@ -1190,8 +1190,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.11.0";
-const BUILD_ID="2026.07.31.0006";
+const APP_VERSION="1.11.1";
+const BUILD_ID="2026.07.31.0007";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1651,6 +1651,21 @@ function migrate(d){
       // so existing budgets behave exactly as before this feature shipped
       if(c.trackExpenses===undefined)c.trackExpenses=true;
     });
+    /* Rescue categories whose groupId doesn't resolve. Every renderer walks
+       groups→categories, so an unresolvable groupId makes the category and all
+       its sub-items invisible while `allocated` (which sums all categories)
+       still counts them — the budget silently stops adding up. clonePlanForMonth
+       used to create these; it no longer can, but a device still running an
+       older build can, and would sync the result here. Audited 2026-07-31:
+       zero occurrences in live data, so this is a guard, not a repair. */
+    const gids=new Set((plan.groups||[]).map(g=>g.id));
+    const orphans=(plan.categories||[]).filter(c=>!gids.has(c.groupId));
+    if(orphans.length>0){
+      if(!plan.groups)plan.groups=[];
+      let g=plan.groups.find(x=>x.name==="Ungrouped");
+      if(!g){g={id:uid(),name:"Ungrouped"};plan.groups.push(g);}
+      orphans.forEach(c=>{c.groupId=g.id;});
+    }
     if(!plan.updatedAt)plan.updatedAt="2000-01-01T00:00:00.000Z";
   });
   (d.investments||[]).forEach(inv=>{
