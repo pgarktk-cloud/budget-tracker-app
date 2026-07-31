@@ -1190,8 +1190,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.10.0";
-const BUILD_ID="2026.07.31.0005";
+const APP_VERSION="1.11.0";
+const BUILD_ID="2026.07.31.0006";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3313,7 +3313,17 @@ function App(){
   }));
 
   const clonePlanForMonth=(mo,sourcePlanId,owner=budgetOwner,label)=>{
-    const source=plans.find(p=>p.id===sourcePlanId)||plans[0];
+    /* No `||plans[0]` fallback: that silently copied the *global* first plan —
+       frequently the other owner's — whenever the id didn't resolve (a plan
+       soft-deleted here or tombstoned by a sync from another device), then
+       stamped `owner` on it so the result looked legitimate. Better to do
+       nothing than to fabricate a plausible wrong budget. */
+    const source=plans.find(p=>p.id===sourcePlanId);
+    if(!source)return null;
+    // migrate() guarantees neither array exists; an unguarded .map here threw
+    // *before* setData, so the copy silently did nothing.
+    const srcGroups=source.groups||[];
+    const srcCats=source.categories||[];
     const newId=uid();
     // `label` lets the caller supply a bucket-aware display name (calendar
     // month OR pay-period range); falls back to the old calendar-month-only
@@ -3322,23 +3332,40 @@ function App(){
       const parts=mo.split("-");
       return new Date(Number(parts[0]),Number(parts[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
     })();
+    // deep-clone groups and categories so edits don't affect source
+    const groups=srcGroups.map(g=>({...g,id:uid()}));
+    const groupIdMap={};
+    srcGroups.forEach((g,i)=>{groupIdMap[g.id]=groups[i].id;});
+    /* Orphan rescue. This used to be `groupIdMap[c.groupId]||c.groupId`, which
+       left a category pointing at the *source* plan's group id — an id that
+       doesn't exist in the clone. Every renderer walks groups→categories, so
+       those categories and all their sub-items became invisible in the copy
+       while `allocated` (which sums all categories) still counted them: the
+       "some subcategories are missing, some amounts differ" bug. Park them in
+       a synthesized group instead, created only if something needs it. */
+    let orphanGid=null;
+    const categories=srcCats.map(c=>{
+      let gid=groupIdMap[c.groupId];
+      if(!gid){
+        if(!orphanGid){orphanGid=uid();groups.push({id:orphanGid,name:"Ungrouped"});}
+        gid=orphanGid;
+      }
+      const subs=(c.subs||[]).map(s=>({...s,id:uid()}));
+      // re-derive the cached amount from the subs (same rule as syncAmt in
+      // BudgetView) so a source whose cache had drifted can't carry the
+      // inconsistency into the copy.
+      const amount=subs.length>0?subs.reduce((s,x)=>s+(Number(x.amount)||0),0):(Number(c.amount)||0);
+      return{...c,id:uid(),groupId:gid,subs,amount};
+    });
     const cloned={
       ...source,
       id:newId,
       name:derivedLabel,
       month:derivedLabel,
-      // deep-clone groups and categories so edits don't affect source
-      groups:source.groups.map(g=>({...g,id:uid()})),
-      categories:source.categories.map((c,i)=>{
-        const newGid=source.groups[source.groups.findIndex(g=>g.id===c.groupId)];
-        return{...c,id:uid(),subs:(c.subs||[]).map(s=>({...s,id:uid()}))};
-      }),
+      groups,
+      categories,
     };
-    // fix groupIds to point to new group ids
-    const groupIdMap={};
-    source.groups.forEach((g,i)=>{groupIdMap[g.id]=cloned.groups[i].id;});
-    cloned.categories=cloned.categories.map(c=>({...c,groupId:groupIdMap[c.groupId]||c.groupId}));
-
+    delete cloned.deletedAt;
     cloned.owner=owner;
     cloned.updatedAt=new Date().toISOString();
     setData(d=>({
@@ -3845,9 +3872,22 @@ function App(){
   const billAdjustmentsAll=(data.billAdjustments||[]).filter(a=>!a.deletedAt);
   const billsReserve=useMemo(()=>computeBillsReserve(data),[data.billsSettings,data.bills,data.billAdjustments]);
   const trackedHhKey=hh.expenses.filter(e=>e.trackInBills).map(e=>`${e.id}:${e.name}:${e.amount}`).join("|");
-  // Generate this month's bill records the first time they're needed —
-  // idempotent (skips items that already have a record for this month) and
-  // never touches records from prior months, so history stays untouched.
+  /* Reconcile the current bill bucket against the live tracked Household set.
+     This used to be create-only, which meant un-ticking "track in Bills" (or
+     deleting the item outright) left its row in Bills — and in the rolling
+     reserve — forever, and renaming/re-pricing an item never reached the row
+     that had already been created. It now creates, revives, retires and
+     resyncs in one pass. Two deliberate asymmetries:
+       • a row with money recorded against it (paid > 0) survives untracking —
+         that's real payment history, not a projection;
+       • `allocated` only follows the Household amount while the row is
+         unpaid. Once paid, the snapshot freezes so the reserve maths stays
+         honest about what was actually budgeted at payment time.
+     Prior buckets are never touched. Retirement tombstones (`deletedAt`)
+     rather than splicing, per the convention noted above — and since
+     computeBillsReserve already skips tombstones, the reserve self-corrects.
+     The `changed` flag matters: this runs in an effect, so returning a fresh
+     object every pass would loop and dirty the document. */
   useEffect(()=>{
     if(!loaded)return;
     // setDataRaw: automatic background generation, not a user edit — see the
@@ -3855,14 +3895,34 @@ function App(){
     // dataUpdatedAt.
     setDataRaw(d=>{
       const items=((d.household||{}).expenses||[]).filter(e=>!e.deletedAt&&e.trackInBills);
-      if(items.length===0)return d;
-      const already=new Set((d.bills||[]).filter(b=>!b.deletedAt&&b.monthKey===currentBillMonthKey).map(b=>b.itemId));
-      const missing=items.filter(it=>!already.has(it.id));
-      if(missing.length===0)return d;
+      const tracked=new Map(items.map(it=>[it.id,it]));
       const now=new Date().toISOString();
-      const created=missing.map(it=>({id:uid(),monthKey:currentBillMonthKey,itemId:it.id,itemName:it.name,
+      let changed=false;
+      const seen=new Set();
+      const next=(d.bills||[]).map(b=>{
+        if(b.monthKey!==currentBillMonthKey)return b;
+        const it=tracked.get(b.itemId);
+        const paid=Number(b.paid)||0;
+        if(!it){
+          // no longer tracked — retire it, unless money was recorded against it
+          if(b.deletedAt||paid>0)return b;
+          changed=true;
+          return{...b,deletedAt:now,updatedAt:now};
+        }
+        seen.add(b.itemId);
+        const patch={};
+        if(b.deletedAt)patch.deletedAt=null;               // re-tracked → revive, don't duplicate
+        if(b.itemName!==it.name)patch.itemName=it.name;
+        const amt=Number(it.amount)||0;
+        if(paid===0&&(Number(b.allocated)||0)!==amt)patch.allocated=amt;
+        if(Object.keys(patch).length===0)return b;
+        changed=true;
+        return{...b,...patch,updatedAt:now};
+      });
+      const created=items.filter(it=>!seen.has(it.id)).map(it=>({id:uid(),monthKey:currentBillMonthKey,itemId:it.id,itemName:it.name,
         allocated:Number(it.amount)||0,paid:0,paymentDate:null,status:"unpaid",createdAt:now,updatedAt:now}));
-      return{...d,bills:[...(d.bills||[]),...created]};
+      if(!changed&&created.length===0)return d;
+      return{...d,bills:[...next,...created]};
     });
   },[loaded,currentBillMonthKey,trackedHhKey]);
   const updateBill=(id,patch)=>setData(d=>({...d,bills:(d.bills||[]).map(b=>
@@ -5279,6 +5339,23 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
+  /* Move-sub-items selection. Plan-wide: subs from any number of categories
+     can be ticked at once and land in a single destination. Keyed by sub id
+     (uid() is unique within a plan) mapping to its owning category id, which
+     the destination sheet needs for its consequence summary. */
+  const[selectMode,setSelectMode]=useState(false);
+  const[selectedSubs,setSelectedSubs]=useState({});
+  const[showMoveSheet,setShowMoveSheet]=useState(false);
+  useScrollLock(showMoveSheet);
+  const moveSheetRef=useDialogA11y(()=>setShowMoveSheet(false),showMoveSheet);
+  const exitSelect=()=>{setSelectMode(false);setSelectedSubs({});setShowMoveSheet(false);};
+  const toggleSelectSub=(catId,subId)=>setSelectedSubs(s=>{
+    if(s[subId]){const n={...s};delete n[subId];return n;}
+    return{...s,[subId]:catId};
+  });
+  // a selection is only meaningful within one plan — drop it when the plan
+  // under it changes out from under the user (month nav, owner switch)
+  useEffect(()=>{setSelectMode(false);setSelectedSubs({});setShowMoveSheet(false);},[viewMonth,budgetOwner]);
   // Mobile UX fix: deletion of a group/category/sub-item used to be a bare
   // icon button sitting right next to the tracking-toggle and expand
   // buttons — a prime accidental-tap spot. Deletes now route through this
@@ -5330,6 +5407,66 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
     return Number(c.amount)||0;
   };
 
+  /* ── move sub-items between categories ──────────────────────────────────
+     A sub is {id,name,amount} nested in its category, and nothing outside the
+     subs array ever references a sub id (expenses, targets and envelopes all
+     key on the *category* id), so a move is a pure structural edit — no
+     remapping anywhere else. Two consequences are worth surfacing to the user
+     before they commit, which the sheet below does:
+       • a category emptied of all its subs has its cached amount zeroed —
+         syncAmt deliberately leaves `amount` alone at zero subs, and letting
+         the last sub-sum linger there would silently resurface as a manual
+         value the next time the category rendered;
+       • moving into a category with a different trackExpenses setting shifts
+         that money between the tracked Envelopes list and the untracked
+         quick-transfer list, and in or out of Home's tracked-spending card. */
+  const selectedIds=Object.keys(selectedSubs);
+  const selectedInfo=useMemo(()=>{
+    const cats=monthPlan.categories||[];
+    let total=0;
+    const sourceIds=new Set();
+    const byCat={}; // how much each source category is giving up
+    cats.forEach(c=>(c.subs||[]).forEach(s=>{
+      if(!selectedSubs[s.id])return;
+      const amt=Number(s.amount)||0;
+      total+=amt;
+      byCat[c.id]=(byCat[c.id]||0)+amt;
+      sourceIds.add(c.id);
+    }));
+    // categories that would be left with no subs at all
+    const emptied=cats.filter(c=>sourceIds.has(c.id)&&(c.subs||[]).every(s=>selectedSubs[s.id]));
+    return{total,sourceIds,byCat,emptied};
+  },[monthPlan,selectedSubs]);
+
+  const moveSelectedTo=destId=>{
+    setCatsFor(pid,cats=>{
+      const moving=[];
+      const stripped=cats.map(c=>{
+        if(c.id===destId)return c;
+        const keep=[],take=[];
+        (c.subs||[]).forEach(s=>(selectedSubs[s.id]?take:keep).push(s));
+        if(take.length===0)return c;
+        moving.push(...take);
+        return keep.length>0?syncAmt({...c,subs:keep}):{...c,subs:[],amount:0};
+      });
+      if(moving.length===0)return cats;
+      return stripped.map(c=>{
+        if(c.id!==destId)return c;
+        /* A category's amount is a manual figure only while it has no subs —
+           the moment one exists, effectiveAmt reads the sub sum instead. So
+           dropping items into a subs-less category would silently discard its
+           whole manual budget (a SAR 4,200 "Bills" would become the SAR 820
+           that just arrived). Preserve it as a sub of its own first. */
+        const existing=c.subs||[];
+        const seed=(existing.length===0&&(Number(c.amount)||0)>0)
+          ?[{id:uid(),name:c.name||"Existing budget",amount:Number(c.amount)||0}]:[];
+        return syncAmt({...c,subs:[...seed,...existing,...moving]});
+      });
+    });
+    setExpandedSubs(s=>({...s,[destId]:true}));
+    exitSelect();
+  };
+
   /* month-scoped totals */
   const income=Number(monthPlan.income)||0;
   const allocated=(monthPlan.categories||[]).reduce((s,c)=>s+effectiveAmt(c),0);
@@ -5341,9 +5478,32 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
      instead of the shown carry-forward/custom plan). */
   const createCopy=()=>clonePlanForMonth(viewMonth,pid,budgetOwner,fmtMonth(viewMonth));
   const[showCopyPicker,setShowCopyPicker]=useState(false);
-  const[copySourceId,setCopySourceId]=useState("");
-  const ownerPlanOptions=(plans||[]).filter(p=>p.owner===budgetOwner);
-  const createCopyFrom=()=>{if(copySourceId){clonePlanForMonth(viewMonth,copySourceId,budgetOwner,fmtMonth(viewMonth));setShowCopyPicker(false);}};
+  const[copySourceMonth,setCopySourceMonth]=useState("");
+  /* Pick a source *month*, not a plan record. The old list was every plan the
+     owner had ever owned — and since removePlanForMonth only tombstones the
+     month→plan mapping, orphaned plans accumulate all bearing the same month
+     label, so "March 2026" could appear three times with no way to tell them
+     apart. Worse, a month that never had a custom copy had no entry at all.
+     Resolving through planForMonth — the same function this tab renders from —
+     means the option shows, and copies, exactly what that month displays. */
+  const copyMonthOptions=useMemo(()=>{
+    const out=[];
+    for(let i=0;i<12;i++){
+      const m=addMonths(nowMonth,-i);
+      if(m===viewMonth)continue;
+      const p=planForMonth(m,budgetOwner);
+      if(!p)continue;
+      out.push({month:m,plan:p,custom:!!(monthlyPlans||[]).find(x=>x.month===m&&x.owner===budgetOwner)});
+    }
+    return out;
+  },[nowMonth,viewMonth,budgetOwner,plans,monthlyPlans,JSON.stringify(payPeriods)]);
+  const createCopyFrom=()=>{
+    if(!copySourceMonth)return;
+    const src=planForMonth(copySourceMonth,budgetOwner);
+    if(!src)return;
+    clonePlanForMonth(viewMonth,src.id,budgetOwner,fmtMonth(viewMonth));
+    setShowCopyPicker(false);
+  };
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px",transition:"background .25s ease"}}>
@@ -5401,15 +5561,17 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
       {/* ── optional: pick a specific source plan to copy from ── */}
       {!isNow&&!hasOwnPlan&&showCopyPicker&&(
         <div style={{...neuInset(14),padding:12,marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-          <select value={copySourceId} onChange={e=>setCopySourceId(e.target.value)}
+          <select value={copySourceMonth} onChange={e=>setCopySourceMonth(e.target.value)}
             style={{fontSize:12,borderRadius:8,padding:"5px 8px",background:P.neuBg,border:"none",color:P.neuInk,flex:1,minWidth:160}}>
-            <option value="">Select a plan to copy…</option>
-            {ownerPlanOptions.map(p=>(
-              <option key={p.id} value={p.id}>{p.name||p.month} ({cur} {(p.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})})</option>
+            <option value="">Select a month to copy…</option>
+            {copyMonthOptions.map(o=>(
+              <option key={o.month} value={o.month}>
+                {fmtMonth(o.month)} — {cur} {(o.plan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}, {(o.plan.categories||[]).length} categories{o.custom?"":" (carry-forward)"}
+              </option>
             ))}
           </select>
-          <button onClick={createCopyFrom} disabled={!copySourceId} className="neu-btn"
-            style={{fontSize:11,padding:"6px 14px",color:copySourceId?P.jade:P.neuSub,fontWeight:600}}>Copy</button>
+          <button onClick={createCopyFrom} disabled={!copySourceMonth} className="neu-btn"
+            style={{fontSize:11,padding:"6px 14px",color:copySourceMonth?P.jade:P.neuSub,fontWeight:600}}>Copy</button>
         </div>
       )}
 
@@ -5546,6 +5708,30 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         </div>
       )}
 
+      {/* ── move sub-items: selection bar ── */}
+      {editable&&(monthPlan.categories||[]).some(c=>(c.subs||[]).length>0)&&(
+        selectMode
+          ?<div style={{...neu(14),padding:"8px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+             <span style={{fontSize:12,fontWeight:600,color:P.neuInk}}>
+               {selectedIds.length} selected{selectedIds.length>0?` · ${fmt(selectedInfo.total)}`:""}
+             </span>
+             <button onClick={()=>setShowMoveSheet(true)} disabled={selectedIds.length===0}
+               className="status-pill" style={{marginLeft:"auto",cursor:selectedIds.length?"pointer":"default",
+                 border:`1px solid ${selectedIds.length?P.grS:P.line}`,background:selectedIds.length?P.grS:"transparent",
+                 color:selectedIds.length?P.grD:P.neuSub}}>
+               Move…
+             </button>
+             <button onClick={exitSelect} className="status-pill"
+               style={{cursor:"pointer",border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub}}>
+               Cancel
+             </button>
+           </div>
+          :<button onClick={()=>setSelectMode(true)} className="status-pill"
+             style={{marginBottom:12,cursor:"pointer",border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub}}>
+             Select sub-items to move
+           </button>
+      )}
+
       {editable&&(monthPlan.groups||[]).map(g=>{
         const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
         const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
@@ -5566,7 +5752,9 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               const subs=c.subs||[];
               const hasSubs=subs.length>0;
               const effAmt=effectiveAmt(c);
-              const subsOpen=expandedSubs[c.id];
+              // in select mode, force every category that *has* subs open so the
+              // selection genuinely reaches plan-wide; empty ones stay collapsed
+              const subsOpen=expandedSubs[c.id]||(selectMode&&hasSubs);
               return(
                 <div key={c.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
                   {/* Category row */}
@@ -5608,7 +5796,10 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                   {/* Sub-items panel */}
                   {subsOpen&&(
                     <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
-                      {/* Category-level controls, relocated off the row */}
+                      {/* Category-level controls, relocated off the row. Hidden
+                          in select mode — Delete next to a row of checkboxes is
+                          exactly the accidental tap this panel was built to avoid. */}
+                      {!selectMode&&(
                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"8px 12px 8px 30px"}}>
                         <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
                           title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
@@ -5627,11 +5818,19 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                           <I.Trash size={13}/>Delete
                         </button>
                       </div>
+                      )}
                       {subs.map(sub=>(
                         <div key={sub.id} className="sub-row" style={{borderBottom:"1px solid rgba(0,0,0,.05)"}}>
                           <div className="sub-row-name">
-                            {/* indent indicator */}
-                            <span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>
+                            {selectMode
+                              /* the checkbox replaces the indent dot rather than
+                                 sitting beside it — the row is already tight at
+                                 mobile widths */
+                              ?<input type="checkbox" checked={!!selectedSubs[sub.id]}
+                                 aria-label={`Select ${sub.name||"sub-item"}`}
+                                 onChange={()=>toggleSelectSub(c.id,sub.id)}
+                                 style={{width:16,height:16,flexShrink:0,accentColor:P.jade}}/>
+                              :<span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>}
                             <input value={sub.name} onChange={e=>handleSubChange(c.id,sub.id,{name:e.target.value})}
                               className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.neuInk}}/>
                           </div>
@@ -5641,9 +5840,11 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                               <NumField value={sub.amount} onCommit={v=>handleSubChange(c.id,sub.id,{amount:v})} min={0} navGroup="budget"
                                 className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
                             </div>
-                            <IconButton icon={I.Trash} label={`Delete ${sub.name||"sub-item"}`}
-                              onClick={()=>setConfirmDelete({type:"sub",id:c.id,subId:sub.id,name:sub.name||"this item"})} size={13}
-                              style={{color:P.wine,opacity:.5}}/>
+                            {!selectMode&&(
+                              <IconButton icon={I.Trash} label={`Delete ${sub.name||"sub-item"}`}
+                                onClick={()=>setConfirmDelete({type:"sub",id:c.id,subId:sub.id,name:sub.name||"this item"})} size={13}
+                                style={{color:P.wine,opacity:.5}}/>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -5653,10 +5854,12 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                           Subtotal: {cur} {effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
                         </div>
                       )}
-                      <button onClick={()=>handleAddSub(c.id)}
-                        style={{display:"flex",alignItems:"center",gap:5,padding:"7px 16px 7px 36px",fontSize:13,color:P.jade,background:"transparent",border:"none",width:"100%"}}>
-                        <I.Plus size={12}/>Add sub-item
-                      </button>
+                      {!selectMode&&(
+                        <button onClick={()=>handleAddSub(c.id)}
+                          style={{display:"flex",alignItems:"center",gap:5,padding:"7px 16px 7px 36px",fontSize:13,color:P.jade,background:"transparent",border:"none",width:"100%"}}>
+                          <I.Plus size={12}/>Add sub-item
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -5680,6 +5883,78 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           <I.Plus size={14}/>Add group
         </button>
       )}
+      {/* ── move sub-items: destination picker ──
+          Portal is mandatory here: TabPane's tab-enter animation is
+          fill-mode:both, so its final transform makes it the containing block
+          for position:fixed descendants and an un-portalled .sheet-bg would
+          anchor to the scrollable pane instead of the viewport. */}
+      {showMoveSheet&&selectedIds.length>0&&(
+        <Portal>
+        <div className="sheet-bg" onClick={()=>setShowMoveSheet(false)}>
+          <div className="sheet" ref={moveSheetRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
+                Move {selectedIds.length} sub-item{selectedIds.length===1?"":"s"}
+              </h3>
+              <IconButton icon={I.X} label="Close" onClick={()=>setShowMoveSheet(false)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+            </div>
+            <div style={{fontSize:13,color:P.sub,marginBottom:12,lineHeight:1.5}}>
+              Moving <strong>{fmt(selectedInfo.total)}</strong> to another category. Amounts travel with the items — nothing is retyped.
+            </div>
+            {selectedInfo.emptied.length>0&&(
+              <div style={{fontSize:12,color:P.br,background:P.brS,borderRadius:10,padding:"8px 12px",marginBottom:12,lineHeight:1.45}}>
+                {selectedInfo.emptied.map(c=>c.name||"Untitled").join(", ")} {selectedInfo.emptied.length===1?"loses":"lose"} every sub-item and will be left at {fmt(0)}.
+              </div>
+            )}
+            <div style={{maxHeight:"45dvh",overflowY:"auto",marginBottom:16}}>
+              {(monthPlan.groups||[]).map(g=>{
+                const opts=(monthPlan.categories||[]).filter(c=>c.groupId===g.id
+                  // skip a category only if every selected sub already lives there
+                  &&!(selectedInfo.sourceIds.size===1&&selectedInfo.sourceIds.has(c.id)));
+                if(opts.length===0)return null;
+                return(
+                  <div key={g.id} style={{marginBottom:12}}>
+                    <div style={{fontSize:10,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:P.faint,marginBottom:6}}>{g.name}</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {opts.map(c=>{
+                        const untracked=c.trackExpenses===false;
+                        const mixing=selectedInfo.sourceIds.size>0&&(monthPlan.categories||[])
+                          .some(s=>selectedInfo.sourceIds.has(s.id)&&(s.trackExpenses===false)!==untracked);
+                        return(
+                          <button key={c.id} onClick={()=>moveSelectedTo(c.id)}
+                            style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,
+                              padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",border:"none",
+                              background:"rgba(0,0,0,.05)",color:P.ink}}>
+                            <div style={{minWidth:0}}>
+                              <div style={{fontWeight:600,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                                {c.name||"Untitled"}
+                                {untracked&&<span style={{fontSize:9,fontWeight:700,color:P.sub,border:`1px solid ${P.line}`,borderRadius:999,padding:"1px 6px"}}>NOT TRACKED</span>}
+                              </div>
+                              <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                                {/* a destination can also be a source (partial move
+                                    out of it), so net its own contribution back out */}
+                                {fmt(effectiveAmt(c))} → {fmt(effectiveAmt(c)-(selectedInfo.byCat[c.id]||0)+selectedInfo.total)}
+                                {mixing?` · changes ${untracked?"out of":"into"} tracked spending`:""}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={()=>setShowMoveSheet(false)}
+              style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                background:"transparent",color:P.sub,border:`1px solid ${P.line}`}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+        </Portal>
+      )}
+
       <ConfirmDialog open={!!confirmDelete}
         title={confirmDelete?.type==="group"?`Delete "${confirmDelete.name}"?`:confirmDelete?.type==="cat"?`Delete "${confirmDelete.name}"?`:`Delete "${confirmDelete?.name}"?`}
         message={confirmDelete?.type==="group"?"This also deletes every category inside this group. This can't be undone.":"This can't be undone."}
@@ -6065,10 +6340,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     return{onPace,depleteDay,depleteDate,dailyRate};
   };
 
-  /* handle clone/assign */
+  /* handle clone/assign — source is a *month*, resolved through planForMonth,
+     for the same reasons as the Budget tab's copy picker (see the comment on
+     copyMonthOptions there): listing raw plan records surfaced orphaned
+     duplicates all bearing the same month label, and omitted carry-forward
+     months entirely. `plans[0]` as a fallback source was also owner-blind. */
   const handleCreatePlan=()=>{
-    const sourceId=cloneSource||(ownerPlans[0]?.id||plans[0]?.id||"");
-    if(sourceId)clonePlanForMonth(viewMonth,sourceId,budgetOwner,fmtMonth(viewMonth));
+    const src=cloneSource?planForMonth(cloneSource,budgetOwner):null;
+    if(src)clonePlanForMonth(viewMonth,src.id,budgetOwner,fmtMonth(viewMonth));
     setShowPlanPicker(false);
     setCloneSource("");
   };
@@ -6077,8 +6356,19 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     setShowPlanPicker(false);
   };
 
-  /* owner's plans for the plan picker */
-  const ownerPlans=(plans||[]).filter(p=>p.owner===budgetOwner);
+  /* candidate source months for the plan picker */
+  const clonePlanMonths=useMemo(()=>{
+    const mapped=(data.monthlyPlans||[]).filter(m=>!m.deletedAt&&m.planId);
+    const out=[];
+    for(let i=0;i<12;i++){
+      const m=addMonths(nowMonth,-i);
+      if(m===viewMonth)continue;
+      const p=planForMonth(m,budgetOwner);
+      if(!p)continue;
+      out.push({month:m,plan:p,custom:!!mapped.find(x=>x.month===m&&x.owner===budgetOwner)});
+    }
+    return out;
+  },[nowMonth,viewMonth,budgetOwner,plans,data.monthlyPlans,JSON.stringify(payPeriods)]);
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px",transition:"background .25s ease"}}>
@@ -6654,22 +6944,22 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             </div>
 
             <div style={{fontSize:12,color:P.sub,marginBottom:6,fontWeight:600}}>
-              Clone from which plan?
+              Copy from which month?
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
-              {ownerPlans.map(p=>(
-                <button key={p.id} onClick={()=>setCloneSource(p.id)}
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20,maxHeight:"38dvh",overflowY:"auto"}}>
+              {clonePlanMonths.map(o=>(
+                <button key={o.month} onClick={()=>setCloneSource(o.month)}
                   style={{display:"flex",alignItems:"center",justifyContent:"space-between",
                     padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",border:"none",
-                    background:cloneSource===p.id?P.jadeS:"rgba(0,0,0,.05)",
-                    color:cloneSource===p.id?P.jadeD:P.ink}}>
+                    background:cloneSource===o.month?P.jadeS:"rgba(0,0,0,.05)",
+                    color:cloneSource===o.month?P.jadeD:P.ink}}>
                   <div>
-                    <div style={{fontWeight:600}}>{p.name}</div>
+                    <div style={{fontWeight:600}}>{fmtMonth(o.month)}{o.custom?"":" · carry-forward"}</div>
                     <div style={{fontSize:11,color:P.faint,marginTop:2}}>
-                      {cur} {(p.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · {(p.categories||[]).length} categories
+                      {cur} {(o.plan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · {(o.plan.categories||[]).length} categories
                     </div>
                   </div>
-                  {cloneSource===p.id&&<I.Check size={16} style={{color:P.jade,flexShrink:0}}/>}
+                  {cloneSource===o.month&&<I.Check size={16} style={{color:P.jade,flexShrink:0}}/>}
                 </button>
               ))}
             </div>
