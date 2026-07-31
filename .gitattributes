@@ -1,0 +1,17 @@
+# Keep line endings stable in the working tree, not just in the repo.
+#
+# The test runners slice function bodies out of index.html by plain indexOf on
+# source text (see CLAUDE.md). Some of those markers span a newline, so with
+# core.autocrlf=true a Windows checkout rewrote index.html to CRLF and the
+# markers silently stopped matching — budgettest.cjs failed on a clean clone
+# while the app itself was perfectly fine. Forcing eol=lf keeps the checked-out
+# bytes identical to the committed bytes on every platform.
+#
+# The runners also normalise CRLF defensively when reading, so neither fix
+# alone is load-bearing.
+* text=auto eol=lf
+
+# Binary — never touch these.
+*.png binary
+*.ico binary
+*.webp binary

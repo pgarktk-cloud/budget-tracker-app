@@ -20,7 +20,10 @@
    context — only function declarations do — so hand anything else over
    explicitly. */
 const fs=require("fs"),vm=require("vm"),assert=require("assert"),path=require("path");
-const html=fs.readFileSync(process.argv[2]||path.join(__dirname,"index.html"),"utf8");
+const html=fs.readFileSync(process.argv[2]||path.join(__dirname,"index.html"),"utf8")
+  // normalise CRLF: a Windows checkout would otherwise break every slice
+  // marker that spans a newline (see .gitattributes)
+  .replace(/\r\n/g, "\n");
 
 function slice(startMarker,endMarker){
   const a=html.indexOf(startMarker);

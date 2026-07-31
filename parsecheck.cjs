@@ -24,7 +24,10 @@ catch(e){
   process.exit(2);
 }
 const file=process.argv[3]||path.join(__dirname,"index.html");
-const html=fs.readFileSync(file,"utf8");
+const html=fs.readFileSync(file,"utf8")
+  // normalise CRLF: a Windows checkout would otherwise break every slice
+  // marker that spans a newline (see .gitattributes)
+  .replace(/\r\n/g, "\n");
 const m=html.match(/<script type="text\/babel"[^>]*>([\s\S]*?)<\/script>/);
 if(!m){console.error("no <script type=\"text/babel\"> block found in "+file);process.exit(1);}
 const src=m[1];

@@ -4,8 +4,12 @@
    These two cards cannot render yet (they need 3 completed periods and the
    user has one month of data), so this is the only verification available
    before ~Oct 2026. */
-const fs=require("fs"), vm=require("vm"), assert=require("assert");
-const src=fs.readFileSync(process.argv[2]||"D:/Claude Projects/WheredItGo/index.html","utf8");
+const fs=require("fs"), vm=require("vm"), assert=require("assert"), path=require("path");
+// Resolve relative to this file, not an absolute machine path — the runner has
+// to work in a fresh clone. Normalise CRLF for the same reason: a Windows
+// checkout would otherwise break slice markers that span a newline.
+const src=fs.readFileSync(process.argv[2]||path.join(__dirname,"index.html"),"utf8")
+  .replace(/\r\n/g,"\n");
 
 function grabFn(name){
   const re=new RegExp("^function "+name+"\\(","m");
