@@ -1,0 +1,317 @@
+# WheredItGo — project conventions
+
+Personal salary/budget/net-worth/investment planner. Single-page app, no
+build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
+
+## Where the code actually lives
+
+- **`index.html`** is the entire live app (~8.2k lines, one big
+  `<script type="text/babel">` block). Every feature — Home, Budget, Banks,
+  Investments, Net Worth, Goals, etc. — is defined here.
+- **`sw.js`** is a PWA service worker caching the app shell (`index.html` +
+  CDN scripts). **Bump `BUILD_ID` any time `index.html` or `APP_SHELL`
+  changes**, or returning users stay stuck on the old cached copy. `BUILD_ID`
+  lives in *three* places that must always match: `sw.js` (it forms the cache
+  name), `APP_VERSION`/`BUILD_ID` in `index.html`, and `version.json` (the
+  update-check endpoint). Bump all three together. (This replaced the older
+  `CACHE_VERSION` constant — older doc entries below still say `CACHE_VERSION`.)
+- **`worker.js`** is a separate Cloudflare Worker — a thin KV store/retrieve
+  proxy behind the app's cloud sync. It's schema-agnostic (stores whatever
+  JSON blob the client sends) — changes to the data model inside `data`
+  (plans, investments, banks, etc.) do **not** require touching `worker.js`.
+  Only touch it if the sync *protocol* itself changes (new endpoints, auth,
+  request/response shape).
+
+## Data model conventions
+
+- The whole app state is one `data` object, persisted to `localStorage` and
+  optionally to a Cloudflare KV store via `worker.js`. `migrate(d)` is the
+  single place that upgrades old saved shapes — **any new field added to an
+  existing record type must get a default in `migrate()`**, not just in
+  `defaultData()`, or existing users' saved data will be missing it.
+- Owners: the two named people are stored under fixed keys `"me"` / `"wife"`
+  (labels customizable via `data.owners.me`/`.wife` — in this user's data
+  they're "Jastine"/"Charlene"). `"household"` is a separate concept:
+  - For **Home-tab aggregation only** (banks, goals, budget/expenses):
+    `"household"` is a *view-only* pseudo-profile with no literal value
+    stored anywhere — it just means "me + wife combined."
+  - For **investment ownership** specifically: `"household"` **is** a real
+    stored `owner` value (a joint account), introduced in the Investment
+    module Phase 1. Don't assume these two behave the same way — see
+    `docs/decisions.md`.
+- Soft-delete pattern: most record arrays use `deletedAt` timestamps rather
+  than removing entries outright (for undo support); always filter
+  `!x.deletedAt` when reading, never `splice`/filter-out on delete.
+- **A budget category's `amount` is a manual figure only while it has no
+  sub-items.** The moment `subs.length > 0`, `effectiveAmt` reads the sub sum
+  and `amount` is just a cache kept by `syncAmt`. So any code path that changes
+  whether a category *has* subs must decide explicitly what happens to the
+  money: emptying one leaves a stale sum that resurfaces as a live manual value
+  (zero it), and filling an empty one makes its manual amount stop being read
+  at all (carry it over as a seeded sub). Currently only "Add sub-item" and
+  delete change sub count, and "Add sub-item" knowingly still has the second
+  trap — but any *new* such path must decide this explicitly.
+  Sub-items are `{id,name,amount}` nested in the category, hard-deleted rather
+  than tombstoned, and **nothing outside the `subs` array references a sub id**
+  — expenses/targets/envelopes key on `catId`, several features key on
+  category or group *names*. That's load-bearing; re-check it before storing a
+  sub id anywhere.
+- **Groups are the fixed frame; categories are what gets reorganised.** The
+  user's "categories" are the app's **groups** (Invest & Grow, Essentials, …)
+  and their "subcategories" are the app's **category rows** — not the `subs`
+  feature, which they barely use. Read any request about moving/reordering
+  "categories" at the group→category level first. Budget's multi-select move
+  re-parents categories between groups (`moveSelectedTo(destGroupId)`); it is a
+  pure `groupId` change, since everything else keys on the category id. The one
+  coupling is `investTarget.groupNames`, which keys on group **names**, so a
+  move can change the Invest & Grow figure.
+- **A month inherits the nearest PRECEDING month's plan, and materialises its
+  own on first edit.** `resolvePlanForMonth()` (module scope, pure) walks
+  `monthlyPlans` backwards from the viewed bucket, falling back to
+  `activePlanId[owner]` only when nothing precedes it — so `activePlanId` is
+  now the *root of the chain*, not "the plan the current month edits."
+  **Every budget mutation must go through `editPlanForMonth(mo,owner,label,
+  mutate)`**, never a by-plan-id setter (those were deleted for exactly this
+  reason): it copy-on-writes the inherited plan, folding the clone and the edit
+  into ONE `setData`. Two traps if you extend it — a half-materialised month
+  (mapping written, edit not) renders as an empty budget for a debounce tick,
+  and the **no-op guard is load-bearing** because `NumField` commits even when
+  you re-type the same number, so without it merely tapping around a past month
+  creates plans. Paging to a month must write nothing.
+- **Transaction order lives in record fields, never array position.**
+  `mergeArrayById` re-sorts expenses by id on every sync and `fingerprint`
+  canonicalizes with `sortedById`, so array order is erased the first time two
+  devices sync. Expenses carry `createdAt` (stamped once at insert, never
+  re-stamped — unlike `updatedAt`) and an optional `ord` for manual within-a-day
+  placement, compared by the single module-scope `compareTxForDisplay()` that
+  both list sites use. **An absent `ord` is meaningful** — unplaced sorts above
+  every placed row of its day, which is what makes "added after a reorder lands
+  on top" and "a re-dated row arrives at the newest position" the same rule.
+  Never default it to a number, including in `migrate()`.
+- **Anything derived from a live source must reconcile, not just generate.**
+  `data.bills` is a snapshot layer over `household.expenses`; its generator was
+  create-only, which silently encoded "the source only ever grows" and left
+  untracked bills in the list and the reserve forever. Create, update *and*
+  retire each pass. Two follow-ons: decide per field whether it's a projection
+  (keeps following the source) or a record (freezes — e.g. `allocated` freezes
+  once `paid > 0`), and return the **identical object** when nothing changed,
+  or the effect loops and dirties the doc on every app open.
+- Shared reducer pattern for per-profile totals: filter the raw array by
+  owner with a small helper (e.g. `investmentsForProfile`), then run it
+  through the *same* valuation function used for the combined total — don't
+  write a second bespoke reduce for "just this owner."
+- Investment Accounts now support three priced types (Phase 2, 2026-07-28):
+  Stocks/ETF (live quotes), Pag-IBIG MP2 (contribution log + a centrally
+  shared declared-dividend-rate table in `data.mp2DividendRates`, confirmed
+  vs. estimated valuation), and Time Deposit (principal/rate/term, status-
+  driven confirmed vs. estimated value). Gold is selectable but unpriced
+  (Phase 3). All three are priced through one dispatch, `investmentValueSar()`
+  inside `App()` in `index.html` — extend that function's type branches for
+  any new investment type rather than writing a parallel reduce elsewhere.
+  See `docs/current-status.md` / `docs/decisions.md` for the valuation math.
+- **A pay period's key is its *nominal* payday start; only its boundaries
+  move.** `payPeriods[owner].actualStarts` maps a nominal period key to the day
+  that period really began — always a `YYYY-MM-DD` string (the old `"pending"`
+  sentinel was removed 2026-07-31; `migrate()` sweeps any non-date value out).
+  `shiftPeriod` is pure payday arithmetic and ignores overrides — identity and
+  extent are different questions. Views call the `bucket*` wrappers, which hand
+  the whole owner **config** down to the `period*` layer; never pass a bare
+  `payday` to those. Invariants: an empty `actualStarts` short-circuits to
+  the nominal answer (so untouched data costs what it always did — which is why
+  clearing an override *deletes* the key rather than storing the nominal date);
+  validation forbids an override crossing a whole period, which is what
+  makes `periodKeyFor`'s three-candidate scan sound; and **`periodRange` must
+  never read the clock** — a period's extent is a pure function of `(key,cfg)`,
+  so labels and bucketing don't move at midnight and the history/snapshot
+  effects can't loop on a boundary that shifts under them.
+  **One override moves TWO boundaries** — it is period K's start and K−1's end
+  — so a corrected period *stretches, it does not slide*: recording that August
+  began Jul 30 makes August Jul 30–Aug 31 and shortens July to Jul 1–Jul 29,
+  without cascading into September. **Periods are never pro-rated** — a short
+  period keeps full monthly amounts on purpose, so the daily allowance absorbs
+  the change. Corrections live in **Settings → Pay periods** (there is no Home
+  card; it was removed for prompting speculatively while being invisible to
+  owners who had tracking switched off, which was the case that needed it).
+  Toggling tracking re-buckets that owner's entire expense history, so it
+  confirms with a count first — in both directions.
+- **Bank balances are derived on read, not stored current.** `bank.balance` is
+  the last figure a person typed, anchored by `balanceAsOf`; an optional
+  `interest` block (`null` = off) makes the *displayed* value
+  `balance × (1 + netAnnual/365) ^ days`. Everything goes through
+  `bankValuation()`/`bankValue()` — same single-dispatch rule as
+  `investmentValueSar()`. Two invariants to preserve: the accrual exponent is a
+  whole number of days (so the value is constant within a calendar day and the
+  history/snapshot effects can't loop on it), and **anything that credits or
+  debits an account must call `settledBankPatch()` first** — folding in the
+  accrual and re-anchoring — or the elapsed period's interest gets applied to
+  money that arrived today. Interest tiers are **whole-balance, not marginal**.
+- `data.settings` is a small object for user-facing toggles that change
+  *calculation* behavior (currently just `includeMp2EstimateInNetWorth`) —
+  put future calculation-affecting toggles here, not as ad hoc top-level
+  `data` fields.
+
+## Styling conventions
+
+- Card-like surfaces (top-level tab content, Home dashboard cards, holding/
+  account cards) should go through the shared `neu(r)`/`neuInset(r)` helpers
+  (or `homeCardStyle()` for Home cards specifically) rather than a
+  hand-rolled `{background:P.neuBg,borderRadius:...,boxShadow:...}` object —
+  a 2026-07-29 audit found three tabs (`HouseholdView`/`BillsView`/
+  `CurrencyView`) had each drifted to a slightly flatter shadow than the
+  rest of the app by doing this. The standard top-level card radius is
+  **16** (`neu(16)`); smaller nested cards (envelope rows, etc.) use 14.
+- Delete/trash `IconButton`s use `opacity:.5` — keep new ones consistent
+  with that rather than picking a new value per call site.
+- Shared small components worth reusing rather than reinventing: `.fab-btn`
+  (floating action button), `.status-pill`/`.status-pill-fixed` (Tracked/
+  Not-tracked-style toggle pills), `.seg-control`/`.seg-indicator`
+  (fixed-width animated segmented control, see `HomeProfileToggle`).
+
+## Modals / sheets — always Portal them
+
+Every `.sheet-bg` overlay rendered from inside a tab view **must** be wrapped
+in `<Portal>`. `TabPane` applies a `.tab-enter-*` animation declared
+`fill-mode: both`, so its final keyframe's `transform` stays applied forever —
+which makes that div the containing block for *all* `position:fixed`
+descendants. An un-portalled sheet therefore anchors to the scrollable tab
+pane instead of the viewport, and since `.sheet-bg` is `align-items:flex-start`
+it lands at the top of the whole page. With `useScrollLock` freezing the body,
+the result is an invisible, unreachable dialog. This bit `ConfirmDialog` and
+`AdjustReserveSheet` (fixed 2026-07-30). App-level modals rendered outside
+`TabPane` (Settings/Conflict/PendingChanges/RecentlyDeleted/ProfilePicker) are
+fine without it. Size sheets in `dvh`, not `vh` — mobile `100vh` is the
+URL-bar-hidden height and overflows the visible area.
+
+`useScrollLock` is **refcounted** (module-scope counter, not a per-instance
+ref) because sheets nest — Settings holds a lock and opens the pay-period date
+sheet and a ConfirmDialog on top of itself. Only the outermost lock owns the
+saved scroll position; a per-instance one had the inner sheet's cleanup unlock
+the body while Settings was still open and jump the page to a `savedY` it read
+as 0. Don't "simplify" it back.
+
+## Numeric inputs — always `NumField`
+
+Never write `<input type="number" value={n} onChange={e=>set(Number(e.target.value))}/>`.
+When auditing, grep for **`<input type={`** as well as the literal
+`type="number"` — the trade modal built its fields from an array and escaped
+the original sweep for a full five builds. A live-DOM check only sees mounted
+elements, so open modals before trusting one.
+`Number("")` is `0`, so clearing the box writes 0 back and it can never be
+blank. **All 38 numeric fields go through `NumField`** (defined just above
+`STORAGE_KEY`), which holds a string draft, commits on blur through
+`evalMathExpr` (so `1200+350` works everywhere), and selects on focus. Props:
+`allowEmpty` when "unset" differs from zero, `integer`/`min`/`max` to clamp on
+commit, `live` when something outside the field reacts before blur (a
+`disabled={!valid}` submit button, or a running preview — a disabled button
+doesn't reliably fire the field's blur), `navGroup` to make Enter jump to the
+next field in that group. Don't clamp a value that has a validation message
+telling the user it's out of range — clamping makes the message unreachable.
+
+## Navigation
+
+Tabs live in three module-scope lists — `PRIMARY_TABS` (bottom bar),
+`MORE_TABS` (More sheet), `HIDDEN_TABS` (reachable by code only; Forecast
+sits here). `TAB_ORDER` is derived from all three, so a new tab cannot be
+added without landing in the slide-direction tracker. Labels/icons come from
+the single `TAB_META` registry (`short` is bar-only). z-index ladder:
+bottom nav 30 → FAB 35 → sheets/modals 40 → undo toast 80.
+
+## `position:sticky` and `overflow`
+
+`overflow-x:hidden` belongs on `<html>` ONLY. On `<body>` it computes to
+`hidden auto` (spec: hidden-x + visible-y ⇒ auto-y), making body a scroll
+container, and **every** `position:sticky` descendant then resolves `top:0`
+against the whole document instead of the viewport — sticky silently does
+nothing. Same trap on a smaller scale: an ancestor with `overflow:hidden`
+(e.g. a card clipping its corners) kills sticky inside it; use
+`overflow:clip`, which clips without creating a scroll container.
+
+## Home cards answer questions
+
+Each Home card exists to answer one question, and a figure is not an answer.
+Cards lead with a `<Verdict tone=...>` line (good/warn/bad/flat, same
+semantics as `spendStatusColor`) and demote the numbers to supporting detail.
+A card with nothing honest to say returns `null` — `.home-cell:empty` hides
+the wrapper, so never duplicate a card's own conditions in `HomeView`.
+History-dependent cards gate on `MIN_TREND_BUCKETS` completed periods and
+render nothing (never "not enough data yet") until then. Past-period figures
+must come from `bucketHistoryFor`/`bucketHistoryCombined`, which reuse the
+same `trackedSpendingFor`/`savingsInvestingFor` as the live cards with an
+explicit bucket — don't write a parallel per-month reduce. `trendtest.cjs`
+covers this maths; run `node trendtest.cjs` after touching it.
+
+## Sync — what counts as a "change"
+
+Two fingerprints, deliberately:
+- `fingerprint(d)` — raw byte comparison. Used for conflict detection and the
+  sync baseline. **Don't** weaken it; auto rows still need to merge across
+  devices.
+- `userFingerprint(d)` — same, minus `history`/`snapshots` rows stamped
+  `auto:true`. Used **only** for the dirty/pending flag.
+
+The split exists because opening the app refreshes quotes/FX, which makes two
+effects recompute derived `history`/`snapshots` rows. Those are in
+`fingerprint()`, so a price tick used to mark the doc dirty and fire the 8s
+idle autosave — a Cloudflare KV write per app open, for data nobody touched.
+Any new background-derived data should be stamped `auto:true` and added to
+`stripAutoRows`' reach, not left to dirty the document.
+
+## Testing this app
+
+- No test suite, no build step. "Testing" means opening it in a browser.
+- **A parse error silently blanks the app with zero console output** (Babel
+  throws after `#loading` is removed and `#root` never mounts). Always
+  parse-check after editing: `node parsecheck.cjs <path-to-@babel/standalone>`
+  (the dep isn't vendored — `npm i @babel/standalone --prefix /tmp/pc` once).
+  If writing your own: the tag is `<script type="text/babel"
+  data-presets="react">`, so a regex matching `type="text/babel">` exactly
+  finds nothing and reports a false "no block found".
+- Pure helpers (fingerprints, diffs, valuation math) can be genuinely
+  unit-tested without a browser: slice the function text out of `index.html`
+  by name and `vm.runInContext` it with a small harness — much better than
+  reimplementing the logic in the test, which only tests the copy. Committed
+  runners: `trendtest.cjs` (Home trend maths), `billstest.cjs` (bills
+  reconciler), `budgettest.cjs` (carry-forward chain + copy-on-write + plan
+  clone + category moves), `banktest.cjs` (bank interest accrual),
+  `periodtest.cjs` (pay-period boundaries), `txordertest.cjs` (transaction
+  display order + entry-stamp backfill).
+  **Commit new ones** — `synctest.cjs`/`baltest.cjs`
+  were written in-session, never committed, and are gone.
+  - Three traps: `assert.deepStrictEqual` compares prototypes and therefore
+    fails on anything built inside the vm — use `deepEqual`. Slice markers
+    are plain `indexOf` on source text, so they break silently when the code
+    moves; assert on the marker being found. And top-level **`const` bindings
+    don't attach to a vm context** — only function declarations do, so a
+    sliced-out `const` reads as `undefined` unless you append an explicit
+    `this.X=X`.
+- `setData` writes to `localStorage` on a debounce, so reading it back
+  immediately after a UI action shows the *previous* state. Re-read before
+  concluding an action did nothing.
+- `python3`/`python` resolve to a non-functional Windows Store alias stub in
+  this project's shell environment — `python3 -m http.server` silently
+  fails or serves stale content. **Use Node instead**: a small inline
+  `http.createServer` script (see git history / session transcript,
+  2026-07-29) reliably serves a sandboxed test copy. Also start it with the
+  `Bash` tool's own `run_in_background:true`, not a trailing shell `&` —
+  backgrounded-via-`&` processes don't reliably survive past the tool call
+  in this environment.
+- **The sync token in `index.html` (`SYNC_TOKEN`) is hardcoded, not
+  per-login** — even a brand-new browser profile/tab will pull the real
+  user's live financial data from Cloudflare KV on load. Never edit fields
+  while connected to the real store during testing.
+- To test safely: copy `index.html`, replace `SYNC_TOKEN` with any
+  `"PASTE_"`-prefixed dummy value (the app's own convention for "not
+  configured" — same pattern as `PROXY_URL`/`FINNHUB_KEY`/`GOOGLE_CLIENT_ID`),
+  and serve that copy on a different port so it gets a clean `localStorage`
+  and starts from `defaultData()`.
+- `file://` URLs don't work with the Chrome automation extension — serve
+  over `http://localhost` (a one-line Node static server is enough).
+
+## Docs
+
+- `docs/current-status.md` — what's implemented, known gaps, verification notes.
+- `docs/decisions.md` — why things were built the way they were.
+- `docs/roadmap.md` — recommended next phases.
+
+Keep these updated at the end of any substantial session (see prior handover
+in git history / conversation, not duplicated here).

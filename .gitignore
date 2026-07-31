@@ -1,0 +1,59 @@
+# ── Dependencies ──────────────────────────────────────────────────────────
+# This project has no build step (React/Recharts/Babel come from a CDN), but
+# parsecheck.cjs needs @babel/standalone installed somewhere.
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ── Secrets and credentials ───────────────────────────────────────────────
+# NOTE: this project's real secrets are NOT in .env files — SYNC_TOKEN,
+# FINNHUB_KEY and PROXY_URL are hardcoded in index.html and worker.js, which
+# .gitignore cannot help with. See docs/decisions.md and the repo README.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+.dev.vars
+.wrangler/
+
+# ── App data exports and backups ──────────────────────────────────────────
+# Settings → Download writes allocation-backup-YYYY-MM-DD.json, which is a
+# COMPLETE dump of the user's finances: salaries, bank balances, holdings,
+# net worth, every logged transaction. Never commit one.
+allocation-backup-*.json
+*-backup-*.json
+backup/
+backups/
+exports/
+*.bak
+
+# ── Local databases ───────────────────────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
+
+# ── Editor / OS noise ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Local tool state ──────────────────────────────────────────────────────
+# Machine-specific Claude Code permissions; the shared skills under
+# .claude/skills/ are intentionally NOT ignored.
+.claude/settings.local.json
+
+# ── Scratch ───────────────────────────────────────────────────────────────
+sandbox/
+tmp/
+*.log

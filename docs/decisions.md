@@ -1,0 +1,1171 @@
+# Architectural & Technical Decisions
+
+## The move feature was built at the wrong level, twice over (2026-07-31)
+
+The user asked for a way to move things between the fixed sections of their
+budget. What shipped in v1.11.0 moved **sub-items between categories**. What
+they meant was moving **categories between groups**.
+
+The mistake is worth recording because the information needed to avoid it was
+already written down. `current-status.md` had, from the Budget scrolling work:
+
+> The user's "5 categories, each with subcategories, 21 subcategories total"
+> maps to the app's **5 groups and 21 category rows** — not the app's `subs`
+> feature, which they barely use (17 of 19 demo categories have no subs).
+
+That note was used to decide what stays on a collapsed row, and then not
+applied when the same words came up again for the move feature. **A recorded
+terminology mapping only helps if it's re-read when the same vocabulary
+reappears, not just when it's first written.** The tell was available in the
+data too: a feature aimed at `subs` was being built for a plan where 17 of 19
+categories have none.
+
+The corrected feature is strictly simpler, which is itself a signal the level
+was wrong. Moving a category between groups is a pure `groupId` change:
+
+- A category owns its `amount`, `subs` and `trackExpenses`, and everything that
+  references it — expenses, targets, envelopes, quick transfers — keys on the
+  **category id**. Nothing keys on `groupId` except rendering.
+- Group totals are derived sums, so they just re-add. No money can be created,
+  destroyed or reinterpreted.
+
+So the entire class of hazard the sub-item version had to defend against — the
+manual-amount-vs-sub-sum trap in both directions, seeding a destination,
+zeroing an emptied source — **does not exist at this level**. All of that
+machinery was deleted rather than ported.
+
+The one genuine coupling is `investTarget.groupNames`, which keys on group
+*names*: moving a category into or out of a named group changes the Invest &
+Grow figure. That's usually the intent, so the destination sheet states it per
+group rather than blocking it.
+
+Display order inside a group is array order, so moved categories are appended —
+they land at the end of the destination group instead of interleaving at
+whatever positions they held in the source.
+
+**Note for anyone reading the old entry below** ("Sub-items have no external
+references, so moving one is free"): its analysis is still correct and still
+worth keeping — it's why storing a sub id anywhere is still off-limits — but
+the feature it justified no longer exists.
+
+## A period's identity is its payday; its boundaries are what actually happened (2026-07-31)
+
+The obvious model for "salary arrived on the 24th instead of the 28th" is to
+key the period by its real start. That is wrong in a way that only shows up
+later: every expense, plan mapping and trend bucket points at a period *key*,
+so changing the key when a period is corrected orphans all of them, and
+correcting it twice orphans them twice.
+
+So `payday` stays the identity function forever and `actualStarts` records
+reality where it differed. `shiftPeriod` is deliberately pure payday arithmetic
+— the period after `2026-08-28` is `2026-09-28` however early it began — while
+`periodRange` consults the overrides. Identity and extent are different
+questions and are answered by different code.
+
+This was also chosen over a simpler one-shot "shift the current period" flag,
+which **cannot be read backwards**: past periods would recompute from
+`payday = 28` and silently re-render a 24-day August as a normal month forever.
+A dated map is the only shape that keeps history true.
+
+Related: a period runs from its own real start to the day *before the next
+period's* real start. Defining it that way (rather than storing an end) is what
+makes a single edit resize both neighbours and keeps them contiguous by
+construction — there is no way to store a gap or an overlap.
+
+## The indirection that was already there paid for this feature (2026-07-31)
+
+The scoping note warned that `periodStartFor`/`periodRange`/`periodKeyFor`/
+`periodLength`/`shiftPeriod`/`bucketProgress` all took a bare `payday` and that
+changing them "touches every call site". It turned out to touch **one**.
+
+The `bucket*` wrappers already took `(payPeriods, owner)` and already looked up
+the owner's config — they simply passed `cfg.payday` down and threw the rest
+away. So the change was to pass `cfg` instead. Every view calls the `bucket*`
+layer, so every view got corrected boundaries for free.
+
+Worth recording as a general observation: **a wrapper that already receives the
+whole config is the cheap place to add config-dependent behaviour later**, even
+when it currently forwards only one field. The cost of the original
+indirection, which looked redundant, was repaid entirely by this one change.
+
+The one exception — `BudgetView`'s envelope depletion-date — was calling
+`periodRange` directly with `payPeriods[owner]?.payday`. That it was the *only*
+such call is why the risky part of this feature was mechanical.
+
+## An override map needs a fast path, or every expense pays for a feature nobody uses (2026-07-31)
+
+`periodKeyFor` runs for every expense row on several tabs. Making it
+override-aware means asking "which period's real range contains this date?",
+which needs up to three range computations instead of one piece of modular
+arithmetic.
+
+Since a moved boundary can only ever push a date into an adjacent period —
+validation forbids an override crossing a whole period, which is what makes the
+three-candidate scan sound — the scan is bounded. But it still costs three
+times as much for owners who have never corrected anything, which is everyone
+until they do.
+
+So an empty (or absent) `actualStarts` returns the nominal answer immediately.
+That also makes the migration a genuine no-op rather than a no-op-shaped
+behaviour change, and it's why clearing an override **deletes the key** instead
+of writing back the nominal date: a map full of "corrections" that happen to
+equal the payday would silently switch every owner onto the slow path and lose
+the guarantee that untouched data behaves exactly as before.
+
+## Auto-advance stays; the button only corrects (2026-07-31)
+
+The request was "never auto-advance, the period changes only when I press the
+button." That was talked down to keeping auto-advance and making the control
+corrective only, because the two designs differ in what happens when life gets
+busy:
+
+- **Button-only**: forget to press it and you are stranded in a stale period.
+  Every figure on Home is quietly wrong, and nothing says so.
+- **Auto-advance plus corrections**: forget to press it and the period rolls
+  over on payday as it always did. The failure mode is "nothing happened"
+  rather than "the budget is lying."
+
+The corrective design does everything the button-only design does — it just
+doesn't depend on the user for correctness. That is the whole argument.
+
+`pending` ("hasn't arrived yet") is the one state that can go stale, since it
+holds the previous period open until resolved. It's bounded by the card
+continuing to prompt while it's set, and by Undo always being present.
+
+## The sheet shows what will move, because a boundary silently re-buckets money (2026-07-31)
+
+Moving a period start doesn't just relabel a date range — it changes which
+period real, already-logged expenses belong to, and therefore which budget they
+count against. That consequence is invisible in a date picker.
+
+So `SalaryArrivedSheet` previews the new boundaries, the new length, and the
+**count of logged expenses that would move into the period**, before anything
+is committed. Same principle as `UpdateBalanceSheet`'s running preview and the
+sub-item move sheet's before → after: if an action silently rewrites where
+existing records live, the UI has to say so first.
+
+It also states "Budget amounts don't change — the daily allowance adjusts
+instead", because the natural assumption about a 24-day period is that it gets
+24/31 of the budget. Not pro-rating is deliberate (it's what stops Home reading
+an early payday as overspending), so it has to be said rather than discovered.
+
+## Bank interest is derived from an anchor, never incremented into the balance (2026-07-31)
+
+The obvious implementation is "each day, add today's interest to the balance."
+It was rejected before any code was written, and the reasons generalise to any
+value that grows with the clock:
+
+- **Two synced devices double-count.** Both phones would apply the same day.
+- **A day the app isn't opened is lost forever**, because nothing runs to add
+  it. The figure silently under-reports and never catches up.
+- **Undo stops being sound.** Reverting an edit can't know which part of the
+  balance was typed and which part was accrued into it.
+
+Recomputing from `balance` + `balanceAsOf` on every read has none of those
+failure modes: it's idempotent, so both phones agree after any gap, and the
+stored figure keeps its plain meaning — the last number a person typed.
+
+Two consequences that made this cheap rather than merely correct:
+
+- **The exponent is a whole number of days**, so the value is constant within a
+  calendar day. The history/snapshot effects can't see it move mid-session and
+  loop — the failure mode the bills reconciler had to be careful about.
+- **Nothing is written**, so accrual can't dirty the document. Combined with
+  the existing `auto:true` stamping, a bank quietly earning interest costs zero
+  Cloudflare KV writes. An incrementing design would have cost one per day per
+  device.
+
+**The reciprocal rule: anything that moves money must settle first.** A deposit
+added to the stale stored balance would then have the *whole* elapsed period's
+exponent applied to money that arrived today. So `recordMp2Payout`,
+`transferTdProceeds`, the inline balance field and all three modes of the
+Update sheet go through `settledBankPatch()` — fold in the accrual, re-anchor
+to today, then apply the delta. A derived value is only safe if every writer
+knows it exists.
+
+## A backfilled anchor date must be inert until something re-stamps it (2026-07-31)
+
+`migrate()` backfills `balanceAsOf` from `updatedAt`, per the project rule that
+every new field on an existing record type needs a default. But `updatedAt` is
+a poor proxy for "when was this balance confirmed" — it also moves on a rename,
+and `migrate()` itself sets it to a year-2000 sentinel on records old enough to
+predate it.
+
+The backfill is safe only because `interest` defaults to `null`, so the anchor
+is never read. The moment it *is* read — when someone enables interest — the
+toggle re-stamps `balanceAsOf` to today. Without that, flipping the switch on
+an old account would have invented 26 years of compounding in one render.
+
+Worth generalising: **a default that is meaningless-but-harmless while unread
+becomes a bug the instant a feature starts reading it.** The fix belongs at the
+transition (the enable handler), not in the migration, because migration can't
+know which records will later matter.
+
+## Interest tiers are whole-balance, and the UI has to say so (2026-07-31)
+
+Maribank PH applies one rate to the entire balance based on which tier the
+balance falls in — 3.25% below a million, 3.75% at or above it, on *all* of it.
+Marginal tiering (the tax-bracket model, where each slice earns its own rate)
+is the more common convention and produces a materially different number on the
+same inputs.
+
+Since the data shape `[{from,rate}]` is identical under both readings, nothing
+about the stored config reveals which one is meant. So the editor states it in
+plain language above the rows. A configuration format that can be read two ways
+needs the reading written down where it's edited, not only in a code comment.
+
+Related, decided in the same pass: a balance below every configured tier floor
+earns the *lowest* configured rate rather than nothing. A list starting at
+1,000,000 means "above a million you get more", not "below a million you get
+zero" — and returning zero there would look like the feature was broken.
+
+## Accrual is always an estimate, and only ever "since you last confirmed" (2026-07-31)
+
+The user asked, secondarily, how much interest they were earning. The app
+cannot answer the lifetime version of that question: after a reconcile it has
+no way to separate credited interest from a deposit, so the difference between
+the estimate and the real figure is unattributable.
+
+Two options were weighed. Assume the estimate was right and book the remainder
+as a deposit — which would fabricate a number and quietly corrupt a "lifetime
+interest" total forever. Or report only accrual *since the last confirmation*,
+and say exactly that. Chose the second: the card reads `≈ 203.14 accrued since
+Jul 12 · est.`, naming both the estimate and its starting point.
+
+**No net-worth toggle**, unlike `includeMp2EstimateInNetWorth`. That toggle
+exists because an MP2 estimate can swing net worth by tens of thousands; a few
+days of bank interest is pocket change. A settings switch per estimate would be
+cargo-culting the earlier decision rather than applying its reasoning.
+
+## Audit the real data before "fixing" it (2026-07-31)
+
+A follow-up was logged to sweep pre-existing orphaned categories out of the
+live data. The obvious move was to write the sweep and run it. Instead the KV
+blob was pulled **read-only** first (`GET /sync`, backup kept) and audited:
+**zero orphans in all 24 plans.** The repair would have been a no-op dressed up
+as a fix, on a live financial dataset, for a condition that didn't exist.
+
+Two things that fell out of doing it in that order:
+
+- The first pass reported a "discrepancy" of −1.8e-12 — floating-point noise
+  from summing decimals, not an orphan. **Structural checks that compare two
+  computed sums need an epsilon**, or they invent problems.
+- The audit found the *actual* defect: 16 of 24 plans referenced by nothing,
+  including six all named "September 2026" with six different totals. That —
+  not orphaned categories — is the best explanation for the original "some
+  amounts differ" report, and it was already fixed by switching the picker to
+  months.
+
+The guard still shipped, for a reason the audit also clarified: the fix lives
+in `clonePlanForMonth`, but the user's other devices keep running the old build
+until they update, and can still create an orphan and sync it here. **A
+data-shape guard in `migrate()` earns its place when other clients can still
+produce the bad shape**, not merely when the current build once could.
+
+Because `migrate()` runs on every load, the guard has to be idempotent —
+reusing an existing `Ungrouped` group rather than appending one per run. It was
+verified as a byte-identical no-op against the real blob before shipping, which
+is the cheapest possible proof that a migration is safe.
+
+## Derived collections must reconcile, not only generate (2026-07-31)
+
+`data.bills` is a snapshot layer over `household.expenses`. The generator was
+written as "create the rows that don't exist yet" — idempotent, and therefore
+looked correct. It wasn't: nothing in the app ever *un*-created a row, so
+un-ticking "Track in Bills" was invisible to Bills and to the reserve, and the
+`already.has(it.id)` guard that made creation idempotent also blocked every
+later name/amount edit from reaching the row.
+
+The rule: **anything derived from a live source has to reconcile the full set
+each pass — create, update, and retire — not just fill gaps.** A create-only
+generator silently encodes "the source only ever grows."
+
+Two carve-outs are deliberate rather than accidental, and both come down to the
+same question — *is this row a projection or a record?*
+
+- A bill with `paid > 0` is a record. Untracking must not delete it.
+- `allocated` is a projection while unpaid and a record once paid. So it
+  resyncs from Household until the first payment, then freezes. The item's
+  *name* is a label, never a record, so it always follows.
+
+The mechanical constraint: the reconciler runs in an effect via `setDataRaw`,
+so it must return the **identical object** when nothing changed. Returning a
+fresh `{...d}` every pass loops, and (because the pass is background-derived)
+would dirty the document and fire the idle autosave on every app open.
+
+## "Which month's budget?" is a question only `planForMonth` can answer (2026-07-31)
+
+A month's budget is a whole *plan record* reached through the `monthlyPlans`
+mapping, and `removePlanForMonth` tombstones only the mapping — the plan record
+lives on. So `data.plans` accumulates orphans, several of which carry the same
+`name`/`month` label ("June 2026") because `clonePlanForMonth` overwrites both
+with the destination label.
+
+Both copy pickers listed those records. That made the source list simultaneously
+too long (orphans indistinguishable from the live plan) and too short (a
+carry-forward month has no record at all, so it couldn't be picked). Users
+picked a plausible twin and got different numbers.
+
+The fix is to make the picker ask the same question the tab asks: enumerate
+*buckets* and resolve each through `planForMonth`. **If a view renders through
+a resolver, anything that offers to copy that view must go through the same
+resolver** — otherwise the list and the thing it claims to describe drift apart.
+
+## An id that resolves to nothing should fail, not fall back (2026-07-31)
+
+`clonePlanForMonth` did `plans.find(p=>p.id===sourcePlanId)||plans[0]` and then
+stamped the requested `owner` on the result. When the id didn't resolve — a
+plan soft-deleted locally, or tombstoned by a sync from another device — it
+copied the *global* first plan, frequently the other owner's, and the output
+looked entirely legitimate. Same shape at the Expenses-tab caller.
+
+A silent fallback is only safe when the fallback is *equivalent*. Here it was
+arbitrary. Returning `null` and doing nothing is strictly better than
+fabricating a plausible wrong budget.
+
+Related, in the same function: `source.groups.map(...)` had no null guard,
+and `migrate()` guarantees neither `groups` nor `categories`. The throw
+happened *before* `setData`, so the failure mode was "the button does
+nothing" — no error, no copy. Guard array access on any record shape
+`migrate()` doesn't backfill.
+
+## A category's `amount` is manual only while it has no subs (2026-07-31)
+
+`effectiveAmt` reads the sub sum the moment `subs.length > 0`, so `c.amount` is
+a cache in that state and a user-entered figure otherwise. Every path that
+changes whether a category *has* subs is therefore a path that can silently
+destroy or resurrect money:
+
+- **Emptying a category** — `syncAmt` returns the category untouched at zero
+  subs, so the last sub-sum stays in `amount` and becomes live again as a
+  manual value. The move feature zeroes it explicitly.
+- **Filling an empty category** — the manual amount stops being read at all.
+  Moving SAR 820 into a manual SAR 4,200 "Bills" made it SAR 820. The move
+  feature seeds a sub named after the category to carry the old amount, so the
+  total is 5,020 as the preview promises.
+
+The same trap exists on "Add sub-item" (adding the first sub drops the manual
+amount to whatever you type). That is long-standing behaviour that users may
+be relying on as a way to re-plan a category, so it was left alone — but any
+*new* code path that changes sub count must decide this question explicitly.
+
+## Sub-items have no external references, so moving one is free (2026-07-31)
+
+Before building the move feature, every reference to a sub id was traced: there
+are none outside the `subs` array itself. Expenses (`catId`), targets
+(`categoryAlloc`), envelopes, quick transfers, per-envelope trends and Home's
+spending cards all key on the **category** id; `savingsInvestingFor`,
+`homeSettings.savingsCategories` and `investTarget.groupNames` key on **names**.
+
+A sub is a pure arithmetic breakdown of its category's amount. That's what made
+plan-wide multi-select cheap — no remapping, no migration, one `setCatsFor`.
+It's also worth re-checking before anything starts storing a sub id, because
+that assumption is currently load-bearing.
+
+## A grep for `type="number"` cannot find every numeric input (2026-07-31)
+
+The v1.5.1 sweep converted 38 fields to `NumField` and verified "zero
+`input[type=number]` in the live DOM" — but two fields survived: the trade
+modal built its inputs from an array,
+`[["date","Date","date"],["shares","Shares","number"],…].map(([k,label,type])
+=> <input type={type} …>)`. The literal string never appears in the source, and
+the DOM check passed because the modal was closed when it ran.
+
+Two lessons, both now in `CLAUDE.md`: grep for `<input type={` as well as the
+literal, and when auditing modal contents, open the modal first — a DOM sweep
+only sees what is mounted.
+
+## Collapsed rows are for scanning; the chevron is for editing (2026-07-31)
+
+The Investments account cards were the strongest case yet for the split first
+made in Budget: an MP2 card rendered ~10 stacked blocks, ~300px, every field
+permanently in edit mode. You cannot skim a list of accounts when each one is
+a form.
+
+The rule applied across Budget, Home Goals and now Investments: **the
+collapsed row carries what you scan by; everything you occasionally change
+lives behind the chevron.** Two constraints keep it honest:
+
+- **Anything needing action stays visible.** A matured Time Deposit shows
+  "Matured — confirm it" in red on the collapsed row, because hiding a
+  call-to-action behind a chevron means it never gets done.
+- **Validation errors surface as a marker on the collapsed row** (a red `!`).
+  Collapsing must never make a broken record look fine.
+
+## One composition chart, parameterised (2026-07-31)
+
+Investments needed the same "what's driving it" chart Net Worth got a build
+earlier. Rather than copy it, `CompositionRangeChart` gained a `series` prop
+with dot-path keys, so Net Worth passes banks/investments/assets/liabilities
+and Investments passes `byType.{stocks,mp2,td,gold}`.
+
+This also let the standalone "Gold value over time" card be deleted — gold is
+one band of the composition, which is more useful than an isolated line and
+one card shorter. The `negate` flag (rather than a hard-coded liabilities
+check) is what keeps the separate-stack rule general: any series can be sent
+below the axis, and only Net Worth currently uses it.
+
+## Net Worth's second chart answers a different question (2026-07-31)
+
+The tab had two charts of net worth over time — one from daily `snapshots`,
+one from monthly `history` — stacked on a single screen. The user read this as
+"boring and repetitive", which it was: a second view of the same number adds
+nothing except height.
+
+The replacement had to justify its own space, so it answers the follow-up
+question the first chart provokes: *it went up — because of what?* Every
+snapshot already stores `banks`, `investments`, `assets` and `liabilities`
+alongside `net`, so a composition-over-time chart needed no new capture and no
+schema change. It reuses `RANGES`/`bucketSnapshotsForRange` rather than
+inventing a second range mechanism, so both charts' pills behave identically.
+
+Rejected: deleting the second chart outright. The card it lived in also owns
+the snapshot management UI (force refresh, add past entry, delete chips), so
+the card had to stay; leaving it chartless would have been a straight
+subtraction rather than an improvement.
+
+**Stacking gotcha, recorded because it looked right and wasn't.** Negating
+liabilities and giving them the *same* `stackId` as the assets makes Recharts
+accumulate: the debt band draws downward from the top of the asset stack, so
+the visible top edge is gross assets and the band's lower edge is net worth.
+The arithmetic is right, the reading is wrong — and it contradicted the card's
+own caption. Liabilities now get their own `stackId`, putting assets above the
+axis and debt below it. Worth remembering generally: with mixed signs in
+Recharts, a shared stack id means "sum these", not "draw these on opposite
+sides".
+
+Series that are zero across the whole range are dropped from the chart and the
+legend, so a household with no liabilities doesn't carry a permanent zero
+entry — the same "don't render something with nothing to say" rule the Home
+trend cards follow.
+
+## Home's Goals card lists every goal, capped (2026-07-31)
+
+Showing a single goal was a deliberate earlier choice — the schema has no
+priority field, so the card picked the goal closest to completion as a proxy.
+In practice that was the wrong trade: with two goals you only ever saw one,
+and a third would have changed which one appeared rather than showing more.
+Reversed: every active goal gets a compact row.
+
+The interesting constraint is that Home is a dashboard, so "show everything"
+and "stay glanceable" pull against each other. Resolution:
+
+- **Cap at 4 rows + "+N more goals".** Bounded height, and nothing is hidden
+  without saying so. An uncapped list recreates exactly the runaway-scrolling
+  problem just fixed on Budget; an inner scroll region was rejected as fiddly
+  on a phone and used nowhere else in this app.
+- **Ordering stays derived** (closest to completion first) rather than adding
+  a `priority`/`order` field. A new schema field would need a `migrate()`
+  default, conflict-merge behaviour and UI to set it — a lot of machinery for
+  ordering four rows on one card.
+- **Completed goals stay a header count.** They need no action; a dashboard
+  card should spend its vertical space on what does.
+- **Bars, not rings.** Rings match the Goals tab, but a name under a 48px ring
+  truncates to ~7 characters, and a wrapped block of rings is harder to scan
+  than a list. Bars also reuse `liquidFillBg()`/`.liquid-fill`, the progress
+  language already used in four other views.
+- **Owner suffix only in Household.** Both people have an "Emergency Fund", so
+  merged rows were ambiguous — but on a single profile the owner is implied and
+  the suffix would just be noise competing with the name for width.
+
+## Home answers questions; it does not display figures (2026-07-31)
+
+The redesign brief was six questions, not six cards — and four of the six
+already *had* cards. What was missing was the judgement: every card showed a
+number and left the user to decide whether the number was good. So the change
+is one shared `Verdict` line per card rather than new cards or new charts.
+
+Three judgement calls in the verdicts themselves:
+
+- **Spending is judged on pace, not on percentage used.** "60% of budget
+  used" is meaningless without knowing where you are in the period. The
+  verdict projects the current burn rate to the period end using
+  `bucketProgress`, and only then decides. It stays silent for the first two
+  days: a single large shop on day 1 projects to a disaster and would make
+  the card cry wolf every period, which trains you to ignore it.
+- **Goals are judged on movement, not lateness.** The goal schema has no
+  target date to be late against (dated projections live in TargetsView), so
+  the honest question is whether anything is carrying a goal forward — i.e.
+  whether `monthly` is set. A goal with no monthly amount will look identical
+  next month, and that is what the verdict says.
+- **"Saving enough" required inventing a benchmark.** There was no target in
+  the data model, and a rate with nothing to compare against cannot answer
+  the question. `data.settings.savingsTargetPct` (default 20) is that
+  benchmark — deliberately in `data.settings` per the convention for
+  calculation-affecting toggles, and deliberately display-only.
+
+## Trend cards ship dark rather than showing "not enough data" (2026-07-31)
+
+Two of the six questions — lifestyle creep and savings improvement — need at
+least three completed periods. Expense tracking here began July 2026, so both
+cards were written, tested, and then shipped rendering **nothing**.
+
+The alternative, a card reading "not enough data yet" until October, is
+exactly the decoration the redesign set out to remove; the user had already
+rejected that shape when it was offered as an option. They self-activate at
+`MIN_TREND_BUCKETS`.
+
+Two consequences worth knowing:
+
+1. **They cannot be verified by looking at the app**, so they are covered by
+   `trendtest.cjs` instead — real functions sliced out of `index.html` and run
+   under `vm`, plus a one-off synthetic-history injection to watch them render.
+   That is weaker than production data; re-check when they light up.
+2. **A null card must not leave a grid gap.** Because these cards decide for
+   themselves whether they have anything honest to say, `HomeView` cannot know
+   in advance whether a wrapper is needed. `.home-cell:empty{display:none}`
+   makes the wrapper follow the card instead of duplicating its conditions —
+   which also covers any future self-suppressing card.
+
+The history helpers deliberately reuse `trackedSpendingFor` and
+`savingsInvestingFor` with an added optional `bucket` argument rather than
+growing a parallel per-month reduce, so a past period can never be scored by a
+different rule than the current one. The in-progress period is excluded for
+the same honesty reason: a period four days old always looks like a spending
+collapse, and comparing against it would report an improvement that is not
+real.
+
+## What stays on a Budget row, and what goes behind the chevron (2026-07-31)
+
+The category row had to shrink from three wrapped lines to one, so something
+had to leave it. The deciding question was **what gets touched monthly**, and
+the answer needed the user's own terminology decoded first: their
+"5 categories with 21 subcategories" is the app's *5 groups and 21 category
+rows*, not the app's `subs` feature. So the monthly sweep edits **category-row
+amounts** — those stay on the row, along with the name you scan by.
+
+Moved into the panel: the Tracked toggle and Delete. Both are occasional, and
+critically **the row already signals tracking state without the pill** — an
+untracked category renders its name italic and greyed, which was verified
+rather than assumed. So the pill was redundant with styling that was already
+there.
+
+Dropped below 768px: the per-row `%` and the currency code. Both are
+duplicated elsewhere (the "Where your income goes" card; the group total and
+income line), and together they were worth ~70px of category-name width —
+the difference between "Long Term Savings" fitting and truncating.
+
+Rejected alternatives:
+- *Collapse categories by default.* This was the original plan until the user
+  said they "sweep through and touch most of them each month" — collapsing
+  would have added a tap to the exact task being complained about.
+- *Two lines, nothing moves.* Safe, but leaves a 40px near-empty control
+  strip under every category and only reaches ~3,520px instead of 2,777px.
+- *One line with everything visible* (icon-only Tracked, no %). Same height,
+  but squeezes names to ~98px so they truncate mid-word while scanning —
+  which defeats the point of a list you navigate by name.
+
+## `overflow-x:hidden` belongs on `<html>`, never on `<body>` (2026-07-31)
+
+Worth recording because it silently disables a whole CSS feature. `html,body
+{overflow-x:hidden}` looks symmetrical and harmless, but per spec an element
+with `overflow-x:hidden` and `overflow-y:visible` computes its y axis to
+`auto` — so `body` became a **scroll container** reporting `hidden auto`.
+Every `position:sticky` descendant then resolved `top:0` against body's
+scrollport, which is the full document height, so sticky never engaged.
+
+The root element's overflow propagates to the viewport, so `html` alone still
+clips horizontal overflow — the rule simply does not belong on `body`. The
+first sticky group-header attempt appeared to "just not work" with no error
+and no clue in the markup; the giveaway was walking the header's ancestor
+chain and finding body's computed overflow.
+
+## Five tabs in a bottom bar, five behind More, one retired (2026-07-30)
+
+Which tabs are primary was decided from **actual weekly use**, not from what
+the data model contains. The user named Home, Budget, Expenses, Investments
+and Net Worth as their weekly tabs, then added Banks back as a priority —
+six candidates for five slots.
+
+**Net Worth lost the slot**, because Home's whole job is now answering "how
+rich am I", which makes the Net Worth tab a drill-down rather than a daily
+destination. Home already links into it (`onOpen={()=>setTab("networth")}`),
+as it does for Goals, so demoting both cost nothing in reachability.
+
+Rejected alternatives:
+- *Six tabs in the bar.* 65px cells at 390px; it fits, but it breaks the
+  five-max convention and leaves no room for a More affordance.
+- *Demoting Investments instead.* Net Worth already includes investments in
+  its totals, so on paper Investments is the detail view — but it is also the
+  tab with the most content, and the user opens it weekly.
+- *Demoting Banks.* Briefly considered and reversed: `UpdateBalanceSheet` had
+  just shipped (v1.5.0) specifically to make bank balances easy to update, so
+  putting Banks two taps deeper would have undone that work days later.
+
+**Forecast was retired to nowhere, not to More.** The user asked for the tab
+gone but the code kept. It now has no nav entry at all, which means
+`TargetsView` is unreachable from the UI while `data.targets` still syncs,
+still merges, and still appears in Recently Deleted. That is deliberate: a
+`HIDDEN_TABS` list documents it, and restoring the tab is a one-line change
+if it is ever wanted back. Deleting the view would have orphaned saved
+records and meant a `CONFLICT_COLLECTIONS` change for no user-visible gain.
+
+**A section title was added above the tab content.** Bottom bars label
+destinations in ~10px type, which is enough to navigate by and not enough to
+stay oriented by after scrolling — the old top nav doubled as a "you are
+here" marker, and removing it would have lost that for free.
+
+## What "more graphical" turned out to mean (2026-07-30)
+
+Worth recording because it changed the plan: the user's opening ask included
+"more graphical, but the right amount." Every time that was probed they named
+a *question* they wanted answered — how rich am I, is my lifestyle creeping,
+am I overspending — and never a visual they wanted added. Offered a concrete
+new chart (balance-over-time on Banks) they declined it as something they
+would only scroll past.
+
+So the goal was restated as **"Home doesn't answer these questions, so it
+reads as decoration"**, and "add charts" was dropped as an objective. Charts
+are justified per-question from here on. The existing distribution supports
+this reading: Investments already has five charts and Bills/Banks/Currency
+have none, so a global "more graphical" instruction would have been aimed at
+the wrong places anyway.
+
+## One `NumField`, not 32 local fixes (2026-07-30)
+
+The controlled-`type="number"` bug (`Number("")===0`, so a cleared field
+writes `0` back) existed at 32 call sites. Options considered:
+
+1. **Patch each site** with a local string-draft `useState`. Rejected — the
+   app already had this pattern hand-rolled at six sites (Budget cat/sub,
+   Household, Bills, Banks) with three slightly different spellings of the
+   same `onBlur`/`onKeyDown` pair, and none of them had select-on-focus. More
+   copies meant more drift.
+2. **Uncontrolled inputs with `defaultValue` + `onBlur`.** Rejected — several
+   fields are driven from outside (a cloud sync pull, a month switch in
+   Budget, a profile toggle), and an uncontrolled input would keep showing a
+   stale figure after those.
+3. **One `NumField` component.** Chosen. It also let the six hand-rolled
+   sites collapse into the same component, which is how `BillsView` lost its
+   `openingDraft` state and resync effect.
+
+Three judgement calls worth recording:
+
+- **Blur-on-empty restores the previous value rather than writing 0.** An
+  emptied box is almost always mid-edit, not an assertion that the figure is
+  zero. Writing `0` is the behaviour that caused the original complaint. To
+  actually set zero you type `0`. Fields where "unset" is genuinely distinct
+  from "zero" pass `allowEmpty` and commit `""`.
+- **`live` exists only because of `disabled={!valid}` submit buttons.** A
+  blur-only commit is better everywhere else (it avoids writing junk to the
+  data model on every keystroke, which the old Budget rows did — they stored
+  the raw *string* mid-typing). But a disabled button doesn't reliably fire
+  the field's blur when tapped, so a blur-only commit in the MP2/TD modals
+  would leave a filled box next to a dead button. The currency converter uses
+  `live` for the same class of reason: its result is rendered outside the
+  field.
+- **Clamping is opt-in per field, and karat is deliberately unclamped.** The
+  gold card renders "Karat must be between 1 and 24" as a validation message;
+  clamping on commit would make that message unreachable and silently rewrite
+  the user's entry instead of telling them it was wrong.
+
+## Two fingerprints: one for "are the bytes different", one for "did a person change something" (2026-07-30)
+
+`fingerprint()` was doing two incompatible jobs. For conflict detection and
+the sync baseline, raw bytes are exactly right — auto-captured `history`/
+`snapshots` rows genuinely need to merge across devices, and a comparison that
+ignored them would let one device's snapshot history silently replace
+another's on the `localFP===remoteFP` fast path. But for the *dirty flag*, raw
+bytes were wrong: a background quote refresh recomputes derived history and
+snapshot rows, which made merely opening the app look like an edit and spend a
+Cloudflare KV write.
+
+Three options were considered:
+1. Make `fingerprint()` itself ignore auto rows. Rejected — it would change
+   conflict semantics, and the `localFP===remoteFP` branch keeps local
+   wholesale, so a remote device's snapshot rows for days this device never
+   saw would be dropped.
+2. Keep a second parallel *fingerprint string* baseline
+   (`lastCloudUserFPRef`) alongside `lastCloudSnapshotRef`. Rejected — it
+   would need setting at all five places the baseline is assigned, plus a new
+   field in `syncMeta` for the reload path. Five chances for the two baselines
+   to drift apart.
+3. **Chosen**: keep one baseline, and compare against the last-synced *data
+   object*, which the app already caches for `PendingChangesModal`
+   (`LAST_SYNCED_DATA_KEY`). `userFingerprint(local) !== userFingerprint(base)`
+   needs no new persisted state at all — just an in-memory memo of the parsed
+   object so the 450ms-debounced check isn't re-parsing the dataset.
+
+The dirty flag requires *both* conditions. If no baseline object is cached yet
+(brand-new device), it falls back to the plain byte comparison — under-
+reporting a real pending edit is the one failure mode worth avoiding
+absolutely, so the ambiguous case errs toward "dirty".
+
+`auto:true` is the discriminator because the two background effects already
+stamped it, and the manual paths (`captureSnapshot`, `addPastSnap`) already
+didn't. No migration was needed.
+
+## Bank balances get an Add/Subtract/Set sheet rather than a smarter inline field (2026-07-30)
+
+The inline balance input supported math expressions (`evalMathExpr`), so
+`12400+500` already worked in principle — but on a phone you still had to
+select the existing text, delete it, and retype the whole thing first, which
+is the actual friction. Options weighed were: inline `+`/`−` buttons (fast for
+deposits, but leaves no "replace" affordance, so the cumbersome path survives
+for corrections); a single signed field where `+500`/`-120`/`12900` infer the
+operation (fewest controls, but a dropped sign silently *replaces* a balance
+instead of adding to it); and a per-account adjustment audit log mirroring
+`billAdjustments`.
+
+Chose the explicit three-mode sheet: the mode is never inferred, and the
+running preview shows the exact figure to be written before it's committed, so
+a wrong mode or a mistyped amount is visible rather than destructive. It also
+adds no fields to the data model, so it can't affect sync or merge behaviour —
+the audit-log variant would have needed a `migrate()` default and a new
+id-keyed collection. That remains the right follow-up *if* an audit trail is
+actually wanted; this sheet is a strict subset of it.
+
+## Household Bills — a layer on top of Household, not a second budget (2026-07-28)
+
+### Bills has no independent item setup by design
+The brief was explicit: Bills must not duplicate bill definitions. So
+`data.bills` records only ever reference an existing `household.expenses`
+item (`itemId`/`itemName` snapshot) — there's no "add a bill" flow in the
+Bills tab itself, only a `trackInBills` toggle on the Household item. This
+keeps Household as the single place a bill's name/amount/existence is
+edited, matching the existing convention that Household is a thin
+bill-splitting ledger, not a second parallel budget module.
+
+### Monthly bill records are snapshots, not live references
+`allocated` is copied from the Household item's `amount` at generation
+time and never re-read afterward, even if the Household amount changes
+mid-month or in later months — otherwise editing this month's rent in
+Household would silently rewrite January's already-closed Bills history.
+This is the same "snapshot now, never re-derive" pattern the app already
+uses for MP2 dividend-rate-at-contribution-time and TD maturity snapshots.
+
+### Bills Reserve is a formula over three additive sources, not a single mutable counter
+`computeBillsReserve(data) = openingReserve + Σ(allocated−paid) + Σ(adjustment
+amounts)`, recomputed on every render rather than stored as a running
+total. A stored running total would need a mutation path for every one of
+{generate month, edit paid amount, edit status, adjust reserve, edit
+opening reserve} to stay consistent, and any missed path (or a merge from
+another device) would silently desync it from its own history. Deriving it
+purely from `bills`+`billAdjustments`+`openingReserve` means it's always
+correct by construction and the merge logic never has to reconcile it
+directly — only the underlying arrays need id-based merging (already a
+solved problem via `mergeArrayById`).
+
+### "Adjust Bills Reserve" logs a delta, never a raw overwrite
+The UI accepts a target balance, but what's actually written to
+`billAdjustments` is `newBalance - computeBillsReserve(data)` at save time,
+computed inside the `setData` updater (not from a stale render-time
+closure) so a rapid double-edit or a value that changed via sync between
+opening the sheet and confirming still produces a correct delta rather
+than double-counting or silently dropping the difference.
+
+### Opening Bills Reserve is directly editable, adjustments are audit-logged — deliberately different UX
+The brief distinguishes "one-time baseline the user sets once" from
+"corrections that must leave a trail." Making the opening-reserve field a
+plain inline number input keeps setup fast (no dialog for what's usually
+a single edit before first use); routing every later correction through
+the `AdjustReserveSheet` (prevBalance/newBalance/amount/date/note, all
+persisted to `billAdjustments`) satisfies "every manual adjustment must be
+recorded" without also forcing a friction dialog on initial setup.
+
+## Home Dashboard redesign — Phase 4 (2026-07-28)
+
+### Savings & Investing categories are matched by name, not id
+Budget categories get fresh ids whenever a plan is cloned into a new month
+(`clonePlanForMonth`), but a user thinks of "Savings (Seabank)" as the same
+category every month. Storing selected category **ids** in
+`data.homeSettings` would silently stop matching the moment the current
+month's plan is a clone rather than the original. Name is the only thing
+stable across a user's mental model of "the same category," so
+`savingsInvestingFor()` resolves names → this month's actual ids at call
+time, per owner, per bucket — same tradeoff `trackedSpendingFor()` already
+lives with for tracked/untracked category behavior.
+
+### Savings & Investing is deliberately a second, unreconciled "investing" concept
+BudgetView already has `data.investTarget` — a per-owner *group*-based
+"Invest & Grow" threshold measured against **budgeted** (allocated) amounts.
+The roadmap explicitly asked for a Home card driven by **actual** money
+moved, at **category** granularity, chosen independently of that existing
+target. Rather than trying to unify the two (different granularity: group
+vs. category; different basis: allocated vs. actual-spent; different
+audience: Budget-tab power users vs. a glanceable Home summary), this phase
+left `investTarget` untouched and added `data.homeSettings.{savingsCategories,
+investmentCategories}` as a parallel, Home-only setting. They can disagree
+(e.g., a category inside the "Invest & Grow" group not also picked as a
+Home "investment category") — that's accepted as a known limitation rather
+than solved by a forced merge that neither feature actually asked for.
+
+### Expenses' category filter gained array support instead of a new prop-driven UI
+The spec wants every Home card's tap-through to open its detail page already
+scoped (Savings & Investing → Expenses filtered to the selected categories).
+Expenses' `filterCat` state was a single id/`"all"` dropdown with no external
+entry point. Redesigning Expenses' filter UI was explicitly out of scope for
+this phase, so instead: (1) `filterCat` now also accepts an array of ids —
+one extra branch in the existing `allFiltered` filter and one synthetic
+`"__multi__"` `<option>` in the existing `<select>` so it doesn't render an
+invalid value — and (2) a one-shot `{catNames,nonce}` request object
+(`expensesFilterRequest`, owned by `App()`) tells `ExpenseTrackerView` which
+category *names* to resolve into that month's ids and apply, on mount/nonce
+change. Expenses' own filtering UI, log-grouping, and transaction logic are
+otherwise unchanged.
+
+### Card visibility over drag-to-reorder
+The roadmap marked custom card order "optional if lightweight." A real
+reorder control (drag handles, persisted index array, interaction with the
+fixed mobile-vs-desktop `order`/`grid-column` CSS per breakpoint) is not
+lightweight once it has to survive both layouts without breaking the
+row-pairing (Portfolio+Savings, Tracked Spending+Goals) the desktop grid
+depends on. Show/hide per card (`data.homeSettings.cardVisibility`) covers
+the practical want ("I don't care about Goals on Home") without that
+complexity; order stays fixed and CSS-driven, same as before this phase.
+
+## Investment module redesign — Phase 3 (2026-07-28)
+
+### Gold ticker is `GC=F`, not `XAUUSD=X` — verified by testing against the live Worker, not assumed
+The brief said "use a market gold price provider already compatible with the
+project's existing cloud/API architecture" — the existing Worker already
+proxies arbitrary tickers to Yahoo Finance's chart endpoint for stocks, so
+the obvious zero-new-infrastructure move was to feed it a gold ticker
+instead of adding a new provider. `XAUUSD=X` (the FX-style spot-gold symbol)
+was tried first as the more "obviously spot price" option, but a direct
+`fetch()` against the deployed Worker returned an empty quote object for it.
+`GC=F` (COMEX gold futures, the conventional Yahoo Finance proxy for spot
+gold pricing) was tested the same way and returned a live price. Decision:
+use `GC=F`. This was caught *before* shipping by testing against the real
+Worker in the browser sandbox rather than assuming the symbol would resolve
+— a reminder that "the same API architecture" doesn't guarantee "the same
+ticker format" for a different asset class.
+
+### Purity entered as karat, not a raw 0–1 fraction
+Gold purity is conventionally quoted/sold in karats (24K, 22K, etc.), not as
+a percentage or decimal fraction — asking the user to type "0.9167" instead
+of picking "22K" (or typing a custom karat number) would be translating
+their mental model into the app's internal representation for no reason.
+`goldValuation()` converts `karat/24` to a fraction internally; the stored
+field (`hld.karat`) and the UI both stay karat-native. `purityType` ("24k"/
+"22k"/"custom") only drives which UI is shown (a fixed label vs. an editable
+number) — it doesn't feed the valuation math directly, `karat` does.
+
+### Gold priced through the same `investmentValueSar()` dispatch, not a parallel reduce
+Consistent with the Phase 2 decision for MP2/TD: every new investment type
+adds a branch to the one shared valuation function rather than a bespoke
+reduce living in `PortfolioCard`/`InvestmentsView`/Home separately. This is
+why gold "just worked" in Net Worth, Home's Investments card, and Asset
+Allocation the moment the branch was added — no additional plumbing needed
+in any of those call sites.
+
+### New `data.snapshots` array, additive — not a replacement for `history`/`portHistory`
+The brief asked for daily/weekly/monthly progressive history with per-type
+breakdowns and range-selectable charts — a genuinely different shape and
+cadence than the existing monthly-only, whole-household-only `history`
+(Net Worth) and `portHistory` (Portfolio) arrays, which also serve a
+*different* purpose (manual past-entry logging, MoM-%-since-last-snapshot
+stat) that still works fine and wasn't asked to change. Rather than
+migrating those into the new shape (real risk of losing a user's manually-
+entered historical entries, or subtly changing the MoM stat's behavior),
+`data.snapshots` was added as a third, independent array. The two systems
+never read each other; `HistoryRangeChart` only ever reads `snapshots`.
+Revisit only if the duplication (two "history of net worth" concepts)
+becomes confusing enough to warrant a deliberate migration — not attempted
+here since the brief's scope was "add snapshots," not "replace history."
+
+### One snapshot record holds both Net Worth *and* Portfolio figures, per profile
+Rather than two separate arrays (one for Net Worth snapshots, one for
+Portfolio snapshots) that would always be captured at the same moment for
+the same profile anyway, `data.snapshots` rows carry `net`, `investments`,
+`banks`, `assets`, `liabilities`, and `byType` all in one record keyed by
+`{date, profile}`. `HistoryRangeChart` just points at whichever `field` a
+given tab cares about (`net` vs `investments`). This avoids two arrays that
+would always grow, compress, and merge in lockstep with each other.
+
+### Progressive retention compresses on every write, not on a scheduled job
+`compressSnapshots()` runs synchronously inside the same `setData` update
+that appends/updates today's row — there's no separate cron-like sweep.
+This works because the arrays stay small by construction (a handful of
+profiles × at most ~35 daily + ~52 weekly + a few hundred months, tops) so
+the compression pass costs nothing measurable; a background job would be
+solving a problem that doesn't exist at this scale, and would be one more
+thing to keep synchronized with the write path.
+
+### Bucketing for chart ranges takes the *last* snapshot per bucket, never averages
+`bucketSnapshotsForRange()` (feeding `HistoryRangeChart`) downsamples a
+range's snapshots to one point per day/week/month by picking the latest
+snapshot in that bucket, not an average. Every stored snapshot value is
+already a real point-in-time truth (a snapshot of that day's actual
+computed Net Worth/Portfolio) — averaging would fabricate a number that was
+never actually true on any given day. This mirrors `compressSnapshots()`'s
+own retention logic (also last-in-bucket, not averaged) for consistency.
+
+### Home Portfolio card's mini trend now plots real per-profile data, replacing the Household-only `portHistory` fallback
+Phase 1 left an explicit known gap: `portHistory` was whole-portfolio-only,
+so Me/Wife profile views on Home showed no trend chart at all (documented
+in Phase 1's decisions as "future phase captures per-owner history"). Phase
+3's daily per-profile `data.snapshots` closes this gap directly — no design
+change needed, just swapping `PortfolioCard`'s data source. Kept the card
+visually compact per the brief (no range selector on Home — that's reserved
+for the full Net Worth/Investments tabs).
+
+## Investment module redesign — Phase 2 (2026-07-28)
+
+### Confirmed vs. estimated: two independent walks, not one walk that "switches"
+`mp2Valuation()` computes confirmed and estimated dividends as two separate
+calls to `mp2GrowContribution()` per contribution — one whose rate-lookup
+returns `null` for any undeclared year (confirmed), one that falls back to
+the projection rate for those same years (estimated). This was chosen over a
+single walk that compounds with "whatever rate is available, tagging each
+year as confirmed or not" because in **compounded** mode that single-walk
+approach would let an undeclared year's *projected* growth compound into a
+*later* year that does get an official rate declared — silently baking
+projected money into a number labeled "confirmed." Two independent walks cost
+roughly double the arithmetic (trivial at this scale — a handful of
+contributions, one MP2 account per person) in exchange for confirmed value
+never depending on anything but declared rates, full stop.
+
+### MP2 declared rates: one shared table, not per-account entry
+`data.mp2DividendRates` is a single top-level array (one entry per year),
+not a per-account field, because Pag-IBIG declares one official rate per
+year for everyone — duplicating that entry across every MP2 account would
+mean updating N places for the same fact and risking them drifting apart.
+`acc.rateOverrides` (a small `{year: rate}` map) exists as the explicit
+escape hatch for the rare case an account's rate genuinely differs (the
+brief: "reused by all MP2 accounts unless explicitly overridden").
+
+### Annual-payout mode dividends are a receivable, not auto-compounded, and paying them out zeroes them from the account's own value
+For `payoutMode:"annual"`, `mp2GrowContribution()` is called with
+`compound:false` — each year's dividend is tracked but never added back into
+the base that grows. Recording a payout (`recordMp2Payout`) subtracts that
+paid amount from the account's own confirmed/estimated value (the `paid`
+term in `mp2Valuation`) exactly because that money, once recorded received,
+either sits in a bank balance already counted elsewhere or is simply no
+longer "inside" the MP2 account — leaving it in both places would
+double-count real money the same way Phase 1 was careful not to double-count
+goal contributions against bank balances.
+
+### Time Deposit "closed" values at $0, not just "matured"
+A TD has three statuses: `active` (still accruing, valued via the day-count
+estimate), `matured` (user has confirmed the bank's actual figures — valued
+at that confirmed figure, no longer an estimate), and `closed` (proceeds
+have been transferred to a bank via `transferTdProceeds`). Only `closed`
+drops to $0 in all totals — a `matured`-but-not-yet-transferred TD still
+represents real, uncollected money and must keep counting. This mirrors the
+MP2 annual-payout pattern above: the transition that actually moves money
+out (transfer/payout), not the transition that merely confirms a number, is
+what zeroes the source account's contribution to totals.
+
+### Labels changed from "Portfolio"/"stock portfolic" to "Investments"/"Total investments"
+Once MP2 and TD accounts can hold real value, continuing to call the
+combined figure "stock portfolio" (or its gain % a stock-style return) would
+misrepresent non-market-priced money as if it behaved like equities. The
+brief was explicit about this ("do not combine stock-market gains with MP2
+projections or Time Deposit interest into one misleading percentage") — the
+stock-only cost/gain/% stats were kept, just visually separated and labeled
+"stocks/ETF only," rather than removed, since they're still useful and
+already existed pre-Phase-2.
+
+### Generalizing the trades-only child-merge helper instead of writing a parallel one
+`mergeArrayByIdWithChild` (singular, used by goals→contributions) already
+existed and was reused as-is for nothing new; investments needed to merge
+*up to three* possible child arrays (`trades` for stocks, `contributions`
+and `paidDividends` for MP2) on the same parent record type, which the
+singular helper's signature couldn't express. Rather than duplicate its body
+with a different childKey, `mergeArrayByIdWithChildren` (plural) takes a list
+of `{key, tsOf}` specs and only merges a key when at least one side actually
+has it — so a stock's merge never gets a spurious empty `contributions: []`
+grafted on, and vice versa.
+
+## Investment module redesign — Phase 1 (2026-07-28)
+
+### The live app is `index.html`, not `app.jsx`
+`app.jsx` (repo root) is a stale, out-of-date single-file copy from an earlier
+iteration (no Home tab, no pay periods, no trade log). The actual shipped app —
+confirmed by checking file mtimes and by live-testing against the user's real
+synced data — is the single `<script type="text/babel">` block inside
+`index.html`. **Any future change to "the app" means editing `index.html`.**
+
+### "Household" is now a real investment owner, not just a Home-view aggregate
+Before this session, `"household"` only existed as a Home-tab-only pseudo-profile
+(`HomeProfileToggle`) that aggregated `"me"` + `"wife"` — there was no literal
+`household` value anywhere in stored data. Banks and goals still work this way.
+
+For investments, the brief explicitly requires a genuine joint-account owner
+(an investment really can be held jointly, unlike a goal or a named bank
+account). Decision: `investment.owner` accepts `"household"` as a real stored
+value. `investmentsForProfile(invs, "household")` returns *all* investments
+(not just ones tagged `"household"`), because Home's Household view is meant
+to be the combined view, and an investment tagged `owner:"household"` is
+already included in "all investments" — see the helper's own comment.
+
+This creates an intentional asymmetry with banks/goals (2-owner only). Don't
+"fix" this by adding a 3rd owner to banks/goals without a separate design
+decision — it wasn't asked for and changes the meaning of Home's existing
+Household toggle for those cards.
+
+### One shared valuation loop, filtered per call, not a single grouped pass
+`investmentsSarValue(list)` is the same reduce loop `invSar` always used;
+`invSarForOwner(owner)` just calls it again with `investmentsForProfile()`
+pre-filtering the list. This was chosen over refactoring into a single
+group-by-owner pass because:
+- The existing codebase's convention for banks/goals is already
+  "filter-then-reduce" per profile (see `BanksView`, `AssetAllocationCard`'s
+  goal filtering) — consistency over a one-off micro-optimization.
+- Only 2–3 owner buckets exist; a grouped pass would save one loop over a tiny
+  array (`invs` is a handful of holdings), not worth the abstraction.
+
+### `PortfolioCard` history chart: Household-only, not per-owner
+`portHistory` (`addPortSnap`) captures one whole-portfolio USD snapshot when
+prices are refreshed — it was never per-owner. Two options existed:
+1. Show the existing (unfiltered) history chart under every profile anyway.
+2. Only show it for the Household view; per-profile views show current-value
+   stats only.
+
+Chose (2): showing a whole-portfolio trend line under a filtered "Me"-only
+current value would silently mix two different scopes and mislead the user
+about that profile's actual growth. This is documented in-code as a known
+gap for a future phase (per-owner history capture), not implemented now —
+staying inside the "architecture only, no new calculations" scope of Phase 1.
+
+### Migration default: existing holdings → owner `"me"`, type `"stocks"`
+Every investment that existed before this change was, by definition, a stock/ETF
+holding belonging to whoever primarily used the Investments tab (Jastine/`"me"`
+per the brief). No other default was safe or inferable from old data, so
+`migrate()` sets both fields unconditionally when missing.
+
+### Testing methodology: sandbox copy instead of the real synced instance
+The app auto-connects to a live Cloudflare KV store via a token hardcoded in
+`index.html` (not per-device login) — even a fresh browser profile pulls the
+user's real financial data on load. Decision: never edit fields while
+connected to the real store during testing. Verification split into:
+1. A read-only pass against the real live data (safe: switching Home's profile
+   toggle only touches a local, non-synced React/localStorage preference —
+   confirmed by reading `budgetOwner`'s implementation before relying on this).
+2. A full read/write pass in a throwaway copy with `SYNC_TOKEN` overwritten to a
+   `"PASTE_"`-prefixed dummy (the app's own existing convention for "service
+   not configured" — see `PROXY_URL`/`FINNHUB_KEY`/`GOOGLE_CLIENT_ID` for
+   precedent), served on a different port for a clean `localStorage`.
+
+Future sessions testing this app in a browser should follow the same pattern —
+do not assume "fresh tab" == "safe to edit," because the sync token isn't
+tied to browser session/login state.
+
+---
+
+## Budget carry-forward chain, transaction entry order, pay periods to Settings (2026-07-31)
+
+### An unplanned month inherits the nearest PRECEDING month, not the base plan
+`planForMonth` used to resolve every month without its own `monthlyPlans`
+mapping to `activePlanId[owner]`. One plan therefore answered for the whole
+timeline, which had two consequences nobody had connected:
+
+1. **Planning ahead was impossible.** September could only ever show the base
+   plan. "Plan two months out, starting from what I planned for the month
+   before" had no expression in the data model.
+2. **Editing today silently rewrote history.** `editable=isNow||hasOwnPlan`
+   meant the current month edited the base plan *in place*, and every past
+   month without a custom copy rendered that same record — so changing this
+   month's grocery budget retroactively changed what last March displayed, and
+   Home's trend cards were comparing the current budget against itself.
+
+Now `resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans)` walks
+backwards to the nearest mapping at or before `mo`, falling back to
+`activePlanId` only when nothing precedes it. Both problems are the same bug
+and this is the single fix for both.
+
+Three behaviours in it are deliberate and commented in-source: a tombstoned
+mapping is *skipped* rather than terminating the walk ("remove this month's
+plan" means it goes back to inheriting); a mapping pointing at a soft-deleted
+plan is skipped and the walk continues (an older real plan beats a blank
+month); and calendar and pay-period keys interleave correctly under plain
+string comparison (`"2026-03" < "2026-03-28" < "2026-04"`), so after toggling
+pay periods a period inherits that month's calendar plan.
+
+`activePlanId` narrows in meaning: it is now the **root of the chain**, not
+"the plan the current month edits."
+
+### Copy-on-write through one choke point, not at each call site
+Every month is editable immediately; the first real change to a month with no
+mapping clones what it was previewing and applies the edit. The alternative —
+materialising a plan when you merely page to a month — would create a plan
+record for idle browsing and make `monthlyPlans` grow without user intent.
+
+All twelve budget mutators route through `editPlanForMonth(mo,owner,label,
+mutate)` rather than each deciding for itself. The by-plan-id mutators
+(`patchPlanById`/`setCatsFor`/`setGrpsFor`) were **deleted**, because taking a
+plan id means the caller has already made the copy-on-write decision — and for
+a carried-forward month that decision was invisibly "edit the plan every other
+month inherits." One mutator forgetting would be a silent data bug, so the
+decision now exists in exactly one place. `ExpenseTrackerView`'s `moveCat` is
+included: envelope order is array position inside the plan.
+
+Two implementation invariants:
+- **Clone and edit land in one `setData`.** A half-materialised month (mapping
+  written, edit not) renders as an empty custom budget for a debounce tick and
+  can be persisted that way.
+- **The no-op guard is load-bearing.** `NumField` commits whenever a draft
+  exists, including re-typing the same number. Without the guard, tapping an
+  amount in a past month and retyping it materialises a plan — the "paging
+  writes nothing" rule leaking one step downstream. The clone branch compares
+  against the *clone*, not the source: the clone legitimately has fresh ids
+  throughout, so comparing to the source would always differ.
+
+### Transaction order lives in fields, never in array position
+Expenses had no creation timestamp and no order field; `uid()` is
+`Math.random()`, so same-day rows sorted arbitrarily and *differently on each
+device*. Two new fields: `createdAt` (stamped once at insert, never
+re-stamped — that is what distinguishes it from `updatedAt`, which every edit
+bumps) and an optional `ord` for manual within-a-day placement.
+
+It has to be fields rather than array order because `mergeArrayById` re-sorts
+expenses by id on every sync and `fingerprint` canonicalizes with `sortedById`
+— an array-position order would be erased the first time two devices synced.
+Conversely, because `ord` *is* a record field, a reorder correctly marks the
+document dirty.
+
+`compareTxForDisplay` is one module-scope comparator used by both list sites,
+so the period log and the per-envelope list can't drift. **An unplaced row
+(no `ord`) sorts above every placed row of its day.** That single rule
+delivers two behaviours that would otherwise need separate handling: a
+transaction added after a day was reordered lands on top, and a transaction
+whose date is edited into a reordered day arrives at the newest position
+(`updateExpenseTx` deletes `ord` on a date change). So the *absence* of `ord`
+is meaningful and must never be defaulted to a number — including in
+`migrate()`, which backfills `createdAt` from `updatedAt` but never invents an
+`ord`.
+
+Reordering reuses the existing up/down-arrow modal pattern rather than
+drag-and-drop: there is no build step and no DnD library, and a hand-rolled
+touch drag would fight page scroll and the existing pull-to-refresh handler.
+It commits once on Done rather than per tap, because per-tap writes fight
+`setData`'s debounce.
+
+### The pay-period Home card was removed, not fixed
+The card prompted "has your salary arrived?" in a 5-day window around payday.
+It was wrong in both directions: noise for the overwhelmingly common case
+where salary arrived on time (it offered a "Hasn't arrived yet" button to
+someone who had already been paid), and **invisible in the case that actually
+needed it** — `ownerUsesPayPeriod` returns false when tracking is off, so an
+owner whose spending was being bucketed by calendar month against their will
+saw nothing at all. That was the real-world failure: an owner paid on Jul 30
+against an Aug 1 payday had no route to record it and re-dated transactions to
+Aug 1 by hand instead.
+
+Corrections moved to Settings → Pay periods, where they can be made at any
+time rather than only inside a window, and where the tracking toggle sits next
+to them. Toggling tracking now shows a `ConfirmDialog` quoting how many of that
+owner's logged expenses change bucket (computed by comparing `bucketKeyFor`
+under the current and trial configs) — in **both** directions, since the
+re-bucketing is symmetric.
+
+### `PERIOD_PENDING` deleted
+The `"pending"` sentinel made a period open-ended until salary was confirmed,
+and required two interactions on two different days. Saying "it started on the
+4th" after the fact expresses the same thing in one, so the sentinel is gone
+and `migrate()` sweeps `actualStarts` of any non-date value.
+
+The real win is that `periodRange` **no longer reads the clock**: a period's
+extent is now a pure function of `(key,cfg)`. Labels, lengths and bucketing no
+longer change at midnight, and the derived history/snapshot effects can't loop
+on a boundary that moves under them. `periodActualStart` always returns a date
+string, so no caller has to defend against `null`.
+
+Worth restating because it is the most misunderstood part of the feature: an
+override moves **two** boundaries — it is period K's start and period K−1's end
+— so a corrected period **stretches rather than slides**. Recording that August
+began Jul 30 makes August Jul 30–Aug 31 (33 days) and shortens July to
+Jul 1–Jul 29. It does not cascade; September still starts nominally. Periods
+are never pro-rated, so the daily allowance absorbs the length change. The
+Settings row shows the resulting range and day count for exactly this reason.

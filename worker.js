@@ -7,9 +7,9 @@
  *    Fetches Yahoo Finance server-side (no CORS issue), returns JSON.
  *
  * 2. KV DATA SYNC  (replaces Google Drive — no login ever required)
- *    GET  /sync          → returns { data, savedAt } from KV
- *    POST /sync          → body: { data, savedAt } — saves to KV
- *    GET  /sync/meta     → returns { savedAt } only (cheap conflict check)
+ *    GET  /sync          → returns { data, savedAt, rev } from KV
+ *    POST /sync          → body: { data, savedAt, rev } — saves to KV
+ *    GET  /sync/meta     → returns { savedAt, rev } only (cheap conflict check)
  *
  * Setup:
  *   In Cloudflare dashboard → Workers & Pages → your Worker → Settings → Bindings
@@ -64,40 +64,75 @@ export default {
       const KV = env.ALLOC_KV;
       if (!KV) return json({ error: "KV not bound — add ALLOC_KV binding in Worker settings" }, 500);
 
-      // GET /sync/meta — cheap timestamp-only check (used for conflict detection)
+      // GET /sync/meta — cheap metadata-only check (savedAt + revision number).
+      // Used by the client to decide, without downloading the full dataset,
+      // whether the cloud has moved on since the last time this device
+      // fully reconciled with it.
       if (path === "/sync/meta" && request.method === "GET") {
         const savedAt = await KV.get("savedAt");
-        return json({ savedAt: savedAt || null });
+        const revRaw = await KV.get("rev");
+        return json({ savedAt: savedAt || null, rev: revRaw ? parseInt(revRaw, 10) : 0 });
       }
 
-      // GET /sync — load full data
+      // GET /sync — load full data (+ the revision it corresponds to)
       if (request.method === "GET") {
         const raw = await KV.get("data");
         const savedAt = await KV.get("savedAt");
-        if (!raw) return json({ data: null, savedAt: null });
+        const revRaw = await KV.get("rev");
+        const rev = revRaw ? parseInt(revRaw, 10) : 0;
+        if (!raw) return json({ data: null, savedAt: null, rev });
         try {
-          return json({ data: JSON.parse(raw), savedAt });
+          return json({ data: JSON.parse(raw), savedAt, rev });
         } catch {
-          return json({ data: null, savedAt: null });
+          return json({ data: null, savedAt: null, rev });
         }
       }
 
-      // POST /sync — save full data
+      // POST /sync — save full data, gated by an optimistic-concurrency
+      // revision check.
+      //
+      // The client sends `rev`: the cloud revision it last fully
+      // reconciled with (i.e. the baseline its edits are built on top of).
+      // If that still matches KV's current revision, the write is accepted
+      // and the revision is incremented. If it doesn't match, someone else
+      // has saved in between — reject with the current server data + rev
+      // so the client can merge locally and retry, instead of blindly
+      // overwriting a change it never saw.
+      //
+      // Note: KV has no compare-and-swap primitive, so this is a
+      // read-then-write check, not a true atomic transaction — there is a
+      // narrow window where two requests could both read the same current
+      // rev before either writes. For a small number of devices saving at
+      // human typing speed (not truly simultaneous automated writers) this
+      // is a solid practical guarantee. A fully atomic version would need
+      // a Durable Object instead of plain KV.
       if (request.method === "POST") {
         let body;
         try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
 
         const incoming = body.savedAt || new Date().toISOString();
+        const clientBaseRev = Number.isFinite(body.rev) ? body.rev : 0;
 
-        // Conflict check: if KV has a newer timestamp than what the client
-        // thinks it last synced from, warn (but still save — client decides)
-        const kvSavedAt = await KV.get("savedAt");
-        const conflict = kvSavedAt && body.lastPulledAt && kvSavedAt > body.lastPulledAt;
+        const currentRevRaw = await KV.get("rev");
+        const currentRev = currentRevRaw ? parseInt(currentRevRaw, 10) : 0;
 
-        await KV.put("data",    JSON.stringify(body.data));
+        if (currentRev !== clientBaseRev) {
+          // Conflict: cloud moved on since the client's baseline. Hand back
+          // the current server state so the client can merge without a
+          // second round trip.
+          const raw = await KV.get("data");
+          const savedAt = await KV.get("savedAt");
+          let data = null;
+          try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+          return json({ ok: false, conflict: true, rev: currentRev, savedAt: savedAt || null, data });
+        }
+
+        const newRev = currentRev + 1;
+        await KV.put("data", JSON.stringify(body.data));
         await KV.put("savedAt", incoming);
+        await KV.put("rev", String(newRev));
 
-        return json({ ok: true, savedAt: incoming, conflict: conflict || false });
+        return json({ ok: true, conflict: false, savedAt: incoming, rev: newRev });
       }
     }
 
@@ -120,8 +155,14 @@ export default {
           );
           if (!r.ok) return;
           const data = await r.json();
-          const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-          if (price && price > 0) results[sym] = price;
+          const meta = data?.chart?.result?.[0]?.meta;
+          const price = meta?.regularMarketPrice;
+          // chartPreviousClose/previousClose come from the same chart-meta object
+          // Yahoo already returns for this endpoint — no extra request needed.
+          // Added so the client can compute a "today's gain/loss" line without
+          // fabricating anything (see index.html PortfolioCard).
+          const prevClose = meta?.previousClose ?? meta?.chartPreviousClose;
+          if (price && price > 0) results[sym] = { price, previousClose: (prevClose && prevClose > 0) ? prevClose : null };
         } catch (e) { /* skip */ }
       }));
 

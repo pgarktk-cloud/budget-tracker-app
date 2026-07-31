@@ -308,10 +308,6 @@ select{transition:background .22s;}
    wrapper has to follow the card rather than duplicate its conditions. */
 .home-cell:empty{display:none;}
 .home-cell>*{flex:1;min-width:0;}
-/* Correction prompt — order 0 puts it above the hero. It's absent except in a
-   window around a pay boundary, and it asks for an action, so it doesn't get
-   buried under the cards it would change the meaning of. */
-.home-grid>.cell-payperiod{order:0;}
 .home-grid>.cell-hero{order:1;}
 .home-grid>.cell-portfolio{order:2;}
 .home-grid>.cell-budget{order:3;}
@@ -325,7 +321,6 @@ select{transition:background .22s;}
 /* Mobile uses the floating + button instead (never both at once). */
 .home-grid>.cell-qa{display:none;}
 @media(min-width:768px){
-  .home-grid>.cell-payperiod{grid-column:span 3;order:0;}
   .home-grid>.cell-portfolio{grid-column:span 3;order:2;}
   .home-grid>.cell-savings{grid-column:span 3;order:3;}
   .home-grid>.cell-budget{grid-column:span 3;order:4;}
@@ -523,24 +518,36 @@ function useFlash(val,ref){
    negative top offset, then restoring scrollTo on close, is the fix that
    actually holds on iOS. Wired to every .sheet-bg instance in the app —
    confirmed working on the Add/Edit Transaction sheet, then rolled out. */
+/* Refcounted, because sheets nest: Settings holds a lock and can open the
+   pay-period date sheet (and a ConfirmDialog) on top of itself. With a
+   per-instance savedY the inner sheet's cleanup cleared body.style.position
+   while Settings was still open, and restored a savedY it had read as 0
+   (body was already position:fixed when it mounted) — the page jumped to the
+   top under a still-open modal. Only the OUTERMOST lock owns the scroll
+   position, so the counter and the Y both live at module scope. */
+let scrollLockCount=0,scrollLockY=0;
 function useScrollLock(active){
-  const savedY=useRef(0);
   useEffect(()=>{
     if(!active)return;
-    savedY.current=window.scrollY||document.documentElement.scrollTop||0;
     const{body}=document;
-    body.style.position="fixed";
-    body.style.top=`-${savedY.current}px`;
-    body.style.left="0";
-    body.style.right="0";
-    body.style.width="100%";
+    if(scrollLockCount===0){
+      scrollLockY=window.scrollY||document.documentElement.scrollTop||0;
+      body.style.position="fixed";
+      body.style.top=`-${scrollLockY}px`;
+      body.style.left="0";
+      body.style.right="0";
+      body.style.width="100%";
+    }
+    scrollLockCount++;
     return()=>{
+      scrollLockCount--;
+      if(scrollLockCount>0)return;   // an outer sheet still holds it
       body.style.position="";
       body.style.top="";
       body.style.left="";
       body.style.right="";
       body.style.width="";
-      window.scrollTo(0,savedY.current);
+      window.scrollTo(0,scrollLockY);
     };
   },[active]);
 }
@@ -926,12 +933,20 @@ const INVESTMENT_TYPES=[
    NOMINAL period key → the day that period really began:
 
      actualStarts: {"2026-08-28":"2026-08-24"}   // arrived four days early
-     actualStarts: {"2026-08-28":"pending"}      // hasn't arrived yet
+     actualStarts: {"2026-08-28":"2026-08-31"}   // arrived three days late
 
    The critical rule: **a period's KEY stays derived from `payday` forever.**
    Only its boundaries move. Keying by the real start would change a period's
    identity the moment it was corrected and orphan every expense pointing at
    it. So payday is the default and this map records reality where it differed.
+
+   One override moves TWO boundaries — it is period K's start and period K−1's
+   end — so a period STRETCHES rather than sliding: correcting August to have
+   begun three days early makes August Jul 29–Aug 31 (34 days) and shortens
+   July to Jul 1–Jul 28. It does not cascade; September still starts nominally.
+
+   Every value here is a plain YYYY-MM-DD string. migrate() sanitises anything
+   else out, so this layer never has to defend against a non-date.
 
    That also means these functions now take the owner's whole pay-period
    CONFIG, not a bare payday number. The bucket* wrappers below already had the
@@ -957,7 +972,6 @@ function asPeriodCfg(cfg){
   if(cfg&&typeof cfg==="object")return cfg;
   return{payday:cfg};
 }
-const PERIOD_PENDING="pending";
 const dateToKey=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const keyToDate=k=>{const[y,m,d]=String(k).split("-").map(Number);return new Date(y,m-1,d);};
 const addDaysTo=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
@@ -991,11 +1005,10 @@ function shiftPeriod(periodKey,cfg,n){
 }
 
 /* The day a period really began: the override if there is one, otherwise the
-   key itself. `null` means the period is flagged as not yet started. */
+   key itself. Always a YYYY-MM-DD string — a period always has a real start. */
 function periodActualStart(periodKey,cfg){
   const c=asPeriodCfg(cfg);
   const raw=(c.actualStarts||{})[periodKey];
-  if(raw===PERIOD_PENDING)return null;
   if(typeof raw==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(raw))return raw;
   return periodKey;
 }
@@ -1015,15 +1028,11 @@ function periodRange(periodKey,cfg){
     // the stuck "Invalid Date" budget header.
     key=nominalKeyFor(todayISO(),c);
   }
-  const today=keyToDate(todayISO());
-  const own=periodActualStart(key,c);
-  // A period flagged pending hasn't begun; the earliest it could is tomorrow.
-  const start=own!==null?keyToDate(own):addDaysTo(today,1);
-  const nextStart=periodActualStart(shiftPeriod(key,c,1),c);
-  // If the NEXT period is pending, this one is still running — it ends today
-  // and grows by a day until the salary is confirmed.
-  const end=nextStart!==null?addDaysTo(keyToDate(nextStart),-1)
-           :(today>start?today:start);
+  // Deliberately does NOT read the clock: a period's extent is a pure function
+  // of (key,cfg), so labels, lengths and bucketing are the same all day and the
+  // history/snapshot effects can't loop on a boundary that moves at midnight.
+  const start=keyToDate(periodActualStart(key,c));
+  const end=addDaysTo(keyToDate(periodActualStart(shiftPeriod(key,c,1),c)),-1);
   return{start,end};
 }
 
@@ -1152,6 +1161,98 @@ function bucketProgress(bucketKey,payPeriods,owner){
   return{elapsed,total};
 }
 
+/* ── Which plan applies to a bucket ────────────────────────────────────────
+   A month with its own monthlyPlans mapping uses it. Otherwise the chain walks
+   BACKWARDS to the nearest preceding month that has one, and only falls back
+   to activePlanId[owner] when nothing precedes it at all.
+
+   Walking backwards is the whole point. Resolving every unmapped month to the
+   single active plan meant editing this month retroactively changed what last
+   March displayed — the same base plan was answering for all of them — so
+   Home's trend cards were comparing today's budget against itself. It also
+   made "plan two months ahead" impossible: September could only ever show the
+   base plan, never August's actual plan. Both fall out of this one change.
+
+   Keys sort lexicographically in both bucket modes: "2026-03" (calendar) and
+   "2026-03-28" (pay period). Mixing them across a mode switch still orders
+   correctly — "2026-03" < "2026-03-28" < "2026-04" — so a period beginning in
+   March inherits March's calendar-month plan. That is intended, not an
+   accident of string comparison; don't "fix" it by shape-matching the keys.
+
+   Two skip rules, both deliberate:
+   • A tombstoned mapping (planId:null + deletedAt, written by
+     removePlanForMonth) is ignored entirely rather than terminating the walk.
+     "Remove this month's custom plan" means the month goes back to inheriting,
+     not that everything after it falls off a cliff.
+   • A mapping pointing at a plan that no longer resolves (soft-deleted here,
+     or tombstoned by a sync from another device) is skipped and the walk
+     continues. Same reasoning as clonePlanForMonth's missing `||plans[0]`
+     fallback: a plausible wrong budget is worse than none — but an older real
+     mapping is better than either. ────────────────────────────────────────── */
+function resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans){
+  const live=(plans||[]).filter(p=>!p.deletedAt);
+  const byId=id=>live.find(p=>p.id===id)||null;
+  const preceding=(monthlyPlans||[])
+    .filter(m=>m&&m.owner===owner&&!m.deletedAt&&m.planId&&String(m.month)<=String(mo))
+    .sort((a,b)=>String(b.month).localeCompare(String(a.month)));   // newest first
+  for(const m of preceding){
+    const p=byId(m.planId);
+    if(p)return{plan:p,fromMonth:m.month,exact:String(m.month)===String(mo),source:"chain"};
+  }
+  const base=byId((activePlanId||{})[owner])
+          ||live.find(p=>p.owner===owner)
+          ||live[0]||null;
+  return{plan:base,fromMonth:null,exact:false,source:"base"};
+}
+
+/* Deep-clone a plan record for a new month. Pure: takes an id factory, returns
+   the record, writes nothing. Split out of clonePlanForMonth so copy-on-write
+   can fold the clone and the user's edit into ONE setData, and so the orphan
+   rescue and amount re-derive can be unit-tested directly. */
+function clonePlanRecord(source,mkId,owner,label,mo){
+  // migrate() doesn't guarantee either array exists; an unguarded .map here
+  // threw *before* setData, so the copy silently did nothing.
+  const srcGroups=source.groups||[];
+  const srcCats=source.categories||[];
+  const newId=mkId();
+  // `label` lets the caller supply a bucket-aware display name (calendar
+  // month OR pay-period range); falls back to the old calendar-month-only
+  // parsing if no label is given, for any caller that hasn't been updated.
+  const derivedLabel=label||(()=>{
+    const parts=String(mo).split("-");
+    return new Date(Number(parts[0]),Number(parts[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+  })();
+  // deep-clone groups and categories so edits don't affect source
+  const groups=srcGroups.map(g=>({...g,id:mkId()}));
+  const groupIdMap={};
+  srcGroups.forEach((g,i)=>{groupIdMap[g.id]=groups[i].id;});
+  /* Orphan rescue. This used to be `groupIdMap[c.groupId]||c.groupId`, which
+     left a category pointing at the *source* plan's group id — an id that
+     doesn't exist in the clone. Every renderer walks groups→categories, so
+     those categories and all their sub-items became invisible in the copy
+     while `allocated` (which sums all categories) still counted them: the
+     "some subcategories are missing, some amounts differ" bug. Park them in
+     a synthesized group instead, created only if something needs it. */
+  let orphanGid=null;
+  const categories=srcCats.map(c=>{
+    let gid=groupIdMap[c.groupId];
+    if(!gid){
+      if(!orphanGid){orphanGid=mkId();groups.push({id:orphanGid,name:"Ungrouped"});}
+      gid=orphanGid;
+    }
+    const subs=(c.subs||[]).map(s=>({...s,id:mkId()}));
+    // re-derive the cached amount from the subs (same rule as syncAmt in
+    // BudgetView) so a source whose cache had drifted can't carry the
+    // inconsistency into the copy.
+    const amount=subs.length>0?subs.reduce((s,x)=>s+(Number(x.amount)||0),0):(Number(c.amount)||0);
+    return{...c,id:mkId(),groupId:gid,subs,amount};
+  });
+  const cloned={...source,id:newId,name:derivedLabel,month:derivedLabel,groups,categories};
+  delete cloned.deletedAt;
+  cloned.owner=owner;
+  return cloned;
+}
+
 /* Spend-status thresholds — hoisted to module scope so the Expenses tab and
    Home's Tracked Spending card colour envelopes by the exact same rule
    (green under 80%, amber from 80%, red at/over 100%) instead of each keeping
@@ -1169,6 +1270,58 @@ function spendStatusBg(spent,budget){
   if(r>=1)return P.redS;
   if(r>=0.8)return P.amberS;
   return P.sfA;
+}
+
+/* ── Transaction display order ─────────────────────────────────────────────
+   One comparator for every transaction list, because the period log and the
+   per-envelope expand list drifting apart is exactly the kind of thing nobody
+   notices until the same day reads two different ways on two screens.
+
+   The order is: newer DAY first; within a day, the one entered most recently
+   first; and a manual `ord` overrides entry order for a day that's been
+   hand-arranged.
+
+   `ord` is absent on unplaced rows and that absence is MEANINGFUL — an
+   unplaced row sorts above every placed row of its day. That single rule is
+   what makes two separate behaviours fall out for free: a transaction added
+   after a day was reordered lands on top rather than silently at the end, and
+   a transaction whose date is edited into a reordered day arrives at the
+   newest position (updateExpenseTx deletes `ord` on a date change). So never
+   "fix" the absence by defaulting it to a number.
+
+   Order lives in these fields and never in array position: the sync merge
+   re-sorts expenses by id (mergeArrayById) and fingerprint() canonicalizes
+   with sortedById, so an array-position order would be silently erased the
+   first time two devices synced. ──────────────────────────────────────────── */
+function compareTxForDisplay(a,b){
+  const da=(a&&a.date)||"",db=(b&&b.date)||"";
+  if(da!==db)return db.localeCompare(da);
+  const num=x=>(x&&typeof x.ord==="number"&&isFinite(x.ord))?x.ord:null;
+  const oa=num(a),ob=num(b);
+  if(oa===null&&ob!==null)return -1;      // unplaced is "newest"
+  if(oa!==null&&ob===null)return 1;
+  if(oa!==null&&ob!==null&&oa!==ob)return oa-ob;
+  const ca=(a&&a.createdAt)||"",cb=(b&&b.createdAt)||"";
+  if(ca!==cb)return cb.localeCompare(ca);
+  /* Rows predating entry-order tracking all carry createdAt = date+T00:00:00Z
+     (migrate), so every one of them ties here. Falling back to id keeps the
+     order arbitrary but DETERMINISTIC and identical on every device — ids are
+     synced — which beats leaving it to whatever order the merge happened to
+     produce. Any day that actually matters can be arranged by hand. */
+  return String((b&&b.id)||"").localeCompare(String((a&&a.id)||""));
+}
+
+/* "Today" / "Yesterday" / "Fri, Jul 31" for a day sub-header. Weekday included
+   because "what did I spend on Saturday" is how people actually remember it. */
+function dayLabel(dateStr){
+  if(!dateStr)return"No date";
+  const today=todayISO();
+  if(dateStr===today)return"Today";
+  const y=new Date(today+"T00:00:00");y.setDate(y.getDate()-1);
+  if(dateStr===dateToKey(y))return"Yesterday";
+  const d=new Date(dateStr+"T00:00:00");
+  if(isNaN(d.getTime()))return dateStr;
+  return d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
 }
 
 /* Tracked-spending rollup for one owner, for their CURRENT bucket (calendar
@@ -1301,8 +1454,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.14.0";
-const BUILD_ID="2026.07.31.0010";
+const APP_VERSION="1.15.0";
+const BUILD_ID="2026.07.31.0011";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1841,6 +1994,15 @@ function migrate(d){
     if(!e.owner)e.owner="me";
     if(e.note===undefined)e.note="";
     if(!e.updatedAt)e.updatedAt=e.date?`${e.date}T00:00:00.000Z`:new Date().toISOString();
+    /* Entry order. No row predating this feature has a real creation stamp, so
+       updatedAt is the closest honest proxy — a row edited since will drift to
+       its edit time, which is accepted rather than pretended away. Runs after
+       the updatedAt backfill above, on purpose.
+
+       `ord` is deliberately NOT defaulted: absent means "unplaced, therefore
+       newest" — see compareTxForDisplay. Only sanitise a non-numeric one. */
+    if(!e.createdAt)e.createdAt=e.updatedAt;
+    if(e.ord!==undefined&&!(typeof e.ord==="number"&&isFinite(e.ord)))delete e.ord;
   });
   // ensure monthlyPlans have owner
   (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";if(!m.updatedAt)m.updatedAt="2000-01-01T00:00:00.000Z";});
@@ -1993,7 +2155,18 @@ function migrate(d){
      empty map is also the fast path in periodKeyFor — so an owner who never
      corrects a period pays exactly what they always did. */
   ["me","wife"].forEach(o=>{
-    if(!d.payPeriods[o].actualStarts||typeof d.payPeriods[o].actualStarts!=="object")d.payPeriods[o].actualStarts={};
+    const as=d.payPeriods[o].actualStarts;
+    if(!as||typeof as!=="object"){d.payPeriods[o].actualStarts={};return;}
+    /* The "pending" sentinel (salary hasn't arrived yet) was removed: it made a
+       period open-ended and required two interactions on two different days,
+       when saying "it started on the 4th" after the fact says the same thing in
+       one. Dropping a pending key restores that period's nominal boundary —
+       exactly what it reverted to once the salary landed anyway. The same sweep
+       drops any other non-date value, which is what lets periodActualStart and
+       periodRange treat every stored value as a real date. */
+    Object.keys(as).forEach(k=>{
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(String(as[k])))delete as[k];
+    });
   });
   if(!d.quickTransferLast)d.quickTransferLast={};
   if(!d.netWorthAutoHistory)d.netWorthAutoHistory=[];
@@ -3486,7 +3659,11 @@ function App(){
   const[fxFrom,setFxFrom]=useState("USD");
   const[fxTo,setFxTo]=useState("SAR");
 
-  /* active plan for each owner */
+  /* Active plan for each owner. Since the carry-forward chain landed this is
+     the ROOT of that chain — what a month earlier than the owner's first
+     monthlyPlans mapping resolves to — NOT "the plan the current month edits".
+     Every month now copy-on-writes its own plan on first edit, so don't
+     reintroduce an assumption that editing today writes here. */
   const plans=(data.plans||[]).filter(p=>!p.deletedAt);
   const activePlanId=data.activePlanId||{me:plans[0]?.id,wife:null};
   const plan=plans.find(p=>p.id===activePlanId[budgetOwner])||
@@ -3530,12 +3707,12 @@ function App(){
   const renamePlan=(id,name)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===id?{...p,name,updatedAt:new Date().toISOString()}:p)}));
   const switchPlan=id=>setData(d=>({...d,activePlanId:{...activePlanId,[budgetOwner]:id}}));
 
-  /* ── generic plan-by-id mutators (used by month-aware Budget tab) ──
-     These let the Budget tab edit whichever plan maps to the viewed month,
-     rather than only the active plan. */
-  const patchPlanById=(pid,patch)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,...patch,updatedAt:new Date().toISOString()}:p)}));
-  const setCatsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,categories:typeof updater==="function"?updater(p.categories||[]):updater,updatedAt:new Date().toISOString()}:p)}));
-  const setGrpsFor=(pid,updater)=>setData(d=>({...d,plans:d.plans.map(p=>p.id===pid?{...p,groups:typeof updater==="function"?updater(p.groups||[]):updater,updatedAt:new Date().toISOString()}:p)}));
+  /* The by-plan-id mutators (patchPlanById/setCatsFor/setGrpsFor) are gone.
+     They took a plan id, which meant every call site had already decided which
+     plan it was editing — and for a carried-forward month that decision was
+     silently "the plan every other month is inheriting". editPlanForMonth
+     below takes a MONTH instead, so the copy-on-write decision is made in one
+     place rather than at a dozen call sites. */
 
   /* ── monthly budget plans ──
      monthlyPlans: [{ month:"2026-06", planId:"p1" }]
@@ -3546,12 +3723,14 @@ function App(){
      device silently reinstating the old mapping. */
   const monthlyPlans=(data.monthlyPlans||[]).filter(m=>!m.deletedAt&&m.planId);
 
-  /* owner-aware: find the plan for a given month + owner */
-  const planForMonth=(mo,owner=budgetOwner)=>{
-    const mapping=monthlyPlans.find(m=>m.month===mo&&m.owner===owner);
-    const pid=mapping?mapping.planId:activePlanId[owner];
-    return plans.find(p=>p.id===pid)||plans.find(p=>p.owner===owner)||plans[0];
-  };
+  /* owner-aware: find the plan for a given month + owner. planForMonth keeps
+     its exact old signature so every read-side caller (trackedSpendingFor,
+     savingsInvestingFor, bucketHistoryFor, renderTxRow, TargetsView) is
+     untouched; planSourceForMonth is for the Budget/Expenses banners, which
+     need to say WHERE the plan came from. */
+  const planSourceForMonth=(mo,owner=budgetOwner)=>
+    resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans);
+  const planForMonth=(mo,owner=budgetOwner)=>planSourceForMonth(mo,owner).plan;
 
   const assignPlanToMonth=(mo,planId,owner=budgetOwner)=>setData(d=>({
     ...d,
@@ -3566,60 +3745,66 @@ function App(){
        nothing than to fabricate a plausible wrong budget. */
     const source=plans.find(p=>p.id===sourcePlanId);
     if(!source)return null;
-    // migrate() guarantees neither array exists; an unguarded .map here threw
-    // *before* setData, so the copy silently did nothing.
-    const srcGroups=source.groups||[];
-    const srcCats=source.categories||[];
-    const newId=uid();
-    // `label` lets the caller supply a bucket-aware display name (calendar
-    // month OR pay-period range); falls back to the old calendar-month-only
-    // parsing if no label is given, for any caller that hasn't been updated.
-    const derivedLabel=label||(()=>{
-      const parts=mo.split("-");
-      return new Date(Number(parts[0]),Number(parts[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
-    })();
-    // deep-clone groups and categories so edits don't affect source
-    const groups=srcGroups.map(g=>({...g,id:uid()}));
-    const groupIdMap={};
-    srcGroups.forEach((g,i)=>{groupIdMap[g.id]=groups[i].id;});
-    /* Orphan rescue. This used to be `groupIdMap[c.groupId]||c.groupId`, which
-       left a category pointing at the *source* plan's group id — an id that
-       doesn't exist in the clone. Every renderer walks groups→categories, so
-       those categories and all their sub-items became invisible in the copy
-       while `allocated` (which sums all categories) still counted them: the
-       "some subcategories are missing, some amounts differ" bug. Park them in
-       a synthesized group instead, created only if something needs it. */
-    let orphanGid=null;
-    const categories=srcCats.map(c=>{
-      let gid=groupIdMap[c.groupId];
-      if(!gid){
-        if(!orphanGid){orphanGid=uid();groups.push({id:orphanGid,name:"Ungrouped"});}
-        gid=orphanGid;
-      }
-      const subs=(c.subs||[]).map(s=>({...s,id:uid()}));
-      // re-derive the cached amount from the subs (same rule as syncAmt in
-      // BudgetView) so a source whose cache had drifted can't carry the
-      // inconsistency into the copy.
-      const amount=subs.length>0?subs.reduce((s,x)=>s+(Number(x.amount)||0),0):(Number(c.amount)||0);
-      return{...c,id:uid(),groupId:gid,subs,amount};
-    });
-    const cloned={
-      ...source,
-      id:newId,
-      name:derivedLabel,
-      month:derivedLabel,
-      groups,
-      categories,
-    };
-    delete cloned.deletedAt;
-    cloned.owner=owner;
+    const cloned=clonePlanRecord(source,uid,owner,label,mo);
     cloned.updatedAt=new Date().toISOString();
     setData(d=>({
       ...d,
       plans:[...d.plans,cloned],
-      monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:newId,updatedAt:new Date().toISOString()}]
+      monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:cloned.id,updatedAt:new Date().toISOString()}]
     }));
-    return newId;
+    return cloned.id;
+  };
+
+  /* ── Copy-on-write, silent ────────────────────────────────────────────────
+     Applies `mutate(plan)` to whichever plan owns `mo`, materialising a copy
+     first if that month has no mapping of its own. This is the single choke
+     point every budget mutator goes through; routing each call site
+     individually would mean a dozen places that each have to remember the
+     clone decision, and one of them forgetting means an edit to a future month
+     silently rewrites the base plan for every other month.
+
+     Clone and edit land in ONE setData on purpose. A half-materialised month —
+     mapping written, edit not — renders as an empty custom budget for one
+     debounce tick and can be persisted in that state if the app is closed.
+
+     Everything reads off the `d` handed to the updater rather than closed-over
+     render values, so two mutators fired in the same handler chain correctly.
+
+     The no-op guard is load-bearing, not defensive tidiness: NumField commits
+     whenever a draft exists, and re-typing the SAME number still commits.
+     Without it, tapping an amount in a past month and typing what was already
+     there materialises a plan for that month — which is the "paging must write
+     nothing" rule leaking one step downstream. ──────────────────────────── */
+  const editPlanForMonth=(mo,owner,label,mutate)=>{
+    setData(d=>{
+      const now=new Date().toISOString();
+      const maps=d.monthlyPlans||[];
+      const own=maps.find(m=>m.month===mo&&m.owner===owner&&!m.deletedAt&&m.planId);
+      if(own){
+        let changed=false;
+        const next=(d.plans||[]).map(p=>{
+          if(p.id!==own.planId)return p;
+          const m=mutate(p);
+          if(!m||JSON.stringify(m)===JSON.stringify(p))return p;
+          changed=true;
+          return{...m,updatedAt:now};
+        });
+        return changed?{...d,plans:next}:d;
+      }
+      const live=(d.plans||[]).filter(p=>!p.deletedAt);
+      const{plan:src}=resolvePlanForMonth(maps,mo,owner,d.activePlanId||{},live);
+      if(!src)return d;
+      const cloned=clonePlanRecord(src,uid,owner,label,mo);
+      const edited=mutate(cloned);
+      // Compare against the CLONE, not the source — the clone legitimately has
+      // fresh ids throughout, so comparing to the source would always differ
+      // and every no-op would materialise a plan.
+      if(!edited||JSON.stringify(edited)===JSON.stringify(cloned))return d;
+      return{...d,
+        plans:[...d.plans,{...edited,updatedAt:now}],
+        monthlyPlans:[...maps.filter(m=>!(m.month===mo&&m.owner===owner)),
+                      {month:mo,owner,planId:cloned.id,updatedAt:now}]};
+    });
   };
 
   const removePlanForMonth=(mo,owner=budgetOwner)=>setData(d=>({
@@ -3817,7 +4002,13 @@ function App(){
   };
 
   /* expense tracker — transactions per budget category.
-     Schema: {id,catId,name,note,amount,date,owner,isTransfer,isExtraFunds}
+     Schema: {id,catId,name,note,amount,date,owner,isTransfer,isExtraFunds,
+              createdAt,ord?}
+     `createdAt` is stamped once at insert and never re-stamped — that's what
+     separates it from `updatedAt`, which every edit bumps and which therefore
+     can't answer "what did I log first". `ord` is the optional manual
+     within-a-day position; see compareTxForDisplay for why its absence is
+     meaningful.
      `name` is the recurring/short title (e.g. "Amazon Now"), `note` is the
      free-form detail (e.g. "bought a charger + cable"). isTransfer marks
      quick-transfer logs against untracked categories. isExtraFunds marks a
@@ -3826,8 +4017,37 @@ function App(){
      boosts that category's effective budget in the Expenses tab without
      ever touching the category's base amount/percentage in the Budget tab. */
   const expenses=(data.expenses||[]).filter(e=>!e.deletedAt);
-  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>{setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,updatedAt:new Date().toISOString()}]}));pushImportantRef.current();};
-  const updateExpenseTx=(id,patch)=>{setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,...patch,amount:patch.amount!==undefined?Number(patch.amount):e.amount,updatedAt:new Date().toISOString()}:e)}));pushImportantRef.current();};
+  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>{
+    const now=new Date().toISOString();
+    setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,createdAt:now,updatedAt:now}]}));
+    pushImportantRef.current();
+  };
+  const updateExpenseTx=(id,patch)=>{
+    setData(d=>({...d,expenses:(d.expenses||[]).map(e=>{
+      if(e.id!==id)return e;
+      const next={...e,...patch,
+        amount:patch.amount!==undefined?Number(patch.amount):e.amount,
+        createdAt:e.createdAt,                       // entry stamp is immutable
+        updatedAt:new Date().toISOString()};
+      /* A date change re-homes the row into another day, where its old manual
+         position means nothing — drop it so it lands at the newest position
+         there. A spread can't delete, hence the explicit build-then-delete. */
+      if(patch.date!==undefined&&patch.date!==e.date)delete next.ord;
+      return next;
+    })}));
+    pushImportantRef.current();
+  };
+  /* Manual order within ONE day. Takes the whole ordered id list rather than a
+     direction so `ord` becomes total for that day in a single write — a
+     partial assignment would leave placed and unplaced rows interleaved, and
+     per-tap writes would fight setData's debounce. */
+  const setExpenseDayOrder=orderedIds=>{
+    const now=new Date().toISOString();
+    const pos=new Map((orderedIds||[]).map((id,i)=>[id,i]));
+    setData(d=>({...d,expenses:(d.expenses||[]).map(e=>
+      pos.has(e.id)?{...e,ord:pos.get(e.id),updatedAt:now}:e)}));
+    pushImportantRef.current();
+  };
   const removeExpenseTx=id=>{
     const e=(data.expenses||[]).find(x=>x.id===id);
     setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}));
@@ -4370,9 +4590,9 @@ function App(){
         </div>
 
         <TabPane tab={tab}>
-          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest,setActualStart}}/>}
-          {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
+          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
@@ -4389,7 +4609,7 @@ function App(){
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
-        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,
+        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
@@ -5458,121 +5678,39 @@ function GoalContributionSheet({goals,addContribution,onClose}){
    components" rationale. Adding a new card later = write <YCard/> above and
    add one line to the JSX below. */
 /* ── "Salary arrived" — correcting a pay period's boundaries ───────────────
-   Salary sometimes lands early (or late), and until now the app kept counting
-   it against the old period's budget while the money was already being spent.
+   Salary sometimes lands early (or late), and the app would otherwise keep
+   counting it against the old period's budget while the money was already
+   being spent. Auto-advance is unaffected: periods still roll over on payday,
+   so a correction never has to be made and the failure mode is "nothing
+   happened" rather than "the budget is lying".
 
-   Auto-advance stays: periods still roll over on payday exactly as before, so
-   a forgotten button can never strand anyone in a stale period. This control
-   only makes CORRECTIONS, and the failure mode when life gets busy is
-   "nothing happened" rather than "the budget is lying".
-
-   Lives on Home so it isn't forgotten, and only for an owner who actually uses
-   pay periods. Household has no period of its own — it just says so quietly
-   when the two owners are in different ones. Per the Home doctrine, the card
-   returns null whenever there's nothing to correct: it appears in a window
-   around the boundary, or whenever a correction is currently in force. ─────── */
-const PP_WINDOW_DAYS=5;
-function PayPeriodCard({profile,owners,payPeriods,expenses,setActualStart}){
-  const[sheetFor,setSheetFor]=useState(null);   // period key awaiting a date
-  const today=todayISO();
-
-  /* Household has no period of its own, and with two different paydays the
-     two owners are ALWAYS in different periods — saying so permanently would
-     be noise. What's worth surfacing is that a period has been corrected, so
-     the combined figures span a window nobody explicitly set. */
-  if(profile==="household"){
-    const bothOn=["me","wife"].every(o=>ownerUsesPayPeriod(payPeriods,o));
-    if(!bothOn)return null;
-    const mine=bucketNow(payPeriods,"me"),hers=bucketNow(payPeriods,"wife");
-    const meOver=periodActualStart(mine,payPeriods.me)!==mine;
-    const wifeOver=periodActualStart(hers,payPeriods.wife)!==hers;
-    if(!meOver&&!wifeOver)return null;
-    const who=meOver&&wifeOver?`${owners.me} and ${owners.wife} have`:`${meOver?owners.me:owners.wife} has`;
-    return(
-      <div className="home-card" style={homeCardStyle()}>
-        <div style={{fontSize:13,fontWeight:600,color:P.neuInk,marginBottom:10}}>Pay periods</div>
-        <Verdict tone="flat">{who} a corrected pay period, so these totals span different dates</Verdict>
-        <div style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
-          {owners.me}: {bucketLabel(mine,payPeriods,"me")}<br/>
-          {owners.wife}: {bucketLabel(hers,payPeriods,"wife")}<br/>
-          Switch to a person to correct their dates.
-        </div>
-      </div>
-    );
-  }
-
-  if(!ownerUsesPayPeriod(payPeriods,profile))return null;
-  const cfg=payPeriods[profile];
-  const current=bucketNow(payPeriods,profile);
-  const next=shiftPeriod(current,cfg,1);
-  const curStart=periodRange(current,cfg).start;
-  const curOverride=(cfg.actualStarts||{})[current];
-  const nextPending=periodActualStart(next,cfg)===null;
-  const dayDiff=(a,b)=>Math.round((a-b)/86400000);
-  const todayD=keyToDate(today);
-  const daysToNextNominal=dayDiff(keyToDate(next),todayD);
-  const daysSinceCurStart=dayDiff(todayD,curStart);
-  // "Arrived early" targets the NEXT period (it's the one about to begin);
-  // "hasn't arrived" flags the CURRENT one, which drops us back a period.
-  const canSayEarly=!nextPending&&daysToNextNominal<=PP_WINDOW_DAYS&&daysToNextNominal>0;
-  const canSayLate=!nextPending&&!curOverride&&daysSinceCurStart>=0&&daysSinceCurStart<=PP_WINDOW_DAYS;
-  const hasOverride=!!curOverride||nextPending;
-  if(!hasOverride&&!canSayEarly&&!canSayLate)return null;
-
-  const shortDate=s=>keyToDate(s).toLocaleDateString("en-US",{month:"short",day:"numeric"});
-  const nominalStart=current;                       // the key IS the nominal start
-  const offBy=curOverride?dayDiff(keyToDate(curOverride),keyToDate(nominalStart)):0;
-
-  let tone="flat",line=null;
-  if(nextPending){
-    tone="warn";
-    line=<>Waiting for your salary — this period is still open, {periodLength(current,cfg)} days so far</>;
-  }else if(curOverride){
-    tone="good";
-    line=<>This period started {shortDate(curOverride)}, {Math.abs(offBy)} {Math.abs(offBy)===1?"day":"days"} {offBy<0?"early":"late"}</>;
-  }else if(canSayEarly){
-    line=<>Payday is in {daysToNextNominal} {daysToNextNominal===1?"day":"days"}</>;
-  }else{
-    line=<>This period started {shortDate(current)}</>;
-  }
-
-  const act=(label,onClick,danger)=>(
-    <button key={label} onClick={onClick} className="neu-btn"
-      style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,padding:"8px 10px",
-        fontSize:12,fontWeight:600,color:danger?P.neuSub:P.jade,flex:"1 1 auto",minWidth:0}}>
-      {label}
-    </button>
-  );
-  const buttons=[];
-  if(nextPending)buttons.push(act("It arrived",()=>setSheetFor(next)));
-  if(canSayEarly)buttons.push(act("Salary arrived early",()=>setSheetFor(next)));
-  if(canSayLate)buttons.push(act("Hasn't arrived yet",()=>setActualStart(profile,current,PERIOD_PENDING)));
-  if(hasOverride)buttons.push(act("Undo",()=>setActualStart(profile,nextPending?next:current,null),true));
-
-  return(
-    <div className="home-card" style={homeCardStyle()}>
-      <div style={{fontSize:13,fontWeight:600,color:P.neuInk,marginBottom:10}}>Pay period</div>
-      <Verdict tone={tone}>{line}</Verdict>
-      <div style={{fontSize:11,color:P.faint,marginBottom:10,lineHeight:1.5}}>
-        {bucketLabel(current,payPeriods,profile)} · {periodLength(current,cfg)} days
-      </div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{buttons}</div>
-      {sheetFor&&
-        <SalaryArrivedSheet periodKey={sheetFor} cfg={cfg} owner={profile} owners={owners} expenses={expenses}
-          onClose={()=>setSheetFor(null)}
-          onConfirm={date=>{setActualStart(profile,sheetFor,date);setSheetFor(null);}}/>}
-    </div>
-  );
-}
-
+   This USED to be a Home card that prompted in a 5-day window around payday.
+   It was removed (2026-07-31): a card that speculatively asks "has your salary
+   arrived?" is noise for the overwhelmingly common case where it arrived on
+   time, and it was invisible for the case that actually needed it — an owner
+   whose pay-period tracking was off saw no card at all, which is precisely
+   when their spending is being bucketed by calendar month against their will.
+   Corrections now live in Settings → Pay periods, where they can be made at
+   any time rather than only inside a window. The sheet below is what Settings
+   opens. ──────────────────────────────────────────────────────────────────── */
 /* Date picker for "my salary actually arrived on…". Shows the consequence
    before it's committed — the new boundaries, the new length, and how many
    already-logged expenses move into this period — because moving a boundary
    silently re-buckets real transactions. */
-function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,onClose,onConfirm}){
+function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,heading,onClose,onConfirm}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
-  const[date,setDate]=useState(todayISO());
+  /* Seed with the period's current start, so opening this on an existing
+     correction is an EDIT of that date rather than a silent reset to today.
+     Clamped to today because the field forbids a future date: the upcoming
+     period's nominal start is by definition in the future, so seeding it
+     literally would open the sheet already showing "That's in the future"
+     with Save disabled — an error message for something the user hasn't done
+     yet. */
+  const[date,setDate]=useState(()=>{
+    const own=periodActualStart(periodKey,cfg),now=todayISO();
+    return own>now?now:own;
+  });
   const v=periodStartValidity(periodKey,cfg,date);
   const preview=useMemo(()=>{
     if(!v.ok)return null;
@@ -5589,7 +5727,7 @@ function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,onClose,onConfi
     <div className="sheet-bg" onClick={onClose}>
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
-          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>When did it arrive?</h3>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>{heading||"When did it arrive?"}</h3>
           <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
         </div>
         <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
@@ -5619,7 +5757,7 @@ function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,onClose,onConfi
   );
 }
 
-function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest,setActualStart}){
+function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
   const[profile,setProfile]=useState(budgetOwner);
   const setProfileSynced=p=>{setProfile(p);if(p==="me"||p==="wife")setBudgetOwner(p);};
   const[goalSheet,setGoalSheet]=useState(false);
@@ -5692,14 +5830,6 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div className="home-grid">
-        {/* Above the hero, deliberately: it appears only around a pay
-            boundary or while a correction is in force, and it asks for an
-            action. Same rule as a matured Time Deposit — something needing a
-            decision doesn't get buried. Guards itself, so no condition here. */}
-        <div className="home-cell cell-payperiod">
-          <PayPeriodCard profile={profile} owners={owners} payPeriods={payPeriods}
-            expenses={expenses} setActualStart={setActualStart}/>
-        </div>
         {isVisible("hero")&&
           <div className="home-cell cell-hero">
             <HeroCard profile={profile} setProfile={setProfileSynced} owners={owners}
@@ -5769,7 +5899,7 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow}){
+function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -5816,30 +5946,44 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   const isNow=viewMonth===nowMonth;
   const isPast=viewMonth<nowMonth;
 
-  /* the plan that applies to the viewed month for this owner */
-  const monthPlan=planForMonth(viewMonth,budgetOwner);
-  const hasOwnPlan=!!(monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner);
-  /* Current month always edits the carry-forward base plan directly.
-     Other months are only editable once a custom copy exists. */
-  const editable=isNow||hasOwnPlan;
-  const pid=monthPlan.id;
+  /* the plan that applies to the viewed month for this owner, and where it
+     came from — an exact mapping, an earlier month it carries forward from, or
+     the base plan when nothing precedes it. */
+  const planSource=planSourceForMonth(viewMonth,budgetOwner);
+  const monthPlan=planSource.plan;
+  const hasOwnPlan=planSource.exact;
 
   /* keep a category's stored amount in sync with its sub-items' sum */
   const syncAmt=c=>{const subs=c.subs||[];return subs.length>0?{...c,amount:subs.reduce((s,x)=>s+(Number(x.amount)||0),0)}:c;};
 
-  /* month-scoped mutators — all target the viewed month's plan id, atomically */
-  const updateCat=(id,patch)=>setCatsFor(pid,cats=>cats.map(c=>c.id===id?{...c,...patch}:c));
-  const addCat=gid=>setCatsFor(pid,cats=>[...cats,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[cats.length%SEG.length],subs:[],trackExpenses:true}]);
-  const removeCat=id=>setCatsFor(pid,cats=>cats.filter(c=>c.id!==id));
-  const updateSub=(catId,subId,patch)=>setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}):c));
-  const removeSub=(catId,subId)=>setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).filter(s=>s.id!==subId)}):c));
-  const addGroup=()=>setGrpsFor(pid,gs=>[...gs,{id:uid(),name:"New group"}]);
-  const renameGroup=(id,name)=>setGrpsFor(pid,gs=>gs.map(g=>g.id===id?{...g,name}:g));
-  const removeGroup=id=>{setCatsFor(pid,cats=>cats.filter(c=>c.groupId!==id));setGrpsFor(pid,gs=>gs.filter(g=>g.id!==id));};
-  const setIncome=v=>patchPlanById(pid,{income:Number(v)||0});
+  /* ── month-scoped mutators ────────────────────────────────────────────────
+     Every one routes through editPlanForMonth, which copies the carried-
+     forward plan into a real plan for this month on the first actual change
+     (see its comment). Nothing here needs to know whether that happened —
+     which is the point: a mutator that forgot would silently edit the plan
+     every other month is inheriting. */
+  const cowLabel=fmtMonth(viewMonth);
+  const editMonth=mutate=>editPlanForMonth(viewMonth,budgetOwner,cowLabel,mutate);
+  const editCats=up=>editMonth(p=>({...p,categories:up(p.categories||[])}));
+  const editGrps=up=>editMonth(p=>({...p,groups:up(p.groups||[])}));
+
+  const updateCat=(id,patch)=>editCats(cats=>cats.map(c=>c.id===id?{...c,...patch}:c));
+  const addCat=gid=>editCats(cats=>[...cats,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[cats.length%SEG.length],subs:[],trackExpenses:true}]);
+  const removeCat=id=>editCats(cats=>cats.filter(c=>c.id!==id));
+  const updateSub=(catId,subId,patch)=>editCats(cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}):c));
+  const removeSub=(catId,subId)=>editCats(cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).filter(s=>s.id!==subId)}):c));
+  const addGroup=()=>editGrps(gs=>[...gs,{id:uid(),name:"New group"}]);
+  const renameGroup=(id,name)=>editGrps(gs=>gs.map(g=>g.id===id?{...g,name}:g));
+  /* One mutate, not two chained calls: deleting a group and orphaning its
+     categories is a single decision about this month's budget, so it must be
+     one clone decision and one undo step. */
+  const removeGroup=id=>editMonth(p=>({...p,
+    categories:(p.categories||[]).filter(c=>c.groupId!==id),
+    groups:(p.groups||[]).filter(g=>g.id!==id)}));
+  const setIncome=v=>editMonth(p=>({...p,income:Number(v)||0}));
 
   const handleAddSub=catId=>{
-    setCatsFor(pid,cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:[...(c.subs||[]),{id:uid(),name:"New item",amount:0}]}):c));
+    editCats(cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:[...(c.subs||[]),{id:uid(),name:"New item",amount:0}]}):c));
     setExpandedSubs(s=>({...s,[catId]:true}));
   };
   const handleSubChange=(catId,subId,patch)=>updateSub(catId,subId,patch);
@@ -5883,7 +6027,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   },[monthPlan,selectedCats]);
 
   const moveSelectedTo=destGroupId=>{
-    setCatsFor(pid,cats=>{
+    editCats(cats=>{
       const moving=cats.filter(c=>selectedCats[c.id]&&c.groupId!==destGroupId);
       if(moving.length===0)return cats;
       const movingIds=new Set(moving.map(c=>c.id));
@@ -5906,7 +6050,6 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   /* Default: copy whatever is currently being previewed for this month
      (fixes the old bug where this silently pulled from the base plan
      instead of the shown carry-forward/custom plan). */
-  const createCopy=()=>clonePlanForMonth(viewMonth,pid,budgetOwner,fmtMonth(viewMonth));
   const[showCopyPicker,setShowCopyPicker]=useState(false);
   const[copySourceMonth,setCopySourceMonth]=useState("");
   /* Pick a source *month*, not a plan record. The old list was every plan the
@@ -5917,22 +6060,44 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
      Resolving through planForMonth — the same function this tab renders from —
      means the option shows, and copies, exactly what that month displays. */
   const copyMonthOptions=useMemo(()=>{
+    /* Anchored on the VIEWED month and reaching forwards as well as back: any
+       month can have its own plan now, so "plan October from September" is a
+       real thing to want and the old backwards-only-from-today window made it
+       impossible. Months with their own mapping are unioned in so a custom
+       plan further out than the window is still reachable. */
+    const range=[];
+    for(let i=-12;i<=3;i++)range.push(addMonths(viewMonth,i));
+    const owned=(monthlyPlans||[])
+      .filter(m=>m.owner===budgetOwner&&!m.deletedAt&&m.planId)
+      .map(m=>m.month)
+      // a mapping left over from the other bucket mode has a different key
+      // shape and would render a nonsense label through fmtMonth
+      .filter(m=>String(m).length===String(viewMonth).length);
     const out=[];
-    for(let i=0;i<12;i++){
-      const m=addMonths(nowMonth,-i);
-      if(m===viewMonth)continue;
+    [...new Set([...range,...owned])].filter(m=>m!==viewMonth).sort().reverse().forEach(m=>{
       const p=planForMonth(m,budgetOwner);
-      if(!p)continue;
-      out.push({month:m,plan:p,custom:!!(monthlyPlans||[]).find(x=>x.month===m&&x.owner===budgetOwner)});
-    }
+      if(!p)return;
+      out.push({month:m,plan:p,
+        custom:!!(monthlyPlans||[]).find(x=>x.month===m&&x.owner===budgetOwner),
+        future:m>nowMonth});
+    });
     return out;
   },[nowMonth,viewMonth,budgetOwner,plans,monthlyPlans,JSON.stringify(payPeriods)]);
-  const createCopyFrom=()=>{
-    if(!copySourceMonth)return;
+  const[confirmOverwrite,setConfirmOverwrite]=useState(false);
+  const doCopyFrom=()=>{
     const src=planForMonth(copySourceMonth,budgetOwner);
     if(!src)return;
     clonePlanForMonth(viewMonth,src.id,budgetOwner,fmtMonth(viewMonth));
     setShowCopyPicker(false);
+    setConfirmOverwrite(false);
+  };
+  const createCopyFrom=()=>{
+    if(!copySourceMonth)return;
+    /* Copying over a month that already has its own plan discards that plan —
+       removePlanForMonth only tombstones the mapping, so the old record is
+       orphaned rather than recoverable. Worth one confirmation. */
+    if(hasOwnPlan)setConfirmOverwrite(true);
+    else doCopyFrom();
   };
 
   return(
@@ -5962,41 +6127,39 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
       <div style={{...neu(14),padding:"12px 14px",marginBottom:12,
         display:"flex",alignItems:"center",gap:10}}>
         <div style={{flex:1}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:600,color:isNow?P.jade:hasOwnPlan?P.br:P.neuSub}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:600,
+            color:hasOwnPlan?P.br:planSource.fromMonth?P.jade:P.neuSub}}>
             <I.Receipt size={12}/>
-            {isNow?"Carry-forward plan":hasOwnPlan?`Custom plan for ${fmtMonth(viewMonth)}`:"Carry-forward (preview)"}
+            {hasOwnPlan?`Custom plan for ${fmtMonth(viewMonth)}`
+              :planSource.fromMonth?`Carried forward from ${fmtMonth(planSource.fromMonth)}`
+              :"Base plan"}
           </div>
-          <div style={{fontSize:11,color:isNow?P.gr:hasOwnPlan?P.br:P.faint,marginTop:2}}>
-            {isNow
-              ?"This is your base budget. Edits here carry forward to every future month automatically."
-              :hasOwnPlan
-                ?"A custom copy for this month. Edits here only affect this month."
-                :`Showing your carry-forward budget. Create a copy to customize ${fmtMonth(viewMonth)} without touching other months.`}
+          <div style={{fontSize:11,color:hasOwnPlan?P.br:planSource.fromMonth?P.gr:P.faint,marginTop:2}}>
+            {hasOwnPlan
+              ?"Only this month uses it. Later months carry it forward until you change them."
+              :planSource.fromMonth
+                ?`Editing anything here makes a copy for ${fmtMonth(viewMonth)} automatically. Earlier months keep what they had.`
+                :`No month before this one has its own budget. Editing here makes a copy for ${fmtMonth(viewMonth)}; the base plan stays put.`}
           </div>
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
-          {!isNow&&(hasOwnPlan
-            ?<button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)} className="neu-btn"
-                style={{fontSize:11,padding:"5px 12px",color:P.wine,fontWeight:500}}>Remove</button>
-            :<>
-              <button onClick={createCopy} className="neu-btn"
-                  style={{fontSize:11,padding:"5px 12px",color:P.jade,fontWeight:600,whiteSpace:"nowrap"}}>+ Create copy</button>
-              <button onClick={()=>setShowCopyPicker(v=>!v)}
-                  style={{fontSize:10,background:"transparent",border:"none",color:P.neuSub,padding:0,textDecoration:"underline",whiteSpace:"nowrap"}}>copy from a different month</button>
-            </>
-          )}
+          {hasOwnPlan&&
+            <button onClick={()=>removePlanForMonth(viewMonth,budgetOwner)} className="neu-btn"
+              style={{fontSize:11,padding:"5px 12px",color:P.wine,fontWeight:500}}>Remove</button>}
+          <button onClick={()=>setShowCopyPicker(v=>!v)}
+            style={{fontSize:10,background:"transparent",border:"none",color:P.neuSub,padding:0,textDecoration:"underline",whiteSpace:"nowrap"}}>copy from a different month</button>
         </div>
       </div>
 
       {/* ── optional: pick a specific source plan to copy from ── */}
-      {!isNow&&!hasOwnPlan&&showCopyPicker&&(
+      {showCopyPicker&&(
         <div style={{...neuInset(14),padding:12,marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
           <select value={copySourceMonth} onChange={e=>setCopySourceMonth(e.target.value)}
             style={{fontSize:12,borderRadius:8,padding:"5px 8px",background:P.neuBg,border:"none",color:P.neuInk,flex:1,minWidth:160}}>
             <option value="">Select a month to copy…</option>
             {copyMonthOptions.map(o=>(
               <option key={o.month} value={o.month}>
-                {fmtMonth(o.month)} — {cur} {(o.plan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}, {(o.plan.categories||[]).length} categories{o.custom?"":" (carry-forward)"}
+                {fmtMonth(o.month)} — {cur} {(o.plan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}, {(o.plan.categories||[]).length} categories{o.custom?(o.future?" (planned)":""):" (carry-forward)"}
               </option>
             ))}
           </select>
@@ -6011,11 +6174,11 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           <div style={{display:"flex",alignItems:"baseline",gap:6}}>
             <span style={{fontSize:12,color:P.neuSub,textTransform:"uppercase",letterSpacing:".08em"}}>Income</span>
             <span style={{fontSize:13,color:P.neuSub}}>{cur}</span>
-            <NumField value={income} disabled={!editable} min={0}
+            <NumField value={income} min={0}
               onCommit={setIncome}
               onBlur={()=>syncNow&&syncNow()}
-              className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:editable?P.neuInk:P.neuSub,
-                ...(editable?neuInset(8):{}),padding:editable?"2px 8px":undefined}}/>
+              className="bare tnum serif" style={{fontSize:22,fontWeight:600,width:130,color:P.neuInk,
+                ...neuInset(8),padding:"2px 8px"}}/>
           </div>
         </div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -6124,24 +6287,10 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         );
       })()}
 
-      {/* ── locked preview hint for non-current months without a copy ── */}
-      {!editable&&(
-        <div style={{...neuInset(14),padding:"14px 16px",marginBottom:16,textAlign:"center"}}>
-          <div style={{fontSize:13,color:P.neuSub,marginBottom:10}}>
-            You're previewing your carry-forward budget for {fmtMonth(viewMonth)}.<br/>
-            Create a copy to add categories or change amounts just for this month.
-          </div>
-          <button onClick={createCopy} className="neu-btn"
-            style={{display:"inline-flex",alignItems:"center",gap:6,padding:"8px 16px",fontSize:14,fontWeight:600,color:P.jade}}>
-            <I.Plus size={14}/>Create copy for {fmtMonth(viewMonth)}
-          </button>
-        </div>
-      )}
-
       {/* ── move categories: selection bar ──
           Needs at least two groups to have somewhere to move to, and at least
           one category to move. */}
-      {editable&&(monthPlan.groups||[]).length>1&&(monthPlan.categories||[]).length>0&&(
+      {(monthPlan.groups||[]).length>1&&(monthPlan.categories||[]).length>0&&(
         selectMode
           ?<div style={{...neu(14),padding:"8px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
              <span style={{fontSize:12,fontWeight:600,color:P.neuInk}}>
@@ -6164,7 +6313,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
            </button>
       )}
 
-      {editable&&(monthPlan.groups||[]).map(g=>{
+      {(monthPlan.groups||[]).map(g=>{
         const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
         const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
         /* overflow:clip, not hidden — `hidden` turns the section into a
@@ -6311,7 +6460,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           </section>
         );
       })}
-      {editable&&(
+      {(
         <button onClick={addGroup} className="neu-btn" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",fontSize:14,fontWeight:500,color:P.jade}}>
           <I.Plus size={14}/>Add group
         </button>
@@ -6402,6 +6551,13 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           setConfirmDelete(null);
         }}
         onCancel={()=>setConfirmDelete(null)}/>
+
+      <ConfirmDialog open={confirmOverwrite}
+        title={`Replace ${fmtMonth(viewMonth)}'s plan?`}
+        message={`${fmtMonth(viewMonth)} already has its own budget. Copying ${copySourceMonth?fmtMonth(copySourceMonth):"another month"} over it discards the current one.`}
+        confirmLabel="Replace" danger
+        onConfirm={doCopyFrom}
+        onCancel={()=>setConfirmOverwrite(false)}/>
     </div>
   );
 }
@@ -6469,7 +6625,7 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger,filterRequest}){
+function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -6490,6 +6646,13 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const[showReorder,setShowReorder]=useState(false);
   useScrollLock(showReorder);
   const reorderDlgRef=useDialogA11y(()=>setShowReorder(false),showReorder);
+  /* {date,ids} — the day being hand-arranged. Held in LOCAL state and written
+     once on Done, unlike moveCat which writes per tap: a per-tap write here
+     would be one setData per arrow against the persistence debounce, and
+     re-reading mid-sequence is unreliable (see CLAUDE.md). */
+  const[dayReorder,setDayReorder]=useState(null);
+  useScrollLock(!!dayReorder);
+  const dayReorderDlgRef=useDialogA11y(()=>setDayReorder(null),!!dayReorder);
   const planPickerDlgRef=useDialogA11y(()=>setShowPlanPicker(false),showPlanPicker);
   const[untrackedOpen,setUntrackedOpen]=useState(false);
   const[logExpanded,setLogExpanded]=useState(false);
@@ -6503,9 +6666,10 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
   const isFuture=viewMonth>nowMonth;
   const isNow=viewMonth===nowMonth;
 
-  /* which plan applies to the viewed month */
-  const monthPlan=planForMonth(viewMonth,budgetOwner);
-  const hasOwnPlan=!!(data.monthlyPlans||[]).find(m=>m.month===viewMonth&&m.owner===budgetOwner&&!m.deletedAt&&m.planId);
+  /* which plan applies to the viewed month, and where it came from */
+  const planSource=planSourceForMonth(viewMonth,budgetOwner);
+  const monthPlan=planSource.plan;
+  const hasOwnPlan=planSource.exact;
 
   /* Phase 4: Home's Savings & Investing card drill-down arrives here as a
      one-shot {catNames,nonce} request rather than owning any filter state
@@ -6525,13 +6689,18 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   /* move a category earlier(-1)/later(+1) in the viewed month's plan —
      the transaction log below groups by this same order */
-  const moveCat=(catId,dir)=>setCatsFor(monthPlan.id,cats=>{
-    const arr=[...cats];
+  /* Routed through editPlanForMonth like every Budget-tab mutator: envelope
+     order is stored as array position in the plan, so reordering while
+     browsing a carried-forward month would otherwise rewrite the plan every
+     other month inherits. An out-of-range move returns the plan untouched and
+     the no-op guard keeps it from materialising a copy. */
+  const moveCat=(catId,dir)=>editPlanForMonth(viewMonth,budgetOwner,fmtMonth(viewMonth),p=>{
+    const arr=[...(p.categories||[])];
     const i=arr.findIndex(c=>c.id===catId);
     const j=i+dir;
-    if(i<0||j<0||j>=arr.length)return arr;
+    if(i<0||j<0||j>=arr.length)return p;
     [arr[i],arr[j]]=[arr[j],arr[i]];
-    return arr;
+    return{...p,categories:arr};
   });
 
   /* envelopes from the MONTH'S plan (not necessarily the active plan) —
@@ -6708,7 +6877,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   /* shared row renderer — used by both the full month-grouped log below and
      the per-envelope expand list, so the two stay visually identical */
-  const renderTxRow=(tx,idx,total,moPlan)=>{
+  const renderTxRow=(tx,idx,total,moPlan,showDate=true)=>{
     if(!moPlan)moPlan=planForMonth(bucketKeyFor(tx.date,payPeriods,budgetOwner));
     const env=(moPlan.categories||[]).find(c=>c.id===tx.catId);
     const goal=!env?(goals||[]).find(g=>g.id===tx.catId):null;
@@ -6726,9 +6895,12 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
             {tx.isExtraFunds&&<span style={{fontSize:9,fontWeight:700,color:P.jade,background:P.jadeS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>+EXTRA</span>}
           </div>
-          <div style={{fontSize:11,color:P.neuSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-            {tx.date}{subLabel?` · ${subLabel}`:""}{tx.note?` · ${tx.note}`:""}
-          </div>
+          {/* Under a day sub-header the date is repeated noise, and with it
+              gone the line can be empty — don't render an empty 11px strip. */}
+          {(showDate||subLabel||tx.note)&&
+            <div style={{fontSize:11,color:P.neuSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+              {[showDate?tx.date:"",subLabel,tx.note].filter(Boolean).join(" · ")}
+            </div>}
         </div>
         <span className="tnum tx-row-amount" style={{fontSize:14,fontWeight:600,color:tx.isExtraFunds?P.jade:P.neuInk,flexShrink:0}}>{tx.isExtraFunds?"+":""}{fmt(tx.amount)}</span>
         <div className="tx-row-actions">
@@ -6795,15 +6967,19 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
 
   /* candidate source months for the plan picker */
   const clonePlanMonths=useMemo(()=>{
+    // same shape as BudgetView's copyMonthOptions — anchored on the viewed
+    // month and reaching forwards too, since any month can have a plan now
     const mapped=(data.monthlyPlans||[]).filter(m=>!m.deletedAt&&m.planId);
+    const range=[];
+    for(let i=-12;i<=3;i++)range.push(addMonths(viewMonth,i));
+    const owned=mapped.filter(m=>m.owner===budgetOwner).map(m=>m.month)
+      .filter(m=>String(m).length===String(viewMonth).length);
     const out=[];
-    for(let i=0;i<12;i++){
-      const m=addMonths(nowMonth,-i);
-      if(m===viewMonth)continue;
+    [...new Set([...range,...owned])].filter(m=>m!==viewMonth).sort().reverse().forEach(m=>{
       const p=planForMonth(m,budgetOwner);
-      if(!p)continue;
-      out.push({month:m,plan:p,custom:!!mapped.find(x=>x.month===m&&x.owner===budgetOwner)});
-    }
+      if(!p)return;
+      out.push({month:m,plan:p,custom:!!mapped.find(x=>x.month===m&&x.owner===budgetOwner),future:m>nowMonth});
+    });
     return out;
   },[nowMonth,viewMonth,budgetOwner,plans,data.monthlyPlans,JSON.stringify(payPeriods)]);
 
@@ -6839,12 +7015,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         <div style={{flex:1}}>
           <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:600,color:hasOwnPlan?P.jade:P.neuSub}}>
             <I.Receipt size={12}/>
-            {hasOwnPlan?monthPlan.name:"Using default plan"}
+            {hasOwnPlan?monthPlan.name
+              :planSource.fromMonth?`Carried forward from ${fmtMonth(planSource.fromMonth)}`
+              :"Base plan"}
           </div>
           <div style={{fontSize:11,color:hasOwnPlan?P.jade:P.neuSub,marginTop:2,opacity:.85}}>
             {hasOwnPlan
               ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · Custom budget for ${fmtMonth(viewMonth)}`
-              :`Showing allocations from "${monthPlan.name}". Create a custom plan for ${fmtMonth(viewMonth)} to set a different income or allocation.`
+              :`Showing allocations from "${monthPlan.name}". Create a plan for ${fmtMonth(viewMonth)} to set a different income or allocation — or just edit the amounts in the Budget tab and a copy is made for you.`
             }
           </div>
         </div>
@@ -6946,7 +7124,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
             const color=pacing?P.amber:statusColor(spent,effBudget);
             const bg=pacing?P.amberS:statusBg(spent,effBudget);
             const catTxs=viewMonthExpenses.filter(e=>e.catId===env.id);
-            const envTxs=[...catTxs].sort((a,b)=>b.date.localeCompare(a.date));
+            const envTxs=[...catTxs].sort(compareTxForDisplay);
             const envTxsTotal=catTxs.reduce((s,t)=>s+t.amount,0);
             const envMoPlan=planForMonth(viewMonth);
             const envOpen=!!expandedEnvelopes[env.id];
@@ -7098,7 +7276,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                 No transactions yet. Tap "Add transaction" to start tracking.
               </div>
             :allMonths.map(mo=>{
-              const txs=[...byMonth[mo]].sort((a,b)=>b.date.localeCompare(a.date));
+              const txs=[...byMonth[mo]].sort(compareTxForDisplay);
               const moPlan=planForMonth(mo);
               const isCurrent=mo===nowMonth;
               const isViewing=mo===viewMonth;
@@ -7107,6 +7285,14 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
               const isOpen=collapsedMonths[mo]===undefined?defaultOpen:!collapsedMonths[mo];
               const monthTotal=txs.reduce((s,t)=>s+t.amount,0);
               const moLabel=fmtMonth(mo);
+              /* compareTxForDisplay sorts by date first, so same-day rows are
+                 already contiguous — one pass, no grouping map needed. */
+              const days=[];
+              txs.forEach(tx=>{
+                const last=days[days.length-1];
+                if(last&&last.date===tx.date)last.rows.push(tx);
+                else days.push({date:tx.date,rows:[tx]});
+              });
 
               const labelColor=isCurrent?P.jade:isFutureMo?P.br:P.neuInk;
 
@@ -7134,7 +7320,27 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                     </div>
                   </button>
 
-                  {isOpen&&txs.map((tx,idx)=>renderTxRow(tx,idx,txs.length,moPlan))}
+                  {isOpen&&days.map(day=>(
+                    <div key={day.date}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,
+                        padding:"5px 16px",background:"rgba(0,0,0,.03)"}}>
+                        <span style={{fontSize:11,fontWeight:700,color:P.neuSub}}>{dayLabel(day.date)}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span className="tnum" style={{fontSize:11,color:P.neuSub}}>
+                            {fmt(day.rows.reduce((s,t)=>s+t.amount,0))}
+                          </span>
+                          {day.rows.length>1&&
+                            <button onClick={()=>setDayReorder({date:day.date,ids:day.rows.map(r=>r.id)})}
+                              aria-label={`Reorder ${dayLabel(day.date)}`}
+                              style={{display:"flex",alignItems:"center",gap:1,background:"transparent",
+                                border:"none",padding:"2px 4px",color:P.neuSub,opacity:.55}}>
+                              <I.ArrowUp size={10}/><I.ArrowDown size={10}/>
+                            </button>}
+                        </div>
+                      </div>
+                      {day.rows.map((tx,i)=>renderTxRow(tx,i,day.rows.length,moPlan,false))}
+                    </div>
+                  ))}
                 </div>
               );
             })
@@ -7363,6 +7569,67 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
         </Portal>
       )}
 
+      {/* ── reorder one day's transactions ── */}
+      {dayReorder&&(()=>{
+        const byId=id=>expenses.find(e=>e.id===id);
+        const move=(i,dir)=>setDayReorder(s=>{
+          const arr=[...s.ids],j=i+dir;
+          if(j<0||j>=arr.length)return s;
+          [arr[i],arr[j]]=[arr[j],arr[i]];
+          return{...s,ids:arr};
+        });
+        return(
+        <Portal>
+        <div className="sheet-bg" onClick={()=>setDayReorder(null)}>
+          <div className="sheet" ref={dayReorderDlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+              <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Reorder {dayLabel(dayReorder.date)}</h3>
+              <IconButton icon={I.X} label="Close" onClick={()=>setDayReorder(null)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+            </div>
+            <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+              Order within this day only. To move a transaction to another day, change its date.
+            </div>
+            <div style={{borderRadius:12,overflow:"hidden",background:"rgba(0,0,0,.03)"}}>
+              <div style={{maxHeight:"60dvh",overflowY:"auto"}}>
+                {dayReorder.ids.map((id,i,arr)=>{
+                  const tx=byId(id);
+                  if(!tx)return null;
+                  const env=((planForMonth(bucketKeyFor(tx.date,payPeriods,budgetOwner))||{}).categories||[]).find(c=>c.id===tx.catId);
+                  return(
+                    <div key={id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",
+                      borderBottom:i<arr.length-1?"1px solid rgba(0,0,0,.06)":"none"}}>
+                      <span style={{width:8,height:8,borderRadius:999,background:env?.color||P.faint,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:P.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{tx.name}</div>
+                        {env&&<div style={{fontSize:10,color:P.faint}}>{env.name}</div>}
+                      </div>
+                      <span className="tnum" style={{fontSize:12,color:P.sub,flexShrink:0}}>{fmt(tx.amount)}</span>
+                      <button onClick={()=>move(i,-1)} disabled={i===0}
+                        style={{background:"transparent",border:"none",borderRadius:8,padding:4,
+                          color:i===0?P.faint:P.sub,opacity:i===0?.4:1}}>
+                        <I.ArrowUp size={13}/>
+                      </button>
+                      <button onClick={()=>move(i,1)} disabled={i===arr.length-1}
+                        style={{background:"transparent",border:"none",borderRadius:8,padding:4,
+                          color:i===arr.length-1?P.faint:P.sub,opacity:i===arr.length-1?.4:1}}>
+                        <I.ArrowDown size={13}/>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <button onClick={()=>{setExpenseDayOrder(dayReorder.ids);setDayReorder(null);}}
+              style={{width:"100%",marginTop:14,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+                background:P.jade,color:"#fff",border:"none"}}>
+              Done
+            </button>
+          </div>
+        </div>
+        </Portal>
+        );
+      })()}
+
       {/* ── create monthly plan modal ── */}
       {showPlanPicker&&(
         <Portal>
@@ -7391,7 +7658,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
                     background:cloneSource===o.month?P.jadeS:"rgba(0,0,0,.05)",
                     color:cloneSource===o.month?P.jadeD:P.ink}}>
                   <div>
-                    <div style={{fontWeight:600}}>{fmtMonth(o.month)}{o.custom?"":" · carry-forward"}</div>
+                    <div style={{fontWeight:600}}>{fmtMonth(o.month)}{o.custom?(o.future?" · planned":""):" · carry-forward"}</div>
                     <div style={{fontSize:11,color:P.faint,marginTop:2}}>
                       {cur} {(o.plan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · {(o.plan.categories||[]).length} categories
                     </div>
@@ -10240,12 +10507,25 @@ function SyncDiagnostics({localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,h
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
   const[confirm,setConfirm]=useState(false);
   const[msg,setMsg]=useState("");
+  const[ppSheet,setPpSheet]=useState(null);    // {owner,periodKey,heading}
+  const[ppConfirm,setPpConfirm]=useState(null);// {owner,count,turningOn?,repay?,apply}
   const fileRef=useRef(null);
+  /* How many of an owner's logged expenses would land in a different bucket
+     under `trial`. The same comparison SalaryArrivedSheet shows before moving a
+     boundary, but through bucketKeyFor rather than periodKeyFor, because
+     toggling pay periods switches the whole keying scheme rather than nudging
+     one edge. Purely a preview — nothing on the expense records changes. */
+  const countRebucketed=(owner,trial)=>{
+    const all=data.payPeriods||{};
+    const alt={...all,[owner]:trial};
+    return(data.expenses||[]).filter(e=>e.date&&!e.deletedAt&&(e.owner||"me")===owner
+      &&bucketKeyFor(e.date,all,owner)!==bucketKeyFor(e.date,alt,owner)).length;
+  };
   const[versionCheck,setVersionCheck]=useState({status:"checking"});
   useEffect(()=>{
     let cancelled=false;
@@ -10316,25 +10596,96 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
           {["me","wife"].map(ok=>{
             const cfg=(data.payPeriods||{})[ok]||{enabled:false,payday:1};
+            /* Everything below is derived — nothing about a period is stored
+               except payday and the actualStarts corrections. */
+            const current=cfg.enabled&&cfg.payday?bucketNow(data.payPeriods,ok):null;
+            const next=current?shiftPeriod(current,cfg,1):null;
+            const rangeLine=k=>{
+              const{start,end}=periodRange(k,cfg);
+              const f=d=>d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+              return`${f(start)} – ${f(end)} · ${periodLength(k,cfg)} days`;
+            };
+            const offBy=k=>Math.round((keyToDate(periodActualStart(k,cfg))-keyToDate(k))/86400000);
+            const offLabel=k=>{
+              const n=offBy(k);
+              if(!n)return null;
+              return`${Math.abs(n)} ${Math.abs(n)===1?"day":"days"} ${n<0?"early":"late"}`;
+            };
+            const corrections=Object.keys(cfg.actualStarts||{}).sort();
+            const link=(label,onClick)=>(
+              <button onClick={onClick} style={{background:"none",border:"none",padding:0,fontSize:12,fontWeight:600,color:P.gr}}>{label}</button>
+            );
+            const periodRow=(k,title,cta)=>(
+              <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginTop:8}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:12,color:P.sub}}>{title}</div>
+                  <div className="tnum" style={{fontSize:12,color:P.ink}}>{rangeLine(k)}</div>
+                  {offLabel(k)&&<div style={{fontSize:11,color:P.faint}}>started {offLabel(k)}</div>}
+                </div>
+                <div style={{display:"flex",gap:10,flexShrink:0}}>
+                  {link(cta,()=>setPpSheet({owner:ok,periodKey:k,
+                    heading:k===current?"When did this period start?":"When did it arrive?"}))}
+                  {(cfg.actualStarts||{})[k]&&link("clear",()=>setActualStart(ok,k,null))}
+                </div>
+              </div>
+            );
             return(
               <div key={ok} style={{borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:cfg.enabled?8:0}}>
                   <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{owners[ok]}</span>
-                  <button onClick={()=>setPayPeriod(ok,{enabled:!cfg.enabled})}
+                  <button onClick={()=>{
+                    /* Flipping this re-buckets every one of that person's logged
+                       expenses between calendar months and pay periods, which
+                       silently rewrites past totals. Say how many before doing
+                       it — same trial-config technique as the date sheet. */
+                    const trial={...cfg,enabled:!cfg.enabled};
+                    const n=countRebucketed(ok,trial);
+                    if(n>0)setPpConfirm({owner:ok,count:n,turningOn:!cfg.enabled,apply:()=>setPayPeriod(ok,{enabled:!cfg.enabled})});
+                    else setPayPeriod(ok,{enabled:!cfg.enabled});
+                  }}
                     style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
                       background:cfg.enabled?P.gr:P.sf,color:cfg.enabled?"#fff":P.sub,border:`1px solid ${cfg.enabled?P.gr:P.line}`}}>
                     {cfg.enabled?"On":"Off"}
                   </button>
                 </div>
-                {cfg.enabled&&(
+                {cfg.enabled&&(<>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                     <span style={{fontSize:12,color:P.sub}}>Payday</span>
-                    <NumField value={cfg.payday} onCommit={v=>setPayPeriod(ok,{payday:v})}
+                    <NumField value={cfg.payday} onCommit={v=>{
+                      if(v===cfg.payday)return;
+                      /* Corrections are keyed by NOMINAL period key, which is
+                         derived from payday — change payday and every existing
+                         key stops matching any real period and becomes inert
+                         garbage that can never be cleared from the UI. */
+                      if(corrections.length)setPpConfirm({owner:ok,repay:v,count:corrections.length,
+                        apply:()=>setPayPeriod(ok,{payday:v,actualStarts:{}})});
+                      else setPayPeriod(ok,{payday:v});
+                    }}
                       integer min={1} max={31} inputMode="numeric"
                       className="tnum" style={{width:56,borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
                     <span style={{fontSize:11,color:P.faint,flexBasis:"100%"}}>of each month{cfg.payday>28?" (clamped to last day in short months)":""}</span>
                   </div>
-                )}
+                  {periodRow(current,"This period","change")}
+                  {periodRow(next,"Next period","set start")}
+                  <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                    Correcting a start date moves the boundary, so a period gets longer or shorter — it doesn't shift. Budget amounts don't change; the daily allowance adjusts.
+                  </div>
+                  {corrections.length>0&&(
+                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${P.line}`}}>
+                      <div style={{fontSize:11,fontWeight:600,color:P.sub,marginBottom:4}}>Corrections ({corrections.length})</div>
+                      {corrections.map(k=>(
+                        <div key={k} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"3px 0"}}>
+                          <span className="tnum" style={{fontSize:12,color:P.ink,minWidth:0,overflow:"hidden",textOverflow:"ellipsis"}}>
+                            {keyToDate(k).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                            {" → "}
+                            {keyToDate(cfg.actualStarts[k]).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                          </span>
+                          {link("clear",()=>setActualStart(ok,k,null))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>)}
               </div>
             );
           })}
@@ -10582,6 +10933,26 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             </button>}
         </div>
       </div>
+      {/* Siblings of the modal body, not nested in the owner map, so only one
+          of each can ever be open. Both are Portalled by their own components;
+          useScrollLock is refcounted so opening one on top of Settings doesn't
+          release the body lock underneath it. */}
+      {ppSheet&&
+        <SalaryArrivedSheet periodKey={ppSheet.periodKey}
+          cfg={(data.payPeriods||{})[ppSheet.owner]||{}}
+          owner={ppSheet.owner} owners={owners} expenses={data.expenses}
+          heading={ppSheet.heading}
+          onClose={()=>setPpSheet(null)}
+          onConfirm={date=>{setActualStart(ppSheet.owner,ppSheet.periodKey,date);setPpSheet(null);}}/>}
+      <ConfirmDialog open={!!ppConfirm}
+        title={ppConfirm&&ppConfirm.repay?"Change payday?":ppConfirm&&ppConfirm.turningOn?"Track pay periods?":"Stop tracking pay periods?"}
+        message={ppConfirm&&(ppConfirm.repay
+          ?`A period is identified by its payday, so the ${ppConfirm.count} correction${ppConfirm.count===1?"":"s"} already recorded for ${owners[ppConfirm.owner]} no longer line up and will be cleared.`
+          :`${ppConfirm.count} of ${owners[ppConfirm.owner]}'s logged expenses will move into a different ${ppConfirm.turningOn?"period":"month"}. Past totals on Home and in Expenses will change. Nothing on the transactions themselves changes, so switching back restores them exactly.`)}
+        confirmLabel={ppConfirm&&ppConfirm.repay?"Change payday":ppConfirm&&ppConfirm.turningOn?"Turn on":"Turn off"}
+        danger={false}
+        onConfirm={()=>{ppConfirm.apply();setPpConfirm(null);}}
+        onCancel={()=>setPpConfirm(null)}/>
     </div>
   );
 }
