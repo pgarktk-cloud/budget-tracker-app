@@ -1454,8 +1454,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.15.0";
-const BUILD_ID="2026.07.31.0011";
+const APP_VERSION="1.16.0";
+const BUILD_ID="2026.07.31.0012";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2197,6 +2197,13 @@ function migrate(d){
   // payPeriods, investTarget, activePlanId, quickTransferLast, household
   // split %). Never shown in UI, never a source of truth for anything else.
   if(!d.dataUpdatedAt)d.dataUpdatedAt="2000-01-01T00:00:00.000Z";
+  /* Per-setting merge stamps. Deliberately left EMPTY for existing data rather
+     than back-filled from dataUpdatedAt: mergeSettingPaths falls back to the
+     document stamp for any unstamped path, so an empty map reproduces exactly
+     the old whole-document behaviour until someone actually edits a setting.
+     Back-filling would instead assert that every setting was edited at the
+     same instant, which is a claim this data can't support. */
+  if(!d.fieldUpdatedAt||typeof d.fieldUpdatedAt!=="object")d.fieldUpdatedAt={};
   // Household Bills — household.expenses gets a new opt-in flag, and three
   // new top-level collections back the Bills module (see defaultData()).
   if(!d.household)d.household={splitMine:50,expenses:[]};
@@ -2334,7 +2341,12 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
     // they're refreshed automatically in the background (manual/auto quote+FX
     // refresh) and must never make the doc look "dirty" or trigger a cloud
     // autosave just because a stock price ticked.
-    const{theme,dataUpdatedAt,livePrice,livePriceAt,prevClose,...rest}=d||{};
+    // fieldUpdatedAt is excluded for the same reason as dataUpdatedAt: it's
+    // bookkeeping about when a setting changed, not the setting itself. The
+    // value it stamps is inside `rest`, so a real edit still changes the
+    // fingerprint — but two devices agreeing on every setting never look
+    // different just because they recorded the change at different instants.
+    const{theme,dataUpdatedAt,fieldUpdatedAt,livePrice,livePriceAt,prevClose,...rest}=d||{};
     const hist=ignoreAuto?stripAutoRows(rest.history):rest.history;
     const snaps=ignoreAuto?stripAutoRows(rest.snapshots):rest.snapshots;
     const canon={
@@ -2529,22 +2541,113 @@ function bucketSnapshotsForRange(sorted,range){
   return Array.from(byKey.values()).sort((a,b)=>a.date.localeCompare(b.date));
 }
 
+/* ── Per-setting merge stamps ──────────────────────────────────────────────
+   Plain settings aren't records, so there's no union to take — it's a
+   most-recent-edit-wins call. That used to be decided by ONE stamp for the
+   whole document (`dataUpdatedAt`), which made every setting share a fate:
+   turning on your wife's pay-period tracking on the laptop was silently
+   reverted the moment she logged a transaction on her phone, because her
+   document was now "newer" wholesale and its (stale, off) payPeriods rode in
+   with it. The two edits never actually conflicted — they touched different
+   fields — but the merge couldn't tell.
+
+   So each setting carries its own stamp in `data.fieldUpdatedAt`, keyed by
+   path, and merges independently. Paths are split per owner where a setting
+   is per-owner (`payPeriods.me` / `payPeriods.wife`), so the two of you can
+   change your own settings concurrently without clobbering each other.
+
+   Stamps are written automatically by the setData wrapper, which diffs these
+   paths — mutators don't declare what they touched, so a new settings mutator
+   can't forget to stamp. Add a path here when you add a synced setting.
+   `theme` is deliberately absent: it's a device-local preference. ────────── */
+const SETTING_PATHS=[
+  "currency","projection","owners","settings","homeDisplay","homeSettings",
+  "billsSettings","quickTransferLast","household.splitMine",
+  "payPeriods.me","payPeriods.wife",
+  "activePlanId.me","activePlanId.wife",
+  "investTarget.me","investTarget.wife",
+];
+function getPath(obj,path){
+  return path.split(".").reduce((o,k)=>(o==null?undefined:o[k]),obj);
+}
+function setPath(obj,path,value){
+  const keys=path.split(".");
+  const out={...obj};
+  let cur=out;
+  for(let i=0;i<keys.length-1;i++){
+    cur[keys[i]]=(cur[keys[i]]&&typeof cur[keys[i]]==="object")?{...cur[keys[i]]}:{};
+    cur=cur[keys[i]];
+  }
+  cur[keys[keys.length-1]]=value;
+  return out;
+}
+/* Stamp every SETTING_PATH whose value actually changed. Compared by JSON so
+   a re-render handing back an equal-but-new object doesn't bump a stamp and
+   make this device spuriously "win" a field it never edited. */
+function stampSettings(prev,next,now){
+  let fieldUpdatedAt=next.fieldUpdatedAt||{};
+  let touched=false;
+  for(const p of SETTING_PATHS){
+    if(JSON.stringify(getPath(prev,p))===JSON.stringify(getPath(next,p)))continue;
+    if(!touched){fieldUpdatedAt={...fieldUpdatedAt};touched=true;}
+    fieldUpdatedAt[p]=now;
+  }
+  return touched?{...next,fieldUpdatedAt}:next;
+}
+/* Resolve one setting path.
+
+   The rule that matters: **an explicit stamp beats an unstamped side, whatever
+   the document stamps say.** Falling back to `dataUpdatedAt` for an unstamped
+   path was the original bug in miniature — it treats "this device edited
+   something, anything" as evidence it edited *this* field, so logging a
+   transaction on the phone would out-rank a real settings edit made on the
+   laptop. A stamp is evidence of an edit; the absence of one is not evidence
+   of anything.
+
+   Only when NEITHER side has a stamp do we fall back to the whole-document
+   comparison, which is exactly the old behaviour — so data written before
+   fieldUpdatedAt existed merges as it always did.
+
+   The trade-off, worth knowing: while devices are on mixed builds, an old
+   stamped value can beat a newer edit made by a device that isn't stamping
+   yet. That window closes as soon as every device has this build, and it is
+   the better failure — the alternative loses settings edits permanently. */
+function mergeSettingPaths(local,remote,out){
+  let merged=out;
+  const lf=local.fieldUpdatedAt||{}, rf=remote.fieldUpdatedAt||{};
+  for(const p of SETTING_PATHS){
+    const lStamp=lf[p], rStamp=rf[p];
+    let winner;
+    if(lStamp&&rStamp)      winner=lStamp>=rStamp?local:remote;   // both edited: newest
+    else if(lStamp)         winner=local;                         // only local edited it
+    else if(rStamp)         winner=remote;                        // only remote edited it
+    else winner=(local.dataUpdatedAt||"")>=(remote.dataUpdatedAt||"")?local:remote;
+    const v=getPath(winner,p);
+    if(v===undefined)continue;          // never write undefined over a default
+    merged=setPath(merged,p,v);
+  }
+  // keep the newest stamp per key so a third device sees the true history
+  const fieldUpdatedAt={...rf};
+  for(const k of Object.keys(lf))if(!fieldUpdatedAt[k]||lf[k]>fieldUpdatedAt[k])fieldUpdatedAt[k]=lf[k];
+  merged.fieldUpdatedAt=fieldUpdatedAt;
+  return merged;
+}
+
 /* Full cross-field auto-merge. Every record-bearing collection is merged by
    id (or by month/owner key where there's no id), so additions made on both
-   devices always survive together — not just expenses. Anything left over
-   that's a plain setting rather than a record (currency, projection, owner
-   names, payPeriods, investTarget, activePlanId, quickTransferLast, live
-   price cache, household split %) is seeded from whichever whole dataset
-   carries the newer `dataUpdatedAt` stamp, since those aren't "add"
-   operations the way transactions/goals/trades are — there's no
-   union to take, just a most-recent-edit-wins call. Returns null (falling
+   devices always survive together — not just expenses. Plain settings are no
+   longer carried wholesale by whichever document is newer; each one merges on
+   its own stamp via mergeSettingPaths above. Returns null (falling
    back to the conflict modal) only if something is structurally malformed. */
 function tryAutoMergeAll(local,remote){
   try{
     const preferLocal=(local.dataUpdatedAt||"")>=(remote.dataUpdatedAt||"");
     const base=preferLocal?local:remote;
-    return{
+    const merged={
       ...base,
+      // Device-local preference: a merge must never push the other device's
+      // theme onto this one.
+      theme:local.theme!==undefined?local.theme:base.theme,
       expenses:mergeArrayById(local.expenses,remote.expenses),
       goals:mergeArrayByIdWithChild(local.goals,remote.goals,"contributions",c=>c.updatedAt||c.date||""),
       investments:mergeArrayByIdWithChildren(local.investments,remote.investments,[
@@ -2568,6 +2671,9 @@ function tryAutoMergeAll(local,remote){
         expenses:mergeArrayById((local.household||{}).expenses,(remote.household||{}).expenses,()=>""),
       },
     };
+    // Settings resolve per field, AFTER the record merges above — household
+    // is spread there, so household.splitMine has to be applied on top.
+    return mergeSettingPaths(local,remote,merged);
   }catch(e){return null;}
 }
 
@@ -2771,7 +2877,10 @@ function App(){
     const next=typeof updater==="function"?updater(d):updater;
     if(next===d)return d;
     if(skipSave.current)return next;
-    return{...next,dataUpdatedAt:new Date().toISOString()};
+    const now=new Date().toISOString();
+    // stampSettings diffs SETTING_PATHS and stamps only what actually changed,
+    // so no mutator has to remember to declare which setting it touched.
+    return{...stampSettings(d,next,now),dataUpdatedAt:now};
   });
   const[loaded,setLoaded]=useState(false);
   const[tab,setTab]=useState("home");
@@ -4340,7 +4449,7 @@ function App(){
      so tombstones themselves stay in the synced array. */
   const rawHh=data.household||{splitMine:50,expenses:[]};
   const hh={...rawHh,expenses:(rawHh.expenses||[]).filter(e=>!e.deletedAt)};
-  const setSplit=v=>setData(d=>({...d,household:{...(d.household||{splitMine:50,expenses:[]}),splitMine:v}}));
+  const setSplit=v=>{setData(d=>({...d,household:{...(d.household||{splitMine:50,expenses:[]}),splitMine:v}}));pushImportantRef.current();};
   const addExpense=()=>setData(d=>{const h=d.household||{splitMine:50,expenses:[]};const live=h.expenses.filter(e=>!e.deletedAt);return{...d,household:{...h,expenses:[...h.expenses,{id:uid(),name:"New expense",amount:0,color:SEG[live.length%SEG.length],trackInBills:false,updatedAt:new Date().toISOString()}]}};});
   const updateExpense=(id,patch)=>setData(d=>{const h=d.household;return{...d,household:{...h,expenses:h.expenses.map(e=>e.id===id?{...e,...patch,updatedAt:new Date().toISOString()}:e)}};});
   const removeExpense=id=>setData(d=>{const h=d.household;return{...d,household:{...h,expenses:h.expenses.map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}};});
@@ -4410,7 +4519,7 @@ function App(){
   },[loaded,currentBillMonthKey,trackedHhKey]);
   const updateBill=(id,patch)=>setData(d=>({...d,bills:(d.bills||[]).map(b=>
     b.id===id?{...b,...patch,updatedAt:new Date().toISOString()}:b)}));
-  const setOpeningReserve=v=>setData(d=>({...d,billsSettings:{...(d.billsSettings||{}),openingReserve:Number(v)||0}}));
+  const setOpeningReserve=v=>{setData(d=>({...d,billsSettings:{...(d.billsSettings||{}),openingReserve:Number(v)||0}}));pushImportantRef.current();};
   const adjustBillsReserve=(newBalance,note)=>setData(d=>{
     const prev=computeBillsReserve(d);
     const amount=(Number(newBalance)||0)-prev;
@@ -4419,8 +4528,8 @@ function App(){
       amount,date:now.slice(0,10),note:note||"",createdAt:now,updatedAt:now}]};
   });
 
-  const setOwnerName=(key,name)=>setData(d=>({...d,owners:{...d.owners,[key]:name}}));
-  const setPayPeriod=(owner,patch)=>setData(d=>({...d,payPeriods:{...(d.payPeriods||{}),[owner]:{...((d.payPeriods||{})[owner]||{enabled:false,payday:1}),...patch}}}));
+  const setOwnerName=(key,name)=>{setData(d=>({...d,owners:{...d.owners,[key]:name}}));pushImportantRef.current();};
+  const setPayPeriod=(owner,patch)=>{setData(d=>({...d,payPeriods:{...(d.payPeriods||{}),[owner]:{...((d.payPeriods||{})[owner]||{enabled:false,payday:1}),...patch}}}));pushImportantRef.current();};
   /* Record (or clear) the day a period really began. Goes through
      withActualStart so the "clear removes the key" rule lives in one place —
      see the pay-period utilities block. Pushed immediately rather than left to
@@ -4437,7 +4546,7 @@ function App(){
   const fmt=n=>formatMoney(n,{code:cur});
   const fmt2=n=>`${cur} ${(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
   const pct=n=>plan.income>0?((Number(n)||0)/plan.income)*100:0;
-  const setInvestTarget=patch=>setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));
+  const setInvestTarget=patch=>{setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));pushImportantRef.current();};
 
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100dvh"}}>
