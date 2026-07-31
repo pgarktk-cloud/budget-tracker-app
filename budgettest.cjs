@@ -169,14 +169,18 @@ console.log("\neditPlanForMonth (copy-on-write)");
 
   t("with no mapping, ONE call produces the plan AND the mapping, edit included",()=>{
     // a two-phase write would render an empty custom budget for a debounce tick
-    const out=run(base(),"2026-05","me","May 2026",p=>({...p,income:777}));
+    const d=base();
+    const out=run(d,"2026-05","me","May 2026",p=>({...p,income:777}));
     assert.strictEqual(out.plans.length,2);
     const made=out.plans[1];
     assert.strictEqual(made.income,777,"the edit must already be applied to the clone");
     assert.strictEqual(made.owner,"me");
     assert.strictEqual(made.name,"May 2026");
-    assert.notStrictEqual(made.id,"pBase","fresh id");
-    assert.notStrictEqual(made.categories[0].id,"c1","categories deep-cloned");
+    assert.notStrictEqual(made.id,"pBase","fresh PLAN id");
+    // deep-cloned means new OBJECTS, not renumbered ids — copy-on-write
+    // deliberately keeps category ids so id-targeted edits still resolve
+    assert.notStrictEqual(made.categories,d.plans[0].categories,"categories deep-cloned");
+    assert.notStrictEqual(made.categories[0],d.plans[0].categories[0],"category objects deep-cloned");
     assert.strictEqual(out.monthlyPlans.length,1);
     assert.strictEqual(out.monthlyPlans[0].month,"2026-05");
     assert.strictEqual(out.monthlyPlans[0].planId,made.id);
@@ -209,6 +213,52 @@ console.log("\neditPlanForMonth (copy-on-write)");
   t("a mutate returning nothing is treated as a no-op, not a wipe",()=>{
     const d=base();
     assert.strictEqual(run(d,"2026-05","me","May 2026",()=>undefined),d);
+  });
+
+  /* ── the carried-forward-month edit bug (2026-07-31) ──────────────────
+     The UI reads the INHERITED plan and hands `mutate` that plan's category
+     id. The clone used to renumber every id, so the mutation matched nothing,
+     the result equalled the clone, and the no-op guard swallowed it: deleting
+     or renaming a category in a carried-forward month did nothing at all,
+     while "add category" and "set income" worked because they reference no
+     existing id. That asymmetry is what made it look like the month was
+     read-only rather than broken. */
+
+  t("DELETING a category by its inherited id works on a carried-forward month",()=>{
+    const out=run(base(),"2026-05","me","May 2026",
+      p=>({...p,categories:(p.categories||[]).filter(c=>c.id!=="c1")}));
+    assert.strictEqual(out.plans.length,2,"a plan should have been materialised");
+    assert.strictEqual(out.plans[1].categories.length,0,"the category should be gone");
+  });
+
+  t("RENAMING a category by its inherited id works on a carried-forward month",()=>{
+    const out=run(base(),"2026-05","me","May 2026",
+      p=>({...p,categories:(p.categories||[]).map(c=>c.id==="c1"?{...c,name:"FOOD"}:c)}));
+    assert.strictEqual(out.plans.length,2);
+    assert.strictEqual(out.plans[1].categories[0].name,"FOOD");
+  });
+
+  t("copy-on-write PRESERVES category/group/sub ids",()=>{
+    // not cosmetic: expenses key on catId, so renumbering orphans any
+    // transaction already logged into that month against the inherited id
+    const d=base();
+    d.plans[0].categories[0].subs=[{id:"s1",name:"Fruit",amount:20}];
+    const out=run(d,"2026-05","me","May 2026",p=>({...p,income:1}));
+    const made=out.plans[1];
+    assert.notStrictEqual(made.id,"pBase","the PLAN id must still be fresh");
+    assert.strictEqual(made.categories[0].id,"c1","category id must survive");
+    assert.strictEqual(made.groups[0].id,"g1","group id must survive");
+    assert.strictEqual(made.categories[0].subs[0].id,"s1","sub id must survive");
+  });
+
+  t("the clone is still a deep copy — editing it never writes through",()=>{
+    // preserving ids must not be mistaken for sharing objects
+    const d=base();
+    const out=run(d,"2026-05","me","May 2026",
+      p=>({...p,categories:(p.categories||[]).map(c=>({...c,amount:999}))}));
+    assert.strictEqual(out.plans[1].categories[0].amount,999);
+    assert.strictEqual(out.plans[0].categories[0].amount,50,"source must be untouched");
+    assert.notStrictEqual(out.plans[1].categories,out.plans[0].categories,"arrays must differ");
   });
 }
 

@@ -1208,8 +1208,24 @@ function resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans){
 /* Deep-clone a plan record for a new month. Pure: takes an id factory, returns
    the record, writes nothing. Split out of clonePlanForMonth so copy-on-write
    can fold the clone and the user's edit into ONE setData, and so the orphan
-   rescue and amount re-derive can be unit-tested directly. */
-function clonePlanRecord(source,mkId,owner,label,mo){
+   rescue and amount re-derive can be unit-tested directly.
+
+   `preserveIds` keeps the source's category/group/sub ids instead of minting
+   new ones, and copy-on-write REQUIRES it. The UI reads the inherited plan and
+   hands a mutator that category's id; if the clone renumbers everything, that
+   id matches nothing, the mutation hits zero rows, and the no-op guard
+   correctly concludes nothing changed — so deleting or renaming a category in
+   a carried-forward month silently did nothing at all, while "add category"
+   and "set income" (which reference no existing id) worked fine.
+
+   Preserving ids is also the truer model: a carried-forward September IS the
+   same budget as August, so its "Groceries" is the same envelope — which
+   matters because expenses key on `catId`, so any transaction already logged
+   into that month stays attached instead of being orphaned by the copy.
+   Write-through to the source is prevented by the deep clone of the objects
+   and arrays, not by renumbering — the ids were never what made it safe. */
+function clonePlanRecord(source,mkId,owner,label,mo,{preserveIds=false}={}){
+  const idFor=old=>preserveIds?old:mkId();
   // migrate() doesn't guarantee either array exists; an unguarded .map here
   // threw *before* setData, so the copy silently did nothing.
   const srcGroups=source.groups||[];
@@ -1223,7 +1239,7 @@ function clonePlanRecord(source,mkId,owner,label,mo){
     return new Date(Number(parts[0]),Number(parts[1])-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
   })();
   // deep-clone groups and categories so edits don't affect source
-  const groups=srcGroups.map(g=>({...g,id:mkId()}));
+  const groups=srcGroups.map(g=>({...g,id:idFor(g.id)}));
   const groupIdMap={};
   srcGroups.forEach((g,i)=>{groupIdMap[g.id]=groups[i].id;});
   /* Orphan rescue. This used to be `groupIdMap[c.groupId]||c.groupId`, which
@@ -1240,12 +1256,12 @@ function clonePlanRecord(source,mkId,owner,label,mo){
       if(!orphanGid){orphanGid=mkId();groups.push({id:orphanGid,name:"Ungrouped"});}
       gid=orphanGid;
     }
-    const subs=(c.subs||[]).map(s=>({...s,id:mkId()}));
+    const subs=(c.subs||[]).map(s=>({...s,id:idFor(s.id)}));
     // re-derive the cached amount from the subs (same rule as syncAmt in
     // BudgetView) so a source whose cache had drifted can't carry the
     // inconsistency into the copy.
     const amount=subs.length>0?subs.reduce((s,x)=>s+(Number(x.amount)||0),0):(Number(c.amount)||0);
-    return{...c,id:mkId(),groupId:gid,subs,amount};
+    return{...c,id:idFor(c.id),groupId:gid,subs,amount};
   });
   const cloned={...source,id:newId,name:derivedLabel,month:derivedLabel,groups,categories};
   delete cloned.deletedAt;
@@ -1454,8 +1470,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.16.0";
-const BUILD_ID="2026.07.31.0012";
+const APP_VERSION="1.16.1";
+const BUILD_ID="2026.07.31.0013";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3903,7 +3919,10 @@ function App(){
       const live=(d.plans||[]).filter(p=>!p.deletedAt);
       const{plan:src}=resolvePlanForMonth(maps,mo,owner,d.activePlanId||{},live);
       if(!src)return d;
-      const cloned=clonePlanRecord(src,uid,owner,label,mo);
+      // preserveIds is mandatory here: `mutate` was built by the UI against the
+      // INHERITED plan, so it targets that plan's category/group/sub ids. A
+      // renumbered clone makes every id-targeted edit a silent no-op.
+      const cloned=clonePlanRecord(src,uid,owner,label,mo,{preserveIds:true});
       const edited=mutate(cloned);
       // Compare against the CLONE, not the source — the clone legitimately has
       // fresh ids throughout, so comparing to the source would always differ
