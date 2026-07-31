@@ -49,7 +49,15 @@
   --glassBg:rgba(255,255,255,.5);--glassBgStrong:rgba(255,255,255,.68);--glassBorder:rgba(255,255,255,.85);--glassShadow:rgba(34,41,44,.16);--glassHi:rgba(255,255,255,.6);
 }
 *{box-sizing:border-box;}
-html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;overflow-x:hidden;width:100%;}
+html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;width:100%;}
+/* overflow-x:hidden belongs on <html> ONLY. On <body> it made body a scroll
+   container: per spec `overflow-x:hidden` with `overflow-y:visible` computes
+   the y axis to `auto`, so body reported `hidden auto`, and every
+   position:sticky descendant then resolved `top:0` against *body's*
+   scrollport — i.e. the full document height — instead of the viewport, so
+   sticky silently never engaged. The root element's overflow propagates to
+   the viewport, so html alone still clips horizontal overflow. */
+html{overflow-x:hidden;}
 /* whenever any sheet/modal overlay is mounted anywhere in the document
    (including Portal-rendered ones attached directly to body), freeze the
    page behind it — otherwise a touch-drag that starts inside the sheet can
@@ -232,27 +240,43 @@ select{transition:background .22s;}
   input.bare.tnum{padding:1px 2px;}
 }
 
-/* ── Budget tab: category/sub rows reflow on narrow screens ──
-   Desktop: name | %  | currency+amount | action icons, all on one line.
-   Mobile: name gets its own full-width line (it's the thing that was
-   getting clipped); % + amount + action icons wrap to a second line,
-   indented to roughly align under the name text. ── */
-.cat-row{display:flex;align-items:center;gap:8px;padding:10px 16px;flex-wrap:wrap;}
-.cat-row-name{display:flex;align-items:center;gap:8px;flex:1 1 160px;min-width:0;}
-.cat-row-meta{display:flex;align-items:center;gap:10px;flex-shrink:0;justify-content:space-between;}
-.cat-row-figures{display:flex;align-items:center;gap:10px;}
-.cat-row-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
-.sub-row{display:flex;align-items:center;gap:8px;padding:7px 16px 7px 36px;flex-wrap:wrap;}
-.sub-row-name{display:flex;align-items:center;gap:8px;flex:1 1 140px;min-width:0;}
-.sub-row-meta{display:flex;align-items:center;gap:10px;flex-shrink:0;justify-content:space-between;}
+/* ── Budget tab: one-line category/sub rows ──
+   These used to wrap to three stacked lines on a phone (name / % + amount /
+   Tracked pill + chevron + trash) — 121px per category, which for 19
+   categories was 2,299px of a 4,484px page: most of why Budget ran 5.3
+   screens deep. They are a single line at every width now.
+   What stays on the row is what actually gets edited every month — the name
+   and the amount. The Tracked toggle and Delete moved into the panel behind
+   the chevron. Nothing is lost at a glance: an untracked category already
+   renders its name italic and greyed, which is the same signal the pill
+   was carrying. ── */
+/* 4px vertical padding, not 8: the row's height floor is already the 40px
+   chevron target, so extra padding only lengthens the page. */
+.cat-row{display:flex;align-items:center;gap:8px;padding:4px 12px;}
+.cat-row-name{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;}
+.cat-row-meta{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.cat-row-figures{display:flex;align-items:center;gap:8px;}
+.cat-row-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.sub-row{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 30px;}
+.sub-row-name{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;}
+.sub-row-meta{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+/* Below tablet the per-category % is the first thing to drop: it is
+   secondary (the "Where your income goes" card already breaks down shares)
+   and losing it buys ~44px back for the name, which is what you scan by. */
 @media(max-width:768px){
-  .cat-row-name{flex-basis:100%;}
-  .cat-row-meta{flex-basis:100%;padding-left:18px;flex-wrap:wrap;row-gap:8px;}
-  .cat-row-figures{flex:1 1 auto;}
-  .cat-row-actions{flex:1 1 auto;justify-content:flex-end;}
-  .sub-row-name{flex-basis:100%;}
-  .sub-row-meta{flex-basis:100%;padding-left:14px;flex-wrap:wrap;row-gap:6px;}
+  .cat-pct{display:none;}
+  /* the per-row currency code goes too — a plan is single-currency, and the
+     code is already on the group total and the income line above. Between
+     them these two buy the category name ~70px, enough that "Long Term
+     Savings" stops truncating. */
+  .cat-cur{display:none;}
 }
+/* Group headers stay put while their own card is on screen, so you always
+   know which group the row under your thumb belongs to. Needs an opaque
+   background (rows would show through otherwise); the group <section> uses
+   overflow:clip rather than hidden so this still works — `hidden` would make
+   the section a scroll container and sticky would resolve against it. */
+.group-head{position:sticky;top:0;z-index:2;background:var(--neuBg);}
 .status-pill-fixed{min-width:104px;justify-content:center;}
 @media(max-width:400px){.status-pill-fixed{min-width:0;padding:0 8px;}}
 
@@ -278,12 +302,22 @@ select{transition:background .22s;}
    than leaving one short card floating against a tall neighbour. */
 .home-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:stretch;}
 .home-cell{display:flex;min-width:0;grid-column:1/-1;}
+/* A card that decides it has nothing honest to say returns null, which would
+   otherwise leave its wrapper behind as a grid gap. Cards guard themselves
+   (the trend pair needs both enough periods AND a non-zero baseline), so the
+   wrapper has to follow the card rather than duplicate its conditions. */
+.home-cell:empty{display:none;}
 .home-cell>*{flex:1;min-width:0;}
 .home-grid>.cell-hero{order:1;}
 .home-grid>.cell-portfolio{order:2;}
 .home-grid>.cell-budget{order:3;}
 .home-grid>.cell-savings{order:4;}
 .home-grid>.cell-goals{order:5;}
+/* The two trend cards read after the "right now" ones — you ask "am I
+   overspending today" before "am I drifting over months". Absent entirely
+   until three completed periods exist. */
+.home-grid>.cell-lifestyle{order:6;}
+.home-grid>.cell-savingstrend{order:7;}
 /* Mobile uses the floating + button instead (never both at once). */
 .home-grid>.cell-qa{display:none;}
 @media(min-width:768px){
@@ -291,7 +325,9 @@ select{transition:background .22s;}
   .home-grid>.cell-savings{grid-column:span 3;order:3;}
   .home-grid>.cell-budget{grid-column:span 3;order:4;}
   .home-grid>.cell-goals{grid-column:span 3;order:5;}
-  .home-grid>.cell-qa{display:flex;order:6;}
+  .home-grid>.cell-lifestyle{grid-column:span 3;order:6;}
+  .home-grid>.cell-savingstrend{grid-column:span 3;order:7;}
+  .home-grid>.cell-qa{display:flex;order:8;}
 }
 @media(min-width:1024px){
   .home-grid>.cell-portfolio{grid-column:span 4;}
@@ -787,8 +823,12 @@ const evalMathExpr=(raw,fallback=0)=>{
    `disabled={!valid}` (tapping a disabled button doesn't reliably blur the
    field, so a blur-only commit strands you with a filled box and a dead
    button) or a running conversion/preview. The draft still drives what's
-   displayed, so emptying the box still shows empty. */
-function NumField({value,onCommit,allowEmpty=false,integer=false,min,max,live=false,
+   displayed, so emptying the box still shows empty.
+   `navGroup` makes Enter commit and jump to the next field carrying the same
+   group, in document order. Budget's monthly sweep is ~21 amounts down a
+   list; without this every one costs dismissing the keyboard, scrolling and
+   tapping the next box. */
+function NumField({value,onCommit,allowEmpty=false,integer=false,min,max,live=false,navGroup,
                    inputMode="decimal",onFocus,onBlur,onKeyDown,step,...rest}){
   const[draft,setDraft]=useState(null);
   const shown=draft!==null?draft:(value==null?"":String(value));
@@ -808,7 +848,7 @@ function NumField({value,onCommit,allowEmpty=false,integer=false,min,max,live=fa
     }
     onBlur&&onBlur(e);
   };
-  return<input type="text" inputMode={inputMode} value={shown}
+  return<input type="text" inputMode={inputMode} value={shown} data-numnav={navGroup||undefined}
     onChange={e=>{
       const raw=e.target.value;
       setDraft(raw);
@@ -819,7 +859,19 @@ function NumField({value,onCommit,allowEmpty=false,integer=false,min,max,live=fa
     }}
     onFocus={e=>{e.target.select();onFocus&&onFocus(e);}}
     onBlur={commit}
-    onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();onKeyDown&&onKeyDown(e);}}
+    onKeyDown={e=>{
+      if(e.key==="Enter"){
+        e.preventDefault();
+        const el=e.currentTarget;
+        el.blur();  // commits through the handler above
+        if(navGroup){
+          const all=[...document.querySelectorAll(`[data-numnav="${navGroup}"]`)];
+          const next=all[all.indexOf(el)+1];
+          if(next)next.focus();
+        }
+      }
+      onKeyDown&&onKeyDown(e);
+    }}
     {...rest}/>;
 }
 const STORAGE_KEY="salaryPlanner:v3";
@@ -1018,8 +1070,8 @@ function spendStatusBg(spent,budget){
    same isExtraFunds handling where ad-hoc top-ups raise the effective budget
    rather than counting as spend. Kept as one shared top-level function so
    Home reads the numbers rather than re-deriving them. */
-function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods}){
-  const month=bucketNow(payPeriods,owner);
+function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods},bucket){
+  const month=bucket||bucketNow(payPeriods,owner);
   const plan=planForMonth?planForMonth(month,owner):null;
   const envs=[];
   if(plan){
@@ -1065,8 +1117,8 @@ function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods}){
    because cloning a plan into a new month gives its categories fresh ids —
    name is the only thing stable across months for a category a user thinks
    of as "the same one". */
-function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNames,investNames){
-  const month=bucketNow(payPeriods,owner);
+function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNames,investNames,bucket){
+  const month=bucket||bucketNow(payPeriods,owner);
   const plan=planForMonth?planForMonth(month,owner):null;
   const idsFor=names=>new Set((plan&&plan.categories||[]).filter(c=>(names||[]).includes(c.name)).map(c=>c.id));
   const savingIds=idsFor(savingsNames),investIds=idsFor(investNames);
@@ -1077,14 +1129,69 @@ function savingsInvestingFor(owner,{planForMonth,expenses,payPeriods},savingsNam
   return{month,saved,invested,income:Number((plan&&plan.income)||0)};
 }
 
+/* ── Month-over-month history for Home's two trend questions ──────────────
+   "Is my lifestyle creeping?" and "Am I improving my savings over time?"
+   both need the same thing: the per-bucket rollups the current-month cards
+   already show, but for *completed* buckets going back in time.
+
+   It runs the very same trackedSpendingFor()/savingsInvestingFor() the live
+   cards use, just with an explicit bucket, so a past month can never be
+   computed by a different rule than the current one.
+
+   Only COMPLETE buckets are returned. The bucket in progress is excluded on
+   purpose: a month that is four days old always looks like a spending
+   collapse, and comparing against it would report an improvement that isn't
+   real. `hasEnough` is the gate Home uses to decide whether the trend cards
+   exist at all — with fewer than MIN_TREND_BUCKETS completed periods there
+   is no honest trend to draw, so the cards render nothing rather than an
+   empty state nobody can act on.
+
+   A bucket counts as having data only if it carries at least one expense
+   row; a plan alone is not evidence the month was tracked (plans carry
+   forward automatically, so every future month "has" a plan). */
+const MIN_TREND_BUCKETS=3;
+function bucketHistoryFor(owner,ctx,savingsNames,investNames,maxBuckets=12){
+  const{expenses,payPeriods}=ctx;
+  const current=bucketNow(payPeriods,owner);
+  const mine=(expenses||[]).filter(e=>e.date&&(e.owner||"me")===owner);
+  // distinct completed buckets that actually contain tracked activity
+  const buckets=[...new Set(mine.map(e=>bucketKeyFor(e.date,payPeriods,owner)))]
+    .filter(b=>b<current).sort().slice(-maxBuckets);
+  return buckets.map(b=>{
+    const t=trackedSpendingFor(owner,ctx,b);
+    const s=savingsInvestingFor(owner,ctx,savingsNames,investNames,b);
+    const put=s.saved+s.invested;
+    return{bucket:b,spent:t.spent,budget:t.budget,
+      saved:s.saved,invested:s.invested,income:s.income,
+      rate:s.income>0?(put/s.income)*100:0};
+  });
+}
+/* Household = both owners' completed buckets merged key-by-key. Summing per
+   bucket (rather than concatenating) keeps "one row per period", which is
+   what both trend cards chart. */
+function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=12){
+  if(profile!=="household")return bucketHistoryFor(profile,ctx,savingsNames,investNames,maxBuckets);
+  const a=bucketHistoryFor("me",ctx,savingsNames,investNames,maxBuckets);
+  const b=bucketHistoryFor("wife",ctx,savingsNames,investNames,maxBuckets);
+  const byKey=new Map();
+  [...a,...b].forEach(r=>{
+    const cur=byKey.get(r.bucket);
+    if(!cur){byKey.set(r.bucket,{...r});return;}
+    cur.spent+=r.spent;cur.budget+=r.budget;cur.saved+=r.saved;
+    cur.invested+=r.invested;cur.income+=r.income;
+  });
+  return[...byKey.values()].sort((x,y)=>x.bucket<y.bucket?-1:1)
+    .map(r=>({...r,rate:r.income>0?((r.saved+r.invested)/r.income)*100:0}));
+}
+
 /* ── App version / build ──
    Single source of truth for the version shown in Settings → About and
    compared against version.json. Bump both on every deploy — BUILD_ID
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.6.0";
-const BUILD_ID="2026.07.30.0004";
+const APP_VERSION="1.10.0";
+const BUILD_ID="2026.07.31.0005";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1468,7 +1575,9 @@ function defaultData(){
     targets:[],
     mp2DividendRates:[],
     snapshots:[],
-    settings:{includeMp2EstimateInNetWorth:false,goldAutoRefresh:true,snapshotRetention:{dailyDays:35,weeklyDays:365}},
+    settings:{includeMp2EstimateInNetWorth:false,goldAutoRefresh:true,snapshotRetention:{dailyDays:35,weeklyDays:365},
+      // Home's "am I saving enough?" needs something to be enough *of*.
+      savingsTargetPct:20},
     investTarget:{me:{thresholdPct:20,groupNames:["Invest & Grow"]},wife:{thresholdPct:20,groupNames:[]}},
     household:{splitMine:50,expenses:[
       {id:uid(),name:"Rent",amount:2000,color:SEG[0],trackInBills:false},
@@ -1605,6 +1714,9 @@ function migrate(d){
   // history are kept before compressSnapshots() collapses older entries to
   // weekly, then monthly (see compressSnapshots below).
   if(d.settings.goldAutoRefresh===undefined)d.settings.goldAutoRefresh=true;
+  // Benchmark for Home's savings-rate verdict. 20% is a common rule of thumb
+  // and only affects what the card *says*, never a stored figure.
+  if(d.settings.savingsTargetPct===undefined)d.settings.savingsTargetPct=20;
   if(!d.settings.snapshotRetention)d.settings.snapshotRetention={dailyDays:35,weeklyDays:365};
   if(d.settings.snapshotRetention.dailyDays===undefined)d.settings.snapshotRetention.dailyDays=35;
   if(d.settings.snapshotRetention.weeklyDays===undefined)d.settings.snapshotRetention.weeklyDays=365;
@@ -4000,6 +4112,35 @@ function App(){
    doesn't apply (kept overridable for that reason). */
 function homeCardStyle(overrides){return{...neu(20),padding:16,marginBottom:0,...overrides};}
 
+/* ── Verdict line ──
+   Every Home card is supposed to answer one question. A figure is not an
+   answer: "SAR 3,958 remaining · 0% used" tells you what is true, not
+   whether it is good. This is the one-line plain-language answer that sits
+   directly under a card's title, with the figures kept below it as the
+   supporting detail.
+
+   Tones map to the same semantics as spendStatusColor so a green verdict and
+   a green bar never disagree: good = on track, warn = worth a look,
+   bad = acting against you, flat = true but not a judgement. */
+const VERDICT_TONES={
+  good:()=>({fg:P.grD,bg:P.grS,Icon:I.Check}),
+  warn:()=>({fg:"#E07B2A",bg:P.amberS,Icon:I.ArrowUp}),
+  bad: ()=>({fg:P.wine,bg:P.wineS,Icon:I.ArrowUp}),
+  flat:()=>({fg:P.neuSub,bg:P.sfA,Icon:null}),
+};
+function Verdict({tone="flat",children,title}){
+  const t=(VERDICT_TONES[tone]||VERDICT_TONES.flat)();
+  const Icon=t.Icon;
+  return(
+    <div title={title} style={{display:"inline-flex",alignItems:"center",gap:6,
+      borderRadius:999,padding:"4px 10px",marginBottom:10,maxWidth:"100%",
+      background:t.bg,color:t.fg,fontSize:12,fontWeight:600,lineHeight:1.25}}>
+      {Icon&&<Icon size={12} style={{flexShrink:0}}/>}
+      <span style={{minWidth:0}}>{children}</span>
+    </div>
+  );
+}
+
 /* Turns a livePriceAt/ratesAt timestamp (+ online state) into the small
    muted freshness line shown on Home's live-priced/FX-derived cards. Never
    surfaces raw technical errors — those stay on Investments/Currency where
@@ -4140,6 +4281,96 @@ function HistoryRangeChart({snapshots,profile,field,money,color,height=200,empty
             </LineChart>
           </ResponsiveContainer>
         </div>
+      ):(
+        <p style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
+      )}
+    </div>
+  );
+}
+
+/* ── Composition over time ──
+   Net Worth used to carry two charts of the same thing: the range-selectable
+   net-worth line above, and a monthly net-worth line inside the snapshot-log
+   card below. Two lines of one figure, stacked on one screen — which is why
+   the tab read as repetitive.
+
+   The second slot now answers a different question: net worth went up, but
+   *because of what?* Same snapshots, same range logic (RANGES /
+   bucketSnapshotsForRange) as HistoryRangeChart, but plotting the components
+   that were already being captured alongside `net` — banks, investments,
+   other assets and liabilities — rather than the total again.
+
+   A `negate` series gets its OWN stack id, not the positive one's. Sharing it
+   makes Recharts *accumulate* the negative — the debt band ends up drawn
+   downward from the top of the assets, so the top edge reads as gross assets
+   and the band's lower edge is the real net worth. Correct arithmetic, easy
+   to misread. A separate stack puts assets above the axis and debt below it,
+   which is what the Net Worth card's caption promises.
+
+   Generalised over a `series` prop so Investments plots its own composition
+   (snapshot.byType.{stocks,mp2,td,gold}) through this same component instead
+   of growing a second near-identical chart. Keys may be dot paths, the same
+   way HistoryRangeChart's `field` reaches into byType. */
+function CompositionRangeChart({snapshots,profile,series,money,height=200,emptyText}){
+  const[range,setRange]=useState("1M");
+  const profileSnaps=useMemo(()=>(snapshots||[]).filter(s=>s.profile===profile).sort((a,b)=>a.date.localeCompare(b.date)),[snapshots,profile]);
+  const bucketed=useMemo(()=>bucketSnapshotsForRange(profileSnaps,range),[profileSnaps,range]);
+  const fmtLabel=(dateStr,r)=>{
+    const d=new Date(dateStr+"T00:00:00");
+    if(r==="MAX")return d.toLocaleDateString("en-US",{month:"short",year:"2-digit"});
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  };
+  /* `series` is [{key,label,color,negate?}]. `key` may be a dot path so it can
+     reach snapshot.byType.* the same way HistoryRangeChart's `field` does.
+     `negate` flips a series below the axis (liabilities on Net Worth). */
+  const SERIES=series||[];
+  const at=(s,key)=>key.split(".").reduce((o,k)=>o==null?undefined:o[k],s);
+  const pts=bucketed.map(s=>{
+    const row={label:fmtLabel(s.date,range)};
+    SERIES.forEach(f=>{
+      const v=Number(at(s,f.key))||0;
+      row[f.key]=f.negate?-v:v;
+    });
+    return row;
+  });
+  /* Only draw a series that is actually non-zero somewhere in range —
+     otherwise every household with no liabilities gets a legend entry and a
+     tooltip row for a permanent zero. */
+  const live=SERIES.filter(s=>pts.some(p=>p[s.key]!==0));
+  return(
+    <div>
+      <div role="group" aria-label="Time range" style={{display:"flex",gap:4,marginBottom:8}}>
+        {RANGES.map(r=>(
+          <button key={r} onClick={()=>setRange(r)} className={range===r?"":"neu-btn"} aria-pressed={range===r}
+            style={{borderRadius:999,padding:"3px 10px",fontSize:12,border:"none",
+              ...(range===r?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>{r}</button>
+        ))}
+      </div>
+      {pts.length>=2&&live.length>0?(
+        <>
+          <div style={{width:"100%",height}}>
+            <ResponsiveContainer>
+              <AreaChart data={pts} margin={{top:8,right:8,bottom:0,left:-12}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
+                <XAxis dataKey="label" tick={{fontSize:10,fill:P.neuSub}}/>
+                <YAxis tick={{fontSize:10,fill:P.neuSub}} tickFormatter={v=>money(v,true)}/>
+                <Tooltip formatter={(v,name)=>[money(Math.abs(v)),name]}/>
+                {live.map(s=>(
+                  <Area key={s.key} type="monotone" dataKey={s.key} name={s.label}
+                    stackId={s.negate?"neg":"pos"}
+                    stroke={s.color} fill={s.color} fillOpacity={.55} strokeWidth={1.5}/>
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginTop:8}}>
+            {live.map(s=>(
+              <span key={s.key} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:P.neuSub}}>
+                <span style={{width:9,height:9,borderRadius:999,background:s.color}}/>{s.label}
+              </span>
+            ))}
+          </div>
+        </>
       ):(
         <p style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
       )}
@@ -4359,7 +4590,7 @@ function PortfolioCard({invs,livePrice,livePriceAt,prevClose,convert,homeDisplay
    counts). Circular progress = savings rate against income; the horizontal
    two-tone bar is Saved vs Invested so the split reads at a glance without a
    legend. */
-function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsCategories,investmentCategories,homeDisplay,convert,cur,onOpen}){
+function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsCategories,investmentCategories,homeDisplay,convert,cur,savingsTargetPct,onOpen}){
   const sum=useMemo(()=>{
     const ctx={planForMonth,expenses,payPeriods};
     if(profile==="household"){
@@ -4378,6 +4609,7 @@ function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsC
   };
   const total=sum.saved+sum.invested;
   const rate=sum.income>0?(total/sum.income)*100:0;
+  const target=Number(savingsTargetPct)>0?Number(savingsTargetPct):20;
   const savedShare=total>0?(sum.saved/total)*100:50;
   const noCatsConfigured=(savingsCategories||[]).length===0&&(investmentCategories||[]).length===0;
 
@@ -4387,6 +4619,17 @@ function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsC
       onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
       style={{...homeCardStyle(),cursor:"pointer"}}>
       <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:10,minHeight:18,display:"flex",alignItems:"center"}}>Savings &amp; Investing</div>
+      {/* "Am I saving enough?" needs something to be enough *of* — the target
+          is data.settings.savingsTargetPct, editable in Settings. Only shown
+          once there is income to be a percentage of, otherwise a 0% rate
+          would read as failure in a month that simply has no plan yet. */}
+      {!noCatsConfigured&&sum.income>0&&
+        <Verdict tone={rate>=target?"good":rate>=target*0.75?"warn":"bad"}
+          title={`Target is ${target}% of income — change it in Settings`}>
+          {rate>=target
+            ?`Saving ${rate.toFixed(0)}% — at or above your ${target}% target`
+            :`Saving ${rate.toFixed(0)}% — ${(target-rate).toFixed(0)} points under your ${target}% target`}
+        </Verdict>}
       {noCatsConfigured?
         <div className="home-fill" style={{fontSize:13,color:P.faint,display:"flex",alignItems:"center"}}>
           Choose your savings and investment categories in Settings to track this.
@@ -4454,7 +4697,7 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
     return trackedSpendingFor(profile,ctx);
   },[profile,planForMonth,expenses,payPeriods]);
 
-  const{topCats,overCount,remaining,pctUsed,periodLabelText,daysLeft}=useMemo(()=>{
+  const{topCats,overCount,remaining,pctUsed,periodLabelText,daysLeft,pace}=useMemo(()=>{
     const remaining=sum.budget-sum.spent;
     const pctUsed=sum.budget>0?(sum.spent/sum.budget)*100:0;
     // "closest to reaching their budget" — highest % used first.
@@ -4465,7 +4708,23 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
     const labelOwner=profile==="household"?"me":profile;
     const periodLabelText=bucketLabel(sum.month,payPeriods,labelOwner);
     const{elapsed,total}=bucketProgress(sum.month,payPeriods,labelOwner);
-    return{topCats,overCount,remaining,pctUsed,periodLabelText,daysLeft:Math.max(0,total-elapsed)};
+
+    /* The card's actual answer to "am I overspending right now?".
+       % of budget used means nothing on its own — 60% used is fine on day 25
+       and alarming on day 5. So compare burn rate against how much of the
+       period has elapsed and project the finish.
+       Skipped for the first two days: one big shop on day 1 projects to a
+       catastrophe and would cry wolf every single period. */
+    let pace=null;
+    if(sum.budget>0&&elapsed>=3){
+      const projected=(sum.spent/elapsed)*total;
+      const over=projected-sum.budget;
+      const ratio=projected/sum.budget;
+      pace={projected,over,
+        tone:ratio>=1.05?"bad":ratio>=0.95?"warn":"good",
+        onTrack:ratio<0.95};
+    }
+    return{topCats,overCount,remaining,pctUsed,periodLabelText,daysLeft:Math.max(0,total-elapsed),pace};
   },[sum,payPeriods,profile]);
 
   // Display-only conversion; stored amounts are always in `cur`.
@@ -4492,6 +4751,13 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
         </div>
       :(
         <>
+          {pace&&
+            <Verdict tone={pace.tone}
+              title={`Projected from ${show(sum.spent)} spent so far, extended over the whole period`}>
+              {pace.onTrack?"On track this period"
+                :pace.over>0?`Overspending — heading for ${show(pace.over)} over`
+                :"Close to the limit"}
+            </Verdict>}
           <div className="serif tnum" style={{fontSize:20,fontWeight:600,lineHeight:1.15,
             color:remaining>=0?P.ink:P.red}}>
             {show(Math.abs(remaining))} {remaining>=0?"remaining":"over"}
@@ -4539,15 +4805,115 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
   );
 }
 
-/* e. Goals Summary Card — replaces the old combined-progress-bar GoalsCard.
-   Shows active/completed counts (kept, already good) plus the progress of
-   ONE goal: the single highest-priority active goal, rather than a bar
-   summed across every goal. There is no priority/order field anywhere on
-   the goal schema (checked: no `priority`/`order`/`sortIndex`), so as a
-   documented proxy this picks the active goal CLOSEST TO COMPLETION (surfaces
-   the goal most likely to need one last push) — an arbitrary-but-reasonable
-   stand-in until a real priority field exists. */
-function GoalsSummaryCard({goals,profile,onOpen}){
+/* ── f/g. The two trend cards ──────────────────────────────────────────────
+   These answer the remaining two Home questions — "is my lifestyle creeping?"
+   and "am I improving my savings over time?" — and both need history that
+   month-one users do not have. Expense tracking here started July 2026, so
+   as of this build both render NOTHING.
+
+   That is deliberate and was the explicit call: a card reading "not enough
+   data yet" for months is exactly the decoration this redesign removed. They
+   return null until MIN_TREND_BUCKETS completed periods exist and then appear
+   on their own, with no further work.
+
+   CAVEAT for whoever is here next: because they cannot render yet, their
+   maths has been reviewed but never seen against real data. Re-check both
+   the first month they light up (~Oct 2026). ─────────────────────────────── */
+
+/* f. Lifestyle creep — this is about the *trend* in what you spend, so it
+   compares the most recent COMPLETED period against the mean of the earlier
+   completed ones. Deliberately not "this month so far", which is always
+   lower and would report a phantom improvement. */
+function LifestyleCreepCard({history,homeDisplay,convert,cur,onOpen}){
+  if(!history||history.length<MIN_TREND_BUCKETS)return null;
+  const latest=history[history.length-1];
+  const prior=history.slice(0,-1);
+  const baseline=prior.reduce((s,r)=>s+r.spent,0)/prior.length;
+  if(!(baseline>0))return null;
+  const deltaPct=((latest.spent-baseline)/baseline)*100;
+  const primary=(homeDisplay&&homeDisplay.budget&&homeDisplay.budget.primary)||cur;
+  const show=v=>{
+    const c=primary===cur?v:(convert?convert(v,cur,primary):null);
+    return`${primary} ${Math.round(c==null?v:c).toLocaleString("en-US")}`;
+  };
+  // ±5% is noise, not creep.
+  const tone=deltaPct>10?"bad":deltaPct>5?"warn":deltaPct<-5?"good":"flat";
+  const spark=history.map(r=>r.spent);
+  return(
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle(),cursor:"pointer"}}>
+      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:10}}>Lifestyle</div>
+      <Verdict tone={tone} title={`Latest completed period vs the average of the ${prior.length} before it`}>
+        {Math.abs(deltaPct)<=5?"Spending is holding steady"
+          :deltaPct>0?`Spending up ${deltaPct.toFixed(0)}% vs your average`
+          :`Spending down ${Math.abs(deltaPct).toFixed(0)}% vs your average`}
+      </Verdict>
+      <div className="tnum" style={{fontSize:11,color:P.faint}}>
+        {show(latest.spent)} last period · {show(baseline)} average
+      </div>
+      <div className="home-fill home-spark" style={{marginTop:10,minHeight:0}}>
+        <Sparkline data={spark} color={tone==="bad"?P.red:tone==="good"?P.gr:P.br} area height={46}/>
+      </div>
+    </div>
+  );
+}
+
+/* g. Savings trend — same shape, on savings *rate* rather than spend, so a
+   month where income also rose doesn't read as improvement when the
+   proportion actually fell. Points, not percent-of-percent. */
+function SavingsTrendCard({history,savingsTargetPct,onOpen}){
+  if(!history||history.length<MIN_TREND_BUCKETS)return null;
+  const withIncome=history.filter(r=>r.income>0);
+  if(withIncome.length<MIN_TREND_BUCKETS)return null;
+  const latest=withIncome[withIncome.length-1];
+  const first=withIncome[0];
+  const deltaPts=latest.rate-first.rate;
+  const target=Number(savingsTargetPct)>0?Number(savingsTargetPct):20;
+  const tone=deltaPts>=2?"good":deltaPts<=-2?"bad":"flat";
+  return(
+    <div className="home-card home-tappable" role="button" tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onOpen&&onOpen();}}}
+      style={{...homeCardStyle(),cursor:"pointer"}}>
+      <div style={{fontSize:12,color:P.sub,fontWeight:600,marginBottom:10}}>Savings trend</div>
+      <Verdict tone={tone} title={`Savings rate now vs ${withIncome.length} completed periods ago`}>
+        {Math.abs(deltaPts)<2?"Savings rate is flat"
+          :deltaPts>0?`Improving — up ${deltaPts.toFixed(0)} points`
+          :`Slipping — down ${Math.abs(deltaPts).toFixed(0)} points`}
+      </Verdict>
+      <div className="tnum" style={{fontSize:11,color:P.faint}}>
+        {latest.rate.toFixed(0)}% last period · {first.rate.toFixed(0)}% at the start · {target}% target
+      </div>
+      <div className="home-fill home-spark" style={{marginTop:10,minHeight:0}}>
+        <Sparkline data={withIncome.map(r=>r.rate)} color={tone==="bad"?P.red:P.gr} area height={46}/>
+      </div>
+    </div>
+  );
+}
+
+/* e. Goals Summary Card — active/completed counts, a progress verdict, and
+   one compact row per active goal.
+
+   History: this first replaced a single combined progress bar summed across
+   every goal, then spent a while showing exactly ONE goal (the one closest to
+   completion) as a stand-in for a priority field the schema doesn't have.
+   That was the wrong trade — with two goals you only ever saw one of them,
+   and adding a third silently changed which one appeared rather than showing
+   more. Every active goal now gets a row.
+
+   Rows are still ordered CLOSEST TO COMPLETION first — the same derived sort
+   that used to choose the single goal, kept because there is still no
+   `priority`/`order` field on the goal schema and it puts the goals needing
+   one last push at the top.
+
+   Capped at GOAL_ROWS_MAX with a "+N more" line: Home is a dashboard, and an
+   uncapped list would let one card run away with the page (the same reason
+   the Budget rows were tightened). Completed goals stay in the header count
+   only — they need no action, so they don't earn vertical space here. */
+const GOAL_ROWS_MAX=4;
+function GoalsSummaryCard({goals,profile,owners,onOpen}){
   const list=profile==="household"?(goals||[]):(goals||[]).filter(g=>g.owner===profile);
   const withSaved=list.map(g=>{
     const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
@@ -4556,7 +4922,18 @@ function GoalsSummaryCard({goals,profile,onOpen}){
   });
   const active=withSaved.filter(g=>!g.completed);
   const completedCount=withSaved.length-active.length;
-  const top=[...active].sort((a,b)=>b.pct-a.pct)[0];
+  const ranked=[...active].sort((a,b)=>b.pct-a.pct);
+  const shown=ranked.slice(0,GOAL_ROWS_MAX);
+  const hiddenCount=ranked.length-shown.length;
+
+  /* "Am I progressing with my goals?" — a goal is *stalled* if it has no
+     monthly contribution set, because then nothing is carrying it forward
+     and its progress bar will look identical next month. Goals carrying a
+     monthly amount are on pace by definition (the schema has no target date
+     to be late against — TargetsView is where dated projections live), so
+     the honest verdict is about movement, not lateness. */
+  const funded=active.filter(g=>Number(g.monthly)>0).length;
+  const stalled=active.length-funded;
   /* Deliberately mirrors BudgetCard's shell (header row, ring + headline,
      footer detail) so the two read as a matched pair on the same grid row
      rather than one dense card beside a nearly empty one. */
@@ -4569,24 +4946,59 @@ function GoalsSummaryCard({goals,profile,onOpen}){
         <div style={{fontSize:12,color:P.sub,fontWeight:600}}>Goals</div>
         <div style={{fontSize:12,color:P.faint}}>{completedCount} completed · {active.length} active</div>
       </div>
-      {!top?
+      {active.length>0&&
+        <Verdict tone={stalled===0?"good":funded===0?"bad":"warn"}
+          title="A goal with no monthly amount set has nothing moving it forward">
+          {stalled===0?`All ${active.length} goal${active.length===1?"":"s"} funded monthly`
+            :funded===0?`No monthly amount set${active.length===1?"":" on any goal"}`
+            :`${stalled} of ${active.length} goals have no monthly amount`}
+        </Verdict>}
+      {shown.length===0?
         <div className="home-fill" style={{fontSize:13,color:P.faint,display:"flex",alignItems:"center"}}>
           {withSaved.length===0?"No goals yet":"All goals completed 🎉"}
         </div>
       :(
-        <>
-          <div className="home-fill" style={{display:"flex",alignItems:"center",gap:14,minHeight:0}}>
-            <ProgressRing pct={top.pct} size={56} stroke={6} color={top.color||P.gr}/>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{top.name}</div>
-              <div className="tnum" style={{fontSize:11,color:P.faint,marginTop:2}}>{top.pct.toFixed(0)}% saved</div>
-            </div>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:10,fontSize:11,color:P.faint}}>
-            <span className="tnum">Saved {Math.round(top.saved).toLocaleString("en-US")}</span>
-            <span className="tnum">Target {Math.round(top.target).toLocaleString("en-US")}</span>
-          </div>
-        </>
+        /* home-fill keeps this block absorbing the card's leftover height, so
+           Goals still bottom-aligns with its grid neighbour above 768px. */
+        <div className="home-fill" style={{display:"flex",flexDirection:"column",gap:10,minHeight:0}}>
+          {shown.map(g=>{
+            const color=g.color||P.gr;
+            return(
+              <div key={g.id}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+                  <span style={{width:8,height:8,borderRadius:999,background:color,flexShrink:0}}/>
+                  <span style={{flex:1,minWidth:0,fontSize:12,fontWeight:600,color:P.ink,
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {g.name}
+                    {/* Household merges both owners' goals, and the two people
+                        genuinely have same-named goals ("Emergency Fund"), so
+                        the row would otherwise be ambiguous. Only shown there —
+                        on a single profile every goal already belongs to you. */}
+                    {profile==="household"&&
+                      <span style={{fontWeight:500,color:P.faint}}> · {(owners||{})[g.owner]||g.owner}</span>}
+                  </span>
+                  <span className="tnum" style={{fontSize:12,fontWeight:600,color:P.sub,flexShrink:0}}>
+                    {g.pct.toFixed(0)}%
+                  </span>
+                </div>
+                {/* same trough + liquid fill as Budget/Expenses/Forecast bars.
+                    Width is clamped: an over-funded goal must not overflow. */}
+                <div style={{...neuInset(999),height:6,overflow:"hidden"}}>
+                  <div className="bar-animated liquid-fill"
+                    style={{width:`${Math.min(100,Math.max(0,g.pct))}%`,height:"100%",
+                      background:liquidFillBg(color)}}/>
+                </div>
+              </div>
+            );
+          })}
+          {hiddenCount>0&&
+            /* plain text, not a button — the whole card is already a
+               role="button" that opens the Goals tab, so a nested control
+               here would just be a second tap target for the same action. */
+            <div style={{fontSize:11,color:P.faint,marginTop:"auto"}}>
+              +{hiddenCount} more goal{hiddenCount===1?"":"s"}
+            </div>}
+        </div>
       )}
     </div>
   );
@@ -4725,6 +5137,14 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
   const isVisible=key=>visibility[key]!==false;
   const savingsCategories=homeSettings.savingsCategories||[];
   const investmentCategories=homeSettings.investmentCategories||[];
+  const savingsTargetPct=(data.settings&&data.settings.savingsTargetPct)||20;
+
+  /* Completed-period history behind the two trend cards. Empty until three
+     periods have been tracked, which is what keeps those cards unrendered —
+     see the block comment above LifestyleCreepCard. */
+  const trendHistory=useMemo(
+    ()=>bucketHistoryCombined(profile,{planForMonth,expenses,payPeriods},savingsCategories,investmentCategories),
+    [profile,planForMonth,expenses,payPeriods,savingsCategories,investmentCategories]);
 
   /* Investment Accounts (Phase 1): everything below is filtered by the
      selected profile using the same investmentsForProfile()/invSarForOwner()
@@ -4793,7 +5213,8 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
           <div className="home-cell cell-savings">
             <SavingsInvestingCard profile={profile} payPeriods={payPeriods} planForMonth={planForMonth} expenses={expenses}
               savingsCategories={savingsCategories} investmentCategories={investmentCategories}
-              homeDisplay={homeDisplay} convert={convert} cur={cur} onOpen={openExpensesFiltered}/>
+              homeDisplay={homeDisplay} convert={convert} cur={cur} savingsTargetPct={savingsTargetPct}
+              onOpen={openExpensesFiltered}/>
           </div>}
         {isVisible("trackedSpending")&&
           <div className="home-cell cell-budget">
@@ -4803,7 +5224,20 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
           </div>}
         {isVisible("goals")&&
           <div className="home-cell cell-goals">
-            <GoalsSummaryCard goals={goals} profile={profile} onOpen={()=>setTab("goals")}/>
+            <GoalsSummaryCard goals={goals} profile={profile} owners={owners} onOpen={()=>setTab("goals")}/>
+          </div>}
+        {/* Both render null until three completed periods exist, so the cells
+            are wrapped to stay out of the grid entirely rather than leaving a
+            gap where an invisible card would sit. */}
+        {isVisible("lifestyle")&&trendHistory.length>=MIN_TREND_BUCKETS&&
+          <div className="home-cell cell-lifestyle">
+            <LifestyleCreepCard history={trendHistory} homeDisplay={homeDisplay} convert={convert} cur={cur}
+              onOpen={openExpenses}/>
+          </div>}
+        {isVisible("savingsTrend")&&trendHistory.length>=MIN_TREND_BUCKETS&&
+          <div className="home-cell cell-savingstrend">
+            <SavingsTrendCard history={trendHistory} savingsTargetPct={savingsTargetPct}
+              onOpen={openExpensesFiltered}/>
           </div>}
         <div className="home-cell cell-qa">
           <QuickActions {...actions}/>
@@ -5115,10 +5549,12 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
       {editable&&(monthPlan.groups||[]).map(g=>{
         const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
         const groupTotal=items.reduce((s,c)=>s+effectiveAmt(c),0);
+        /* overflow:clip, not hidden — `hidden` turns the section into a
+           scroll container and the sticky group header stops working. */
         return(
-          <section key={g.id} style={{...neu(16),overflow:"hidden",marginBottom:16}}>
-            {/* Group header */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px"}}>
+          <section key={g.id} style={{...neu(16),overflow:"clip",marginBottom:16}}>
+            {/* Group header — sticky while this card is on screen */}
+            <div className="group-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px"}}>
               <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600,color:P.neuInk}}/>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(groupTotal)}</span>
@@ -5143,22 +5579,37 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                     </div>
                     <div className="cat-row-meta">
                       <div className="cat-row-figures">
-                        <span className="tnum" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>{pct(effAmt).toFixed(2)}%</span>
+                        <span className="tnum cat-pct" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>{pct(effAmt).toFixed(2)}%</span>
                         <div style={{display:"flex",alignItems:"center",gap:4}}>
-                          <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
+                          <span className="cat-cur" style={{fontSize:11,color:P.neuSub}}>{cur}</span>
                           {hasSubs
                             /* when subs exist, show computed total (read-only style) */
-                            ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.jade}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
-                            /* no subs — manual input as before */
-                            :<NumField value={c.amount} onCommit={v=>updateCat(c.id,{amount:v})} min={0}
-                              className="bare tnum" style={{width:88,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
+                            ?<span className="tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600,color:P.jade}}>{effAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                            /* no subs — manual input as before. navGroup wires Enter
+                               to jump to the next amount down the page, so a monthly
+                               sweep never has to dismiss and re-open the keyboard. */
+                            :<NumField value={c.amount} onCommit={v=>updateCat(c.id,{amount:v})} min={0} navGroup="budget"
+                              className="bare tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
                           }
                         </div>
                       </div>
                       <div className="cat-row-actions">
-                        {/* tracking toggle — was an icon-only button crammed against
-                            expand/delete; now a labeled, full-size touch target so it
-                            can't be confused with the destructive action beside it */}
+                        {/* Only the expander stays on the row. Tracked + Delete live
+                            inside the panel it opens — see the .cat-row CSS note. */}
+                        <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide details":"Show details"}
+                          aria-label={subsOpen?`Hide details for ${c.name||"category"}`:`Show details for ${c.name||"category"}`} aria-expanded={subsOpen}
+                          style={{background:"transparent",border:"none",color:subsOpen?P.jade:P.neuSub,padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sub-items panel */}
+                  {subsOpen&&(
+                    <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
+                      {/* Category-level controls, relocated off the row */}
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"8px 12px 8px 30px"}}>
                         <button onClick={()=>updateCat(c.id,{trackExpenses:c.trackExpenses===false})}
                           title={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking (one-time transfers, e.g. Savings)"}
                           aria-label={c.trackExpenses===false?"Re-enable expense tracking for this category":"Exclude this category from expense tracking"}
@@ -5169,22 +5620,13 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                           {c.trackExpenses===false?<I.EyeOff size={13}/>:<I.Receipt size={13}/>}
                           {c.trackExpenses===false?"Not tracked":"Tracked"}
                         </button>
-                        {/* sub-toggle button */}
-                        <button onClick={()=>toggleSubs(c.id)} title={subsOpen?"Hide sub-items":"Show sub-items"}
-                          aria-label={subsOpen?"Hide sub-items":"Show sub-items"} aria-expanded={subsOpen}
-                          style={{background:"transparent",border:"none",color:subsOpen?P.jade:P.neuSub,padding:10,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          <I.Chevron size={14} style={{transform:subsOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+                        <button onClick={()=>setConfirmDelete({type:"cat",id:c.id,name:c.name||"this category"})}
+                          aria-label={`Delete ${c.name||"category"}`}
+                          className="status-pill" style={{marginLeft:"auto",cursor:"pointer",
+                            border:`1px solid ${P.line}`,background:"transparent",color:P.wine}}>
+                          <I.Trash size={13}/>Delete
                         </button>
-                        <IconButton icon={I.Trash} label={`Delete ${c.name||"category"}`}
-                          onClick={()=>setConfirmDelete({type:"cat",id:c.id,name:c.name||"this category"})} size={15}
-                          style={{color:P.wine,opacity:.5}}/>
                       </div>
-                    </div>
-                  </div>
-
-                  {/* Sub-items panel */}
-                  {subsOpen&&(
-                    <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
                       {subs.map(sub=>(
                         <div key={sub.id} className="sub-row" style={{borderBottom:"1px solid rgba(0,0,0,.05)"}}>
                           <div className="sub-row-name">
@@ -5195,8 +5637,8 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                           </div>
                           <div className="sub-row-meta">
                             <div style={{display:"flex",alignItems:"center",gap:4}}>
-                              <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
-                              <NumField value={sub.amount} onCommit={v=>handleSubChange(c.id,sub.id,{amount:v})} min={0}
+                              <span className="cat-cur" style={{fontSize:11,color:P.neuSub}}>{cur}</span>
+                              <NumField value={sub.amount} onCommit={v=>handleSubChange(c.id,sub.id,{amount:v})} min={0} navGroup="budget"
                                 className="bare tnum" style={{width:80,textAlign:"right",fontSize:13,fontWeight:600,color:P.neuInk}}/>
                             </div>
                             <IconButton icon={I.Trash} label={`Delete ${sub.name||"sub-item"}`}
@@ -5218,15 +5660,11 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                     </div>
                   )}
 
-                  {/* Quick "add sub-item" link when panel is closed (only shows when no subs yet) */}
-                  {!subsOpen&&!hasSubs&&(
-                    <div style={{paddingLeft:36,paddingBottom:6,marginTop:-4}}>
-                      <button onClick={()=>handleAddSub(c.id)}
-                        style={{fontSize:11,color:P.neuSub,background:"transparent",border:"none",padding:"0 0 2px",display:"flex",alignItems:"center",gap:4}}>
-                        <I.Plus size={10}/>add sub-items
-                      </button>
-                    </div>
-                  )}
+                  {/* The old always-on "add sub-items" hint line lived here. It
+                      cost a 23px row under every category that had no subs (17
+                      of 19 in a typical plan, ~391px of pure chrome) and only
+                      duplicated the "Add sub-item" button inside the panel the
+                      chevron already opens. */}
                 </div>
               );
             })}
@@ -7077,54 +7515,30 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
           emptyText="Trend appears once 2+ days of portfolio history have been captured (captured automatically once a day)."/>
       </div>
 
-      {/* Gold value over time (roadmap Phase 4 candidate) — same snapshot
-          system/component as Portfolio trend above, pointed at the
-          per-type breakdown captured alongside it (snapshot.byType.gold),
-          not a new chart implementation. Only shown once a Gold account
-          exists, matching the "Gold {usd(...)}" hero line's own gating. */}
-      {goldInvs.length>0&&(
-        <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
-          <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 12px"}}>Gold value over time</h3>
-          <HistoryRangeChart snapshots={snapshots} profile="household" field="byType.gold" color={P.amber}
-            money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
-            emptyText="Trend appears once 2+ days of gold value history have been captured (captured automatically once a day)."/>
-        </div>
-      )}
-
-      {/* portfolio history chart (legacy, monthly-only, captured when you refresh prices) */}
-      {portHistory.length>0&&(()=>{
-        const pts=[...portHistory].sort((a,b)=>a.month.localeCompare(b.month));
-        const first=pts[0].value,last=pts[pts.length-1].value;
-        const trending=last>=first;
-        const chartColor=trending?"#4ADE80":"#F87171";
-        const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
-        const data=pts.map(p=>({label:fmtMo(p.month),value:p.value}));
-        const pctChange=first>0?((last-first)/first*100):0;
-        return(
-          <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-              <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Portfolio over time</h3>
-              <span className="tnum" style={{fontSize:13,fontWeight:600,color:trending?P.jade:P.wine}}>
-                {trending?"▲":"▼"} {Math.abs(pctChange).toFixed(1)}% total
-              </span>
-            </div>
-            <div style={{width:"100%",height:160}}>
-              <ResponsiveContainer>
-                <LineChart data={data} margin={{top:4,right:8,bottom:0,left:-16}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
-                  <XAxis dataKey="label" tick={{fontSize:10,fill:P.neuSub}}/>
-                  <YAxis tick={{fontSize:10,fill:P.neuSub}} tickFormatter={v=>`$${Math.round(v/1000)}k`}/>
-                  <Tooltip formatter={v=>`$${Math.round(v).toLocaleString("en-US")}`}/>
-                  <Line type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2.5} dot={{r:3,fill:chartColor}}/>
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <div style={{fontSize:11,color:P.neuSub,marginTop:6}}>
-              Captured monthly when you refresh prices · {pts.length} data point{pts.length!==1?"s":""}
-            </div>
-          </div>
-        );
-      })()}
+      {/* Replaces two charts that used to sit here: "Portfolio over time" (a
+          monthly net-portfolio line off portHistory — the same figure as
+          "Portfolio trend" above, just from the older data source) and the
+          standalone "Gold value over time". Gold is now one band of this
+          composition instead of its own card, and the question this answers —
+          which *kind* of investment is actually growing — is one the tab
+          couldn't answer before despite already capturing the data.
+          portHistory is still written on refresh and still read by Home's
+          PortfolioCard, so nothing is orphaned. */}
+      <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 4px"}}>What's driving it</h3>
+        <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
+          Portfolio value split by account type over time.
+        </p>
+        <CompositionRangeChart snapshots={snapshots} profile="household"
+          series={[
+            {key:"byType.stocks",label:"Stocks / ETF",color:SEG[0]},
+            {key:"byType.mp2",label:"Pag-IBIG MP2",color:SEG[3]},
+            {key:"byType.td",label:"Time deposits",color:SEG[5]},
+            {key:"byType.gold",label:"Gold",color:P.amber},
+          ]}
+          money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
+          emptyText="Appears once 2+ days of history have been captured (captured automatically once a day)."/>
+      </div>
 
       {/* Section 8 filters: owner / account type / active-matured status */}
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
@@ -7146,8 +7560,11 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         </button>
       </div>
 
+      {/* Each section wraps its own header + card so the sticky header is
+          bounded by its section, the same shape Budget's groups use. */}
+      <div style={{marginBottom:16}}>
       {/* controls */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+      <div className="group-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0 8px"}}>
         <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Stocks / ETF</h2>
         <button onClick={refresh} disabled={loading} className="neu-btn"
           style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade,opacity:loading?.6:1}}>
@@ -7160,11 +7577,17 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
 
       {/* holdings list */}
       {(typeFilter==="all"||typeFilter==="stocks")&&
-      <div style={{...neu(16),overflow:"hidden",marginBottom:16}}>
-        {rows.map(r=>(
+      <div style={{...neu(16),overflow:"hidden"}}>
+        {rows.map(r=>{
+          const trades=(r.trades||[]).filter(t=>!t.deletedAt);
+          const open=expandedId===r.id;
+          return(
           <div key={r.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
-            {/* summary row */}
-            <div style={{padding:"12px 16px"}}>
+            {/* Collapsed summary — ticker, value and gain, the three things you
+                scan a holdings list for. Everything editable (owner/type,
+                delete) and every action (add trade, trade log) is behind the
+                chevron, the same split Budget's category rows use. */}
+            <div style={{padding:"8px 12px"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <input value={r.ticker} placeholder="TICKER"
                   onChange={e=>updateInv(r.id,{ticker:e.target.value.toUpperCase()})}
@@ -7173,76 +7596,89 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                     if(!t||r.name)return; // don't overwrite an existing name
                     fetchName(r.id,t);
                   }}
-                  className="bare" style={{fontSize:14,fontWeight:700,width:80,letterSpacing:".03em",color:P.neuInk}}/>
-                <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})} className="bare" style={{fontSize:13,color:P.neuSub,flex:1,minWidth:0}}/>
-                <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{usd(r.value)}</span>
-                <IconButton icon={I.X} label={`Delete ${r.name||r.ticker||"holding"}`} onClick={()=>removeInv(r.id)} size={15} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
-              </div>
-              {/* Investment Account ownership + type — the minimum fields Phase 1
-                  adds to an existing holding; everything else on this row is
-                  unchanged. Type defaults to Stocks/ETF and is the only type with
-                  real valuation today (see INVESTMENT_TYPES comment). */}
-              <div style={{marginTop:6,display:"flex",flexWrap:"wrap",gap:8}}>
-                <select value={r.owner||"me"} onChange={e=>updateInv(r.id,{owner:e.target.value})}
-                  style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
-                  {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
-                </select>
-                <select value={r.type||"stocks"} onChange={e=>updateInv(r.id,{type:e.target.value})}
-                  style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
-                  {INVESTMENT_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
-                </select>
-              </div>
-              <div style={{marginTop:6,display:"flex",flexWrap:"wrap",alignItems:"center",gap:14,fontSize:13,color:P.neuSub}} className="tnum">
-                <span>{r.shares.toFixed(4)} shares</span>
-                <span>Avg {usd(r.avgCost)}</span>
-                <span>Price {r.price>0?usd(r.price):"—"}</span>
-                <span style={{color:gTone(r.gain),fontWeight:600,marginLeft:"auto"}}>
-                  {r.gain>=0?"▲":"▼"} {usd(Math.abs(r.gain))} ({r.gainPct.toFixed(1)}%)
+                  className="bare" style={{fontSize:14,fontWeight:700,width:66,letterSpacing:".03em",color:P.neuInk,flexShrink:0}}/>
+                <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk,marginLeft:"auto"}}>{usd(r.value)}</span>
+                <span className="tnum" style={{fontSize:12,fontWeight:600,color:gTone(r.gain),flexShrink:0}}>
+                  {r.gain>=0?"▲":"▼"}{r.gainPct.toFixed(1)}%
                 </span>
-              </div>
-              {/* trade log toggle + add trade */}
-              <div style={{marginTop:8,display:"flex",gap:8}}>
-                <button onClick={()=>openTrade(r.id)} className="neu-btn"
-                  style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
-                  <I.Plus size={12}/>Add trade
+                <button onClick={()=>setExpandedId(open?null:r.id)}
+                  aria-expanded={open} aria-label={open?`Hide details for ${r.ticker||"holding"}`:`Show details for ${r.ticker||"holding"}`}
+                  style={{background:"transparent",border:"none",color:open?P.jade:P.neuSub,padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <I.Chevron size={14} style={{transform:open?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
                 </button>
-                {(r.trades||[]).filter(t=>!t.deletedAt).length>0&&(
-                  <button onClick={()=>setExpandedId(expandedId===r.id?null:r.id)} className="neu-btn"
-                    style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
-                    {expandedId===r.id?"Hide":"Show"} {(r.trades||[]).filter(t=>!t.deletedAt).length} trade{(r.trades||[]).filter(t=>!t.deletedAt).length!==1?"s":""}
-                  </button>
-                )}
               </div>
             </div>
 
-            {/* trade history */}
-            {expandedId===r.id&&(r.trades||[]).filter(t=>!t.deletedAt).length>0&&(
-              <div style={{...neuInset(0),borderRadius:0,padding:"2px 0"}}>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em"}}>
-                  <span>Date</span><span style={{textAlign:"right"}}>Type</span><span style={{textAlign:"right"}}>Shares</span><span style={{textAlign:"right"}}>Price</span><span/>
-                </div>
-                {[...(r.trades||[])].filter(tr=>!tr.deletedAt).sort((a,b)=>a.date.localeCompare(b.date)).map(tr=>(
-                  <div key={tr.id} style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 80px 32px",gap:4,padding:"6px 16px",fontSize:13,alignItems:"center",borderTop:"1px solid rgba(0,0,0,.05)"}}>
-                    <span className="tnum" style={{color:P.neuSub}}>{tr.date}</span>
-                    <span style={{textAlign:"right",fontWeight:600,color:tr.type==="buy"?P.jade:P.wine,textTransform:"uppercase",fontSize:11}}>{tr.type}</span>
-                    <span className="tnum" style={{textAlign:"right",color:P.neuInk}}>{(Number(tr.shares)||0).toFixed(4)}</span>
-                    <span className="tnum" style={{textAlign:"right",color:P.neuInk}}>{usd(tr.price)}</span>
-                    <IconButton icon={I.X} label={`Delete trade from ${tr.date||"this holding"}`} onClick={()=>removeTrade(r.id,tr.id)} size={12} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
+            {open&&(
+              <div style={{...neuInset(0),borderRadius:0,padding:"8px 0 2px"}}>
+                <div style={{padding:"0 12px 8px"}}>
+                  <input value={r.name} placeholder={fetchingName[r.id]?"fetching name…":"Name"} onChange={e=>updateInv(r.id,{name:e.target.value})}
+                    className="bare" style={{fontSize:13,color:P.neuSub,width:"100%",marginBottom:8}}/>
+                  <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:12,fontSize:12,color:P.neuSub,marginBottom:8}} className="tnum">
+                    <span>{r.shares.toFixed(4)} shares</span>
+                    <span>Avg {usd(r.avgCost)}</span>
+                    <span>Price {r.price>0?usd(r.price):"—"}</span>
+                    <span style={{color:gTone(r.gain),fontWeight:600}}>{r.gain>=0?"▲":"▼"} {usd(Math.abs(r.gain))}</span>
                   </div>
-                ))}
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
+                    <select value={r.owner||"me"} onChange={e=>updateInv(r.id,{owner:e.target.value})}
+                      style={{...neu(8),padding:"4px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+                      {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
+                    </select>
+                    <select value={r.type||"stocks"} onChange={e=>updateInv(r.id,{type:e.target.value})}
+                      style={{...neu(8),padding:"4px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+                      {INVESTMENT_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                    </select>
+                    <button onClick={()=>openTrade(r.id)} className="neu-btn"
+                      style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,fontWeight:500,color:P.jade}}>
+                      <I.Plus size={12}/>Add trade
+                    </button>
+                    <button onClick={()=>removeInv(r.id)} className="status-pill"
+                      aria-label={`Delete ${r.name||r.ticker||"holding"}`}
+                      style={{marginLeft:"auto",cursor:"pointer",border:`1px solid ${P.line}`,background:"transparent",color:P.wine}}>
+                      <I.Trash size={13}/>Delete
+                    </button>
+                  </div>
+                </div>
+                {/* Trade log — was a 5-column grid with 272px of fixed tracks,
+                    which left the date column ~38px on a 390px phone. Two
+                    compact lines instead, no fixed columns. */}
+                {trades.length>0&&(
+                  <div>
+                    {[...trades].sort((a,b)=>a.date.localeCompare(b.date)).map(tr=>{
+                      const total=(Number(tr.shares)||0)*(Number(tr.price)||0);
+                      return(
+                        <div key={tr.id} style={{padding:"6px 12px",borderTop:"1px solid rgba(0,0,0,.05)"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span className="tnum" style={{fontSize:12,color:P.neuSub}}>{tr.date}</span>
+                            <span style={{fontSize:10,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",
+                              color:tr.type==="buy"?P.jade:P.wine}}>{tr.type}</span>
+                            <span className="tnum" style={{marginLeft:"auto",fontSize:13,fontWeight:600,color:P.neuInk}}>{usd(total)}</span>
+                            <IconButton icon={I.X} label={`Delete trade from ${tr.date||"this holding"}`} onClick={()=>removeTrade(r.id,tr.id)} size={12} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
+                          </div>
+                          <div className="tnum" style={{fontSize:11,color:P.faint}}>
+                            {(Number(tr.shares)||0).toFixed(4)} × {usd(tr.price)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
         <button onClick={()=>addInv("stocks")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}>
           <I.Plus size={14}/>Add holding
         </button>
       </div>}
+      </div>
 
       {/* MP2 accounts */}
       {(typeFilter==="all"||typeFilter==="mp2")&&(
         <div style={{marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div className="group-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0 8px"}}>
             <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Pag-IBIG MP2</h2>
           </div>
           <div style={{...neu(16),overflow:"hidden"}}>
@@ -7263,7 +7699,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       {/* Time Deposit accounts */}
       {(typeFilter==="all"||typeFilter==="td")&&(
         <div style={{marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div className="group-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0 8px"}}>
             <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Time Deposits</h2>
           </div>
           <div style={{...neu(16),overflow:"hidden"}}>
@@ -7281,7 +7717,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       {/* Gold accounts (Phase 3) */}
       {(typeFilter==="all"||typeFilter==="gold")&&(
         <div style={{marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div className="group-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0 8px"}}>
             <h2 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:0}}>Gold</h2>
           </div>
           <div style={{...neu(16),overflow:"hidden"}}>
@@ -7299,9 +7735,9 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       <div style={{...neu(16),padding:16}}>
         <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 8px"}}>Growth projection ({projection.rate||8}%/yr)</h3>
         <div style={{display:"flex",flexWrap:"wrap",gap:16,marginBottom:10,fontSize:13}}>
-          <label style={{color:P.neuSub}}>+$/mo <NumField value={projection.monthly} onCommit={v=>setProjection({monthly:v})} min={0} className="bare tnum" style={{width:80,fontWeight:600,color:P.neuInk}}/></label>
-          <label style={{color:P.neuSub}}>Years <NumField value={projection.years} onCommit={v=>setProjection({years:v})} integer min={1} max={100} className="bare tnum" style={{width:56,fontWeight:600,color:P.neuInk}}/></label>
-          <label style={{color:P.neuSub}}>Rate % <NumField value={projection.rate??8} onCommit={v=>setProjection({rate:v})} className="bare tnum" style={{width:48,fontWeight:600,color:P.neuInk}} min={0} max={30}/></label>
+          <label style={{color:P.neuSub}}>+$/mo <NumField value={projection.monthly} onCommit={v=>setProjection({monthly:v})} min={0} navGroup="projection" className="bare tnum" style={{width:80,fontWeight:600,color:P.neuInk}}/></label>
+          <label style={{color:P.neuSub}}>Years <NumField value={projection.years} onCommit={v=>setProjection({years:v})} integer min={1} max={100} navGroup="projection" className="bare tnum" style={{width:56,fontWeight:600,color:P.neuInk}}/></label>
+          <label style={{color:P.neuSub}}>Rate % <NumField value={projection.rate??8} onCommit={v=>setProjection({rate:v})} navGroup="projection" className="bare tnum" style={{width:48,fontWeight:600,color:P.neuInk}} min={0} max={30}/></label>
           <span className="tnum" style={{marginLeft:"auto",fontWeight:600,color:P.jade}}>→ ${series[series.length-1].toLocaleString("en-US")}</span>
         </div>
         <div style={{width:"100%",height:180}}>
@@ -7339,10 +7775,22 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
                 </button>
               ))}
             </div>
-            {[["date","Date","date"],["shares","Shares","number"],["price","Price per share (USD)","number"]].map(([k,label,type])=>(
+            {/* These two were the last raw numeric inputs in the app. They
+                escaped the NumField sweep because the loop wrote type={type}
+                from an array rather than a literal type="number", so grepping
+                for the literal never found them. Split out so Shares/Price get
+                math expressions, select-on-focus and Enter-to-next like every
+                other amount field; Date stays a native date picker. */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Date</div>
+              <input type="date" value={tradeForm.date} onChange={e=>setTradeForm(f=>({...f,date:e.target.value}))}
+                style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
+            </div>
+            {[["shares","Shares"],["price","Price per share (USD)"]].map(([k,label])=>(
               <div key={k} style={{marginBottom:12}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>{label}</div>
-                <input type={type} value={tradeForm[k]} onChange={e=>setTradeForm(f=>({...f,[k]:e.target.value}))}
+                <NumField value={tradeForm[k]} onCommit={v=>setTradeForm(f=>({...f,[k]:v}))}
+                  allowEmpty live min={0} navGroup="trade"
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
             ))}
@@ -7404,16 +7852,43 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
    confirmed/estimated split from mp2Valuation() rather than a ticker+shares
    row. Clearly labels which number is official vs projected (section 3/4). */
 function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp2Estimate,onAddContribution,onRemoveContribution,onPayout}){
+  // `expanded` now governs the whole editing panel (see the collapsed summary
+  // below); the contributions list keeps its own toggle inside it.
   const[expanded,setExpanded]=useState(false);
+  const[showContribs,setShowContribs]=useState(false);
   const v=mp2Valuation(hld,mp2RatesByYear);
   const ccy=hld.currency||"PHP";
   const money=n=>formatMoney(n,{code:ccy});
   const contributions=(hld.contributions||[]).filter(c=>!c.deletedAt).sort((a,b)=>a.date.localeCompare(b.date));
   const maturityLabel=hld.maturityDate?new Date(hld.maturityDate+"T00:00:00").toLocaleDateString("en-US",{month:"long",year:"numeric"}):"—";
   const daysToMaturity=hld.maturityDate?Math.ceil((new Date(hld.maturityDate+"T00:00:00")-new Date())/86400000):null;
+  const dateInvalid=hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate);
+  const shownValue=includeMp2Estimate?v.estimatedValue:v.confirmedValue;
   return(
-    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"12px 16px"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"8px 12px"}}>
+      {/* Collapsed summary. Everything editable lives behind the chevron —
+          same split as Budget's category rows. `dateInvalid` surfaces on the
+          collapsed row so a broken account is never hidden by the collapse. */}
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{minWidth:0,flex:1,fontSize:14,fontWeight:700,color:P.neuInk,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {hld.name||"MP2 account"}
+        </span>
+        {dateInvalid&&<span title="Maturity date must be after the start date" style={{color:P.wine,fontSize:12,fontWeight:700,flexShrink:0}}>!</span>}
+        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk,flexShrink:0}}>{money(shownValue)}</span>
+        <button onClick={()=>setExpanded(e=>!e)} aria-expanded={expanded}
+          aria-label={expanded?`Hide details for ${hld.name||"MP2 account"}`:`Show details for ${hld.name||"MP2 account"}`}
+          style={{background:"transparent",border:"none",color:expanded?P.jade:P.neuSub,padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <I.Chevron size={14} style={{transform:expanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+        </button>
+      </div>
+      <div style={{fontSize:11,color:P.faint,marginTop:-2}}>
+        {investmentOwnerLabel(hld.owner||"me",owners)} · Matures {maturityLabel}
+        {daysToMaturity!=null&&(daysToMaturity>0?` · ${daysToMaturity} days`:" · Matured")}
+      </div>
+
+      {expanded&&<>
+      <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0 6px"}}>
         <input value={hld.name||""} placeholder="Account name" onChange={e=>updateInv(hld.id,{name:e.target.value})}
           className="bare" style={{fontSize:14,fontWeight:700,flex:1,minWidth:0,color:P.neuInk}}/>
         <IconButton icon={I.X} label={`Delete ${hld.name||"holding"}`} onClick={()=>removeInv(hld.id)} size={15} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
@@ -7440,7 +7915,7 @@ function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp
           <NumField value={hld.projectionRate??""} onCommit={v=>updateInv(hld.id,{projectionRate:v})} allowEmpty min={0} className="tnum" style={{...neuInset(6),width:70,padding:"3px 6px",fontSize:12,color:P.neuInk}}/>
         </label>
       </div>
-      {hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate)&&(
+      {dateInvalid&&(
         <div style={{fontSize:11,color:P.wine,marginBottom:8}}>Maturity date must be after the start date.</div>
       )}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
@@ -7461,10 +7936,7 @@ function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp
         <span>Est. accrued dividends {money(v.estimatedDividends)}</span>
         {hld.payoutMode==="annual"&&v.paid>0&&<span>Paid out {money(v.paid)}</span>}
       </div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:8,fontSize:12,color:P.neuSub}}>
-        <span>Matures {maturityLabel}</span>
-        {daysToMaturity!=null&&<span>{daysToMaturity>0?`${daysToMaturity} days remaining`:"Matured"}</span>}
-      </div>
+      {/* maturity moved to the always-visible collapsed line above */}
       {v.undeclaredYears.length>0&&(
         <div style={{fontSize:11,color:P.amber||P.neuSub,marginBottom:8,padding:"6px 10px",background:"rgba(0,0,0,.04)",borderRadius:8}}>
           No official rate declared yet for {v.undeclaredYears.join(", ")} — estimated value uses the projection rate for {v.undeclaredYears.length>1?"those years":"that year"}.
@@ -7475,8 +7947,8 @@ function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp
           <I.Plus size={12}/>Add contribution
         </button>
         {contributions.length>0&&(
-          <button onClick={()=>setExpanded(e=>!e)} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
-            {expanded?"Hide":"Show"} {contributions.length} contribution{contributions.length!==1?"s":""}
+          <button onClick={()=>setShowContribs(s=>!s)} className="neu-btn" style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",fontSize:12,color:P.neuSub}}>
+            {showContribs?"Hide":"Show"} {contributions.length} contribution{contributions.length!==1?"s":""}
           </button>
         )}
         {hld.payoutMode==="annual"&&(
@@ -7487,7 +7959,7 @@ function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp
       </div>
       <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
         style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
-      {expanded&&contributions.length>0&&(
+      {showContribs&&contributions.length>0&&(
         <div style={{marginTop:8,borderRadius:8,overflow:"hidden",background:"rgba(0,0,0,.03)"}}>
           {contributions.map(c=>(
             <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",fontSize:12,borderTop:"1px solid rgba(0,0,0,.05)"}}>
@@ -7499,6 +7971,7 @@ function Mp2AccountCard({hld,owners,updateInv,removeInv,mp2RatesByYear,includeMp
           ))}
         </div>
       )}
+      </>}
     </div>
   );
 }
@@ -7512,13 +7985,38 @@ function TdAccountCard({hld,owners,updateInv,removeInv,banks,onConfirmMaturity,o
   const status=hld.status||"active";
   const usingConfirmed=status!=="active"&&hld.confirmedFinalAmount!=null;
   const displayValue=usingConfirmed?Number(hld.confirmedFinalAmount):v.currentEstValue;
+  const[expanded,setExpanded]=useState(false);
+  const dateInvalid=hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate);
+  /* A matured deposit needs action (confirm / transfer proceeds), so it stays
+     called out on the collapsed row rather than hiding behind the chevron. */
+  const needsAction=status==="active"&&v.daysRemaining<=0;
   return(
-    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"12px 16px"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"8px 12px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{minWidth:0,flex:1,fontSize:14,fontWeight:700,color:P.neuInk,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{hld.name||"Time deposit"}</span>
+        {status!=="active"&&
+          <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".04em",padding:"2px 8px",borderRadius:999,
+            background:"rgba(0,0,0,.08)",color:P.neuSub,flexShrink:0}}>{status}</span>}
+        {dateInvalid&&<span title="Maturity date must be after the start date" style={{color:P.wine,fontSize:12,fontWeight:700,flexShrink:0}}>!</span>}
+        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk,flexShrink:0}}>{money(displayValue)}</span>
+        <button onClick={()=>setExpanded(e=>!e)} aria-expanded={expanded}
+          aria-label={expanded?`Hide details for ${hld.name||"time deposit"}`:`Show details for ${hld.name||"time deposit"}`}
+          style={{background:"transparent",border:"none",color:expanded?P.jade:P.neuSub,padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <I.Chevron size={14} style={{transform:expanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+        </button>
+      </div>
+      <div style={{fontSize:11,color:needsAction?P.wine:P.faint,marginTop:-2,fontWeight:needsAction?600:400}}>
+        {investmentOwnerLabel(hld.owner||"me",owners)}
+        {status==="active"
+          ?(needsAction?" · Matured — confirm it":` · Matures in ${v.daysRemaining} days`)
+          :hld.maturedAt?` · Matured ${new Date(hld.maturedAt).toLocaleDateString()}`:""}
+      </div>
+
+      {expanded&&<>
+      <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0 6px"}}>
         <input value={hld.name||""} placeholder="Account name" onChange={e=>updateInv(hld.id,{name:e.target.value})}
           className="bare" style={{fontSize:14,fontWeight:700,flex:1,minWidth:0,color:P.neuInk}}/>
-        <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".04em",padding:"2px 8px",borderRadius:999,
-          background:status==="active"?P.jadeS||"rgba(0,0,0,.06)":"rgba(0,0,0,.08)",color:status==="active"?P.jade:P.neuSub}}>{status}</span>
         <IconButton icon={I.X} label={`Delete ${hld.name||"holding"}`} onClick={()=>removeInv(hld.id)} size={15} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
@@ -7551,7 +8049,7 @@ function TdAccountCard({hld,owners,updateInv,removeInv,banks,onConfirmMaturity,o
           <input type="date" value={hld.maturityDate||""} onChange={e=>updateInv(hld.id,{maturityDate:e.target.value})} className="tnum" style={{...neuInset(6),padding:"3px 6px",fontSize:12,color:P.neuInk}} disabled={status!=="active"}/>
         </label>
       </div>
-      {hld.startDate&&hld.maturityDate&&new Date(hld.maturityDate)<=new Date(hld.startDate)&&(
+      {dateInvalid&&(
         <div style={{fontSize:11,color:P.wine,marginBottom:8}}>Maturity date must be after the start date.</div>
       )}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
@@ -7570,7 +8068,7 @@ function TdAccountCard({hld,owners,updateInv,removeInv,banks,onConfirmMaturity,o
         <span>Gross accrued {money(v.grossAccrued)}</span>
         <span>Withholding tax {money(v.taxAmt)}</span>
         <span>Net accrued {money(v.netAccrued)}</span>
-        <span>{status==="active"?`Matures in ${v.daysRemaining} days`:hld.maturedAt?`Matured ${new Date(hld.maturedAt).toLocaleDateString()}`:""}</span>
+        {/* maturity status moved to the always-visible collapsed line above */}
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
         {status==="active"&&v.daysRemaining<=0&&(
@@ -7592,6 +8090,7 @@ function TdAccountCard({hld,owners,updateInv,removeInv,banks,onConfirmMaturity,o
       </div>
       <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
         style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
+      </>}
     </div>
   );
 }
@@ -7629,12 +8128,35 @@ function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,co
     const karat=pt==="24k"?24:pt==="22k"?22:(Number(hld.karat)||18);
     updateInv(hld.id,{purityType:pt,karat});
   };
+  const[expanded,setExpanded]=useState(false);
+  const anyInvalid=weightInvalid||costInvalid||karatInvalid;
+  const shownValue=v.hasPrice?money(convert?(convert(v.currentValueUsd,"USD",ccy)||v.currentValueUsd):v.currentValueUsd):"—";
+  const weightLabel=`${Number(hld.weight)||0}${(hld.weightUnit||"g")} · ${hld.purityType==="custom"?`${Number(hld.karat)||0}K`:(hld.purityType||"24k").toUpperCase()}`;
   return(
-    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"12px 16px"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+    <div style={{borderBottom:"1px solid rgba(0,0,0,.06)",padding:"8px 12px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{minWidth:0,flex:1,fontSize:14,fontWeight:700,color:P.neuInk,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{hld.name||"Gold"}</span>
+        {anyInvalid&&<span title="This account has an invalid weight, karat or purchase cost" style={{color:P.wine,fontSize:12,fontWeight:700,flexShrink:0}}>!</span>}
+        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk,flexShrink:0}}>{shownValue}</span>
+        {v.hasPrice&&
+          <span className="tnum" style={{fontSize:12,fontWeight:600,color:v.gainUsd>=0?P.jade:P.wine,flexShrink:0}}>
+            {v.gainUsd>=0?"▲":"▼"}{v.gainPct.toFixed(1)}%
+          </span>}
+        <button onClick={()=>setExpanded(e=>!e)} aria-expanded={expanded}
+          aria-label={expanded?`Hide details for ${hld.name||"gold account"}`:`Show details for ${hld.name||"gold account"}`}
+          style={{background:"transparent",border:"none",color:expanded?P.jade:P.neuSub,padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <I.Chevron size={14} style={{transform:expanded?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+        </button>
+      </div>
+      <div style={{fontSize:11,color:P.faint,marginTop:-2}}>
+        {investmentOwnerLabel(hld.owner||"me",owners)} · {weightLabel}
+      </div>
+
+      {expanded&&<>
+      <div style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0 6px"}}>
         <input value={hld.name||""} placeholder="Account name" onChange={e=>updateInv(hld.id,{name:e.target.value})}
           className="bare" style={{fontSize:14,fontWeight:700,flex:1,minWidth:0,color:P.neuInk}}/>
-        <span className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>{v.hasPrice?money(convert?(convert(v.currentValueUsd,"USD",ccy)||v.currentValueUsd):v.currentValueUsd):"—"}</span>
         <IconButton icon={I.X} label={`Delete ${hld.name||"holding"}`} onClick={()=>removeInv(hld.id)} size={15} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
@@ -7706,6 +8228,7 @@ function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,co
       {!v.hasPrice&&<div style={{fontSize:11,color:P.neuSub,marginBottom:8}}>No gold price cached yet — tap "Refresh prices" above.</div>}
       <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
         style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
+      </>}
     </div>
   );
 }
@@ -7980,7 +8503,6 @@ function AssetRow({a,updateAsset,removeAsset}){
 
 /* ── NET WORTH VIEW — installment liabilities ── */
 function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}){
-  const[gran,setGran]=useState("month");
   const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
   const[pv,setPv]=useState("");
   const sar=n=>formatMoney(n,{code:"SAR"});
@@ -7990,9 +8512,6 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
   const gross=banksSar+invSar+assetSar;
   const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
   const sorted=[...history].sort((a,b)=>a.month.localeCompare(b.month));
-  let pts;
-  if(gran==="year"){const m={};sorted.forEach(s=>{m[s.month.slice(0,4)]=s;});pts=Object.entries(m).map(([y,s])=>({label:y,net:s.net}));}
-  else pts=sorted.map(s=>({label:fmtMo(s.month),net:s.net}));
   const last=sorted[sorted.length-1];
   const delta=last?netWorth-last.net:null;
   const assetItems=assets.filter(a=>a.kind==="asset");
@@ -8027,11 +8546,31 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         ))}
       </div>
 
-      <div className="fade-up-1b" style={{...neu(16),padding:16,marginBottom:16}}>
+      {/* was className="fade-up-1b" — no such class exists, so this card was
+          silently the only one on the tab with no entrance animation. */}
+      <div className="fade-up-2" style={{...neu(16),padding:16,marginBottom:16}}>
         <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Net worth trend</h3>
         <HistoryRangeChart snapshots={snapshots} profile="household" field="net"
           money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
           emptyText="Trend appears once 2+ days of history have been captured (captured automatically once a day)."/>
+      </div>
+
+      {/* Replaces the second net-worth line that used to sit in the snapshot
+          log below — same history, different question. */}
+      <div className="fade-up-3" style={{...neu(16),padding:16,marginBottom:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 4px",color:P.neuSub}}>What's driving it</h3>
+        <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
+          Assets stack above the line, debt below it. Net worth is what's left after the two cancel out.
+        </p>
+        <CompositionRangeChart snapshots={snapshots} profile="household"
+          series={[
+            {key:"banks",label:"Bank accounts",color:SEG[0]},
+            {key:"investments",label:"Investments",color:SEG[3]},
+            {key:"assets",label:"Other assets",color:SEG[5]},
+            {key:"liabilities",label:"Liabilities",color:P.red,negate:true},
+          ]}
+          money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
+          emptyText="Appears once 2+ days of history have been captured (captured automatically once a day)."/>
       </div>
 
       <div className="fade-up-2" style={{...neu(16),overflow:"hidden",marginBottom:16}}>
@@ -8043,30 +8582,15 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.wine,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
       </div>
 
-      <div className="fade-up-3" style={{...neu(16),padding:16}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <h3 style={{fontSize:14,fontWeight:600,margin:0,color:P.neuSub}}>Monthly snapshot log</h3>
-          <div style={{display:"flex",gap:4}}>
-            {["month","year"].map(gv=>(
-              <button key={gv} onClick={()=>setGran(gv)} className={gran===gv?"":"neu-btn"}
-                style={{borderRadius:999,padding:"3px 10px",fontSize:12,textTransform:"capitalize",border:"none",
-                  ...(gran===gv?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>{gv}</button>
-            ))}
-          </div>
-        </div>
-        {pts.length>0?(
-          <div style={{width:"100%",height:200}}>
-            <ResponsiveContainer>
-              <LineChart data={pts} margin={{top:8,right:8,bottom:0,left:-12}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={P.neuLo} opacity={.4}/>
-                <XAxis dataKey="label" tick={{fontSize:11,fill:P.neuSub}}/>
-                <YAxis tick={{fontSize:11,fill:P.neuSub}} tickFormatter={v=>`${Math.round(v/1000)}k`}/>
-                <Tooltip formatter={v=>sar(v)}/>
-                <Line type="monotone" dataKey="net" stroke={P.jade} strokeWidth={2} dot={{r:3}}/>
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        ):<p style={{fontSize:13,color:P.neuSub}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
+      {/* A log, not a chart. Its monthly net-worth LineChart was removed: it
+          plotted the same figure as "Net worth trend" above, from the older
+          monthly `history` rows instead of daily snapshots. The month/year
+          granularity toggle went with it — it only ever switched that chart's
+          x-axis. The per-month values it conveyed are all still here as chips. */}
+      <div className="fade-up-4" style={{...neu(16),padding:16}}>
+        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Monthly snapshot log</h3>
+        {sorted.length===0&&
+          <p style={{fontSize:13,color:P.neuSub}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginTop:12}}>
           <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.jade,fontWeight:500}}>
             <I.Check size={13}/>This month syncs automatically
@@ -8913,6 +9437,18 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
           <I.Users size={14}/>Change default profile for this device
         </button>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Savings target</div>
+        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+          The benchmark Home judges your savings rate against. Display only — it never changes a stored figure.
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+          <span style={{fontSize:13,color:P.ink,flex:1}}>Save at least</span>
+          <NumField value={(data.settings&&data.settings.savingsTargetPct)??20}
+            onCommit={v=>setData(d=>({...d,settings:{...(d.settings||{}),savingsTargetPct:v}}))}
+            min={0} max={100}
+            className="tnum" style={{width:56,borderRadius:8,padding:"5px 8px",fontSize:13,textAlign:"right",background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
+          <span style={{fontSize:13,color:P.sub}}>% of income</span>
+        </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Pay periods</div>
         <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           Budget and track expenses by paycheck instead of calendar month. Off by default — when off, that person's Budget and Expenses tabs work exactly as before.
