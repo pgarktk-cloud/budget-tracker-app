@@ -308,6 +308,10 @@ select{transition:background .22s;}
    wrapper has to follow the card rather than duplicate its conditions. */
 .home-cell:empty{display:none;}
 .home-cell>*{flex:1;min-width:0;}
+/* Correction prompt — order 0 puts it above the hero. It's absent except in a
+   window around a pay boundary, and it asks for an action, so it doesn't get
+   buried under the cards it would change the meaning of. */
+.home-grid>.cell-payperiod{order:0;}
 .home-grid>.cell-hero{order:1;}
 .home-grid>.cell-portfolio{order:2;}
 .home-grid>.cell-budget{order:3;}
@@ -321,6 +325,7 @@ select{transition:background .22s;}
 /* Mobile uses the floating + button instead (never both at once). */
 .home-grid>.cell-qa{display:none;}
 @media(min-width:768px){
+  .home-grid>.cell-payperiod{grid-column:span 3;order:0;}
   .home-grid>.cell-portfolio{grid-column:span 3;order:2;}
   .home-grid>.cell-savings{grid-column:span 3;order:3;}
   .home-grid>.cell-budget{grid-column:span 3;order:4;}
@@ -914,7 +919,29 @@ const INVESTMENT_TYPES=[
    "payday" = day of month (1-31) salary arrives; the period covering a given
    date runs from that day through the day before the same day next month.
    A payday beyond a short month (e.g. 31 in February) clamps to the last
-   actual day of that month, the conventional way to handle this. ───────── */
+   actual day of that month, the conventional way to handle this.
+
+   ── Actual starts (2026-07-31) ────────────────────────────────────────────
+   Salary doesn't always land on payday. `cfg.actualStarts` is a map of
+   NOMINAL period key → the day that period really began:
+
+     actualStarts: {"2026-08-28":"2026-08-24"}   // arrived four days early
+     actualStarts: {"2026-08-28":"pending"}      // hasn't arrived yet
+
+   The critical rule: **a period's KEY stays derived from `payday` forever.**
+   Only its boundaries move. Keying by the real start would change a period's
+   identity the moment it was corrected and orphan every expense pointing at
+   it. So payday is the default and this map records reality where it differed.
+
+   That also means these functions now take the owner's whole pay-period
+   CONFIG, not a bare payday number. The bucket* wrappers below already had the
+   config in hand, so this is a change of what they pass down, not a change of
+   what views call. Everything reads through periodRange(), so a corrected
+   boundary propagates to labels, lengths, progress and bucketing at once.
+
+   Periods are NOT pro-rated: a 24-day period keeps its full monthly category
+   amounts, which is the entire point — the daily allowance rises and Home
+   stops reading an early payday as overspending. ─────────────────────────── */
 
 /* Last valid calendar day of a given year/month (month is 1-12) */
 function daysInCalMonth(y,m){return new Date(y,m,0).getDate();}
@@ -923,9 +950,22 @@ function daysInCalMonth(y,m){return new Date(y,m,0).getDate();}
    month's last real day so "31" in February becomes that February's 28/29. */
 function clampPayday(y,m,payday){return Math.min(Math.max(1,Number(payday)||1),daysInCalMonth(y,m));}
 
-/* Build a Date for the period START that contains `dateStr`, given a payday.
-   Returns a plain Date at local midnight. */
-function periodStartFor(dateStr,payday){
+/* Accepts either a config object ({payday,actualStarts,…}) or a bare payday
+   number, so a stray numeric caller degrades to "no overrides" rather than
+   silently reading `undefined.payday` and bucketing everything into day 1. */
+function asPeriodCfg(cfg){
+  if(cfg&&typeof cfg==="object")return cfg;
+  return{payday:cfg};
+}
+const PERIOD_PENDING="pending";
+const dateToKey=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const keyToDate=k=>{const[y,m,d]=String(k).split("-").map(Number);return new Date(y,m-1,d);};
+const addDaysTo=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+
+/* Build a Date for the NOMINAL period start that contains `dateStr` — payday
+   arithmetic only, no overrides. The identity layer everything else builds on. */
+function periodStartFor(dateStr,cfg){
+  const payday=asPeriodCfg(cfg).payday;
   const d=new Date(dateStr+"T00:00:00");
   const y=d.getFullYear(),m=d.getMonth()+1,day=d.getDate();
   const thisMonthPayday=clampPayday(y,m,payday);
@@ -936,49 +976,84 @@ function periodStartFor(dateStr,payday){
   const py=m===1?y-1:y, pm=m===1?12:m-1;
   return new Date(py,pm-1,clampPayday(py,pm,payday));
 }
+function nominalKeyFor(dateStr,cfg){return dateToKey(periodStartFor(dateStr,cfg));}
 
-/* The period KEY (YYYY-MM-DD of the period's start) containing a given date */
-function periodKeyFor(dateStr,payday){
-  const start=periodStartFor(dateStr,payday);
-  return`${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,"0")}-${String(start.getDate()).padStart(2,"0")}`;
+/* Step a period key n nominal periods. Keys are nominal identities, so this
+   is pure payday arithmetic and is deliberately NOT affected by overrides —
+   the period after "2026-08-28" is "2026-09-28" however early it began. */
+function shiftPeriod(periodKey,cfg,n){
+  const payday=asPeriodCfg(cfg).payday;
+  let[y,m,d]=String(periodKey||"").split("-").map(Number);
+  if(!y||!m||!d)[y,m,d]=nominalKeyFor(todayISO(),cfg).split("-").map(Number);
+  const tm=m-1+n;                       // month index, may go negative or >11
+  const ty=y+Math.floor(tm/12), tmm=((tm%12)+12)%12+1;
+  return dateToKey(new Date(ty,tmm-1,clampPayday(ty,tmm,payday)));
 }
 
-/* {start,end} Date objects (inclusive) for the period identified by a key */
-function periodRange(periodKey,payday){
-  let[y,m,d]=(periodKey||"").split("-").map(Number);
-  if(!y||!m||!d){
+/* The day a period really began: the override if there is one, otherwise the
+   key itself. `null` means the period is flagged as not yet started. */
+function periodActualStart(periodKey,cfg){
+  const c=asPeriodCfg(cfg);
+  const raw=(c.actualStarts||{})[periodKey];
+  if(raw===PERIOD_PENDING)return null;
+  if(typeof raw==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(raw))return raw;
+  return periodKey;
+}
+
+/* {start,end} Date objects (inclusive) for the period identified by a key.
+   A period runs from its own real start to the day before the NEXT period's
+   real start, so moving one boundary correctly resizes both neighbours. */
+function periodRange(periodKey,cfg){
+  const c=asPeriodCfg(cfg);
+  let key=periodKey;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(key||""))){
     // Malformed or stale key — e.g. a calendar-month key ("YYYY-MM") briefly
     // passed in for one render right as pay-periods finish loading/turn on,
     // before the owning view's re-anchoring effect has run. Falling back to
     // the period containing today (instead of building an Invalid Date,
     // which throws once it hits toLocaleDateString) is what was producing
     // the stuck "Invalid Date" budget header.
-    [y,m,d]=periodKeyFor(todayISO(),payday).split("-").map(Number);
+    key=nominalKeyFor(todayISO(),c);
   }
-  const start=new Date(y,m-1,d);
-  const nextY=m===12?y+1:y, nextM=m===12?1:m+1;
-  const nextPayday=clampPayday(nextY,nextM,payday);
-  const end=new Date(nextY,nextM-1,nextPayday-1);
+  const today=keyToDate(todayISO());
+  const own=periodActualStart(key,c);
+  // A period flagged pending hasn't begun; the earliest it could is tomorrow.
+  const start=own!==null?keyToDate(own):addDaysTo(today,1);
+  const nextStart=periodActualStart(shiftPeriod(key,c,1),c);
+  // If the NEXT period is pending, this one is still running — it ends today
+  // and grows by a day until the salary is confirmed.
+  const end=nextStart!==null?addDaysTo(keyToDate(nextStart),-1)
+           :(today>start?today:start);
   return{start,end};
 }
 
-/* Number of days in a period (inclusive of both ends) */
-function periodLength(periodKey,payday){
-  const{start,end}=periodRange(periodKey,payday);
-  return Math.round((end-start)/86400000)+1;
+/* The period KEY containing a given date. With no overrides configured this
+   is exactly the nominal answer and costs exactly what it always did; the
+   candidate scan only runs for owners who have actually corrected a period. */
+function periodKeyFor(dateStr,cfg){
+  const c=asPeriodCfg(cfg);
+  const nominal=nominalKeyFor(dateStr,c);
+  const overrides=c.actualStarts;
+  if(!overrides||!Object.keys(overrides).length)return nominal;
+  // A moved boundary can push a date into either neighbour, never further:
+  // an override may not cross a whole period (see periodStartValidity).
+  const d=keyToDate(dateStr);
+  for(const k of[shiftPeriod(nominal,c,-1),nominal,shiftPeriod(nominal,c,1)]){
+    const{start,end}=periodRange(k,c);
+    if(d>=start&&d<=end)return k;
+  }
+  return nominal;
 }
 
-/* Step a period key forward/back n periods */
-function shiftPeriod(periodKey,payday,n){
-  let key=periodKey;
-  if(n>0){for(let i=0;i<n;i++){const{end}=periodRange(key,payday);const next=new Date(end);next.setDate(next.getDate()+1);key=periodKeyFor(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}-${String(next.getDate()).padStart(2,"0")}`,payday);}}
-  else if(n<0){for(let i=0;i<-n;i++){const{start}=periodRange(key,payday);const prevDay=new Date(start);prevDay.setDate(prevDay.getDate()-1);key=periodKeyFor(`${prevDay.getFullYear()}-${String(prevDay.getMonth()+1).padStart(2,"0")}-${String(prevDay.getDate()).padStart(2,"0")}`,payday);}}
-  return key;
+/* Number of days in a period (inclusive of both ends) */
+function periodLength(periodKey,cfg){
+  const{start,end}=periodRange(periodKey,cfg);
+  return Math.max(1,Math.round((end-start)/86400000)+1);
 }
 
 /* Human label for a period: "Jun 28 – Jul 27, 2026" */
-function periodLabel(periodKey,payday){
-  const{start,end}=periodRange(periodKey,payday);
+function periodLabel(periodKey,cfg){
+  const{start,end}=periodRange(periodKey,cfg);
   const sameYear=start.getFullYear()===end.getFullYear();
   const startStr=start.toLocaleDateString("en-US",{month:"short",day:"numeric"});
   if(sameYear){
@@ -994,6 +1069,38 @@ function periodLabel(periodKey,payday){
 /* Today's date as YYYY-MM-DD, local time */
 function todayISO(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 
+/* Is `dateStr` a legal real start for the period `periodKey`?
+   Two bounds, both of which keep periodKeyFor's three-candidate scan sound —
+   an override may shift a boundary but never swallow a whole period:
+     • not before the PREVIOUS period's start (+1 day), or the previous period
+       would vanish and its expenses would have nowhere to live
+     • not in the future — you can't record a salary that hasn't landed */
+function periodStartValidity(periodKey,cfg,dateStr){
+  const c=asPeriodCfg(cfg);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr||"")))return{ok:false,why:"Pick a date."};
+  const d=keyToDate(dateStr);
+  const today=keyToDate(todayISO());
+  if(d>today)return{ok:false,why:"That's in the future."};
+  const prevKey=shiftPeriod(periodKey,c,-1);
+  const prevStart=periodRange(prevKey,c).start;
+  const floor=addDaysTo(prevStart,1);
+  if(d<floor)return{ok:false,why:`Can't start before ${floor.toLocaleDateString("en-US",{month:"short",day:"numeric"})} — that's the previous period.`};
+  return{ok:true};
+}
+
+/* Set / clear one period's real start. Returns a NEW payPeriods object.
+   Clearing removes the key entirely rather than storing the nominal date, so
+   "no override" and "corrected back to payday" can't drift apart, and the
+   fast path in periodKeyFor keeps working for owners with nothing recorded. */
+function withActualStart(payPeriods,owner,periodKey,value){
+  const all=payPeriods||{};
+  const cfg=all[owner]||{};
+  const next={...(cfg.actualStarts||{})};
+  if(value==null)delete next[periodKey];
+  else next[periodKey]=value;
+  return{...all,[owner]:{...cfg,actualStarts:next}};
+}
+
 /* ── Unified period helpers — these are what views actually call.
    They check the owner's payPeriod settings and transparently fall back to
    plain calendar-month bucketing ("YYYY-MM") when pay-periods are off,
@@ -1002,20 +1109,24 @@ function ownerUsesPayPeriod(payPeriods,owner){
   const cfg=(payPeriods||{})[owner];
   return!!(cfg&&cfg.enabled&&cfg.payday);
 }
+/* Each wrapper hands the WHOLE config down, not cfg.payday, so the period
+   layer can consult cfg.actualStarts. That indirection is why adding
+   corrected boundaries touched one call site outside this block instead of
+   every view in the app. */
 function bucketKeyFor(dateStr,payPeriods,owner){
   const cfg=(payPeriods||{})[owner];
-  if(cfg&&cfg.enabled&&cfg.payday)return periodKeyFor(dateStr,cfg.payday);
+  if(cfg&&cfg.enabled&&cfg.payday)return periodKeyFor(dateStr,cfg);
   return(dateStr||"").slice(0,7);
 }
 function bucketLabel(bucketKey,payPeriods,owner){
   const cfg=(payPeriods||{})[owner];
-  if(cfg&&cfg.enabled&&cfg.payday)return periodLabel(bucketKey,cfg.payday);
+  if(cfg&&cfg.enabled&&cfg.payday)return periodLabel(bucketKey,cfg);
   const[y,mo]=bucketKey.split("-");
   return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
 }
 function bucketShift(bucketKey,payPeriods,owner,n){
   const cfg=(payPeriods||{})[owner];
-  if(cfg&&cfg.enabled&&cfg.payday)return shiftPeriod(bucketKey,cfg.payday,n);
+  if(cfg&&cfg.enabled&&cfg.payday)return shiftPeriod(bucketKey,cfg,n);
   const[y,m]=bucketKey.split("-").map(Number);
   const d=new Date(y,m-1+n,1);
   return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
@@ -1029,8 +1140,8 @@ function bucketNow(payPeriods,owner){
 function bucketProgress(bucketKey,payPeriods,owner){
   const cfg=(payPeriods||{})[owner];
   if(cfg&&cfg.enabled&&cfg.payday){
-    const{start,end}=periodRange(bucketKey,cfg.payday);
-    const total=periodLength(bucketKey,cfg.payday);
+    const{start,end}=periodRange(bucketKey,cfg);
+    const total=periodLength(bucketKey,cfg);
     const now=new Date();now.setHours(0,0,0,0);
     const elapsed=Math.max(1,Math.min(total,Math.round((now-start)/86400000)+1));
     return{elapsed,total};
@@ -1190,8 +1301,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.11.1";
-const BUILD_ID="2026.07.31.0007";
+const APP_VERSION="1.14.0";
+const BUILD_ID="2026.07.31.0010";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1487,6 +1598,100 @@ function investmentsForProfile(invs,owner){
   return(invs||[]).filter(x=>(x.owner||"me")===owner);
 }
 
+/* ── Bank interest accrual ─────────────────────────────────────────────────
+   Bank balances go stale between manual updates. A bank that credits interest
+   daily (Maribank PH does) drifts a little further from reality every day the
+   figure isn't retyped.
+
+   `balance` keeps exactly the meaning it always had: the last number a person
+   typed, at `balanceAsOf`. It is NEVER auto-written. What the app shows is
+   recomputed on read from that anchor:
+
+     netAnnual = tierRate × (1 − taxPct/100)
+     value     = balance × (1 + netAnnual/365) ^ (days since balanceAsOf)
+
+   Deriving rather than incrementing was a deliberate call (see decisions.md):
+   incrementing double-counts across two synced devices, loses every day the
+   app isn't opened, and makes undo unsound. Recomputing from an anchor is
+   idempotent — both phones show the same figure after any gap.
+
+   Because the exponent is a whole number of days, the value is *constant
+   within a calendar day*: the history/snapshot effects can't watch it drift
+   mid-session and loop. Those rows are stamped auto:true, so a day's accrual
+   never dirties the document either (see userFingerprint) — no daily KV write.
+
+   Every read goes through bankValue()/bankValuation(), mirroring the single
+   investmentValueSar() dispatch convention: extend this rather than writing a
+   second accrual reduce anywhere. ── */
+const BANK_CREDITING=[["daily","Daily"],["monthly","Monthly"]];
+const DEFAULT_BANK_INTEREST=()=>({enabled:true,tiers:[{from:0,rate:0}],taxPct:20,crediting:"daily"});
+
+/* Days since the epoch for a YYYY-MM-DD string, via Date.UTC — parsing both
+   ends as local midnight and subtracting would give 23h or 25h across a DST
+   boundary, which floors to the wrong number of days. */
+function dayNumber(str){
+  if(!str)return null;
+  const[y,m,d]=String(str).slice(0,10).split("-").map(Number);
+  if(!y||!m||!d)return null;
+  return Math.round(Date.UTC(y,m-1,d)/86400000);
+}
+/* Whole calendar months elapsed — the day of the month has to have come round
+   again for a month to count as completed. */
+function completedMonths(fromStr,toStr){
+  const a=String(fromStr||"").slice(0,10).split("-").map(Number);
+  const b=String(toStr||"").slice(0,10).split("-").map(Number);
+  if(!a[0]||!b[0])return 0;
+  let m=(b[0]-a[0])*12+(b[1]-a[1]);
+  if(b[2]<a[2])m-=1;
+  return Math.max(0,m);
+}
+/* Tiers are WHOLE-BALANCE, not marginal: the balance selects one tier and
+   that rate applies to all of it (confirmed as Maribank's behaviour by the
+   account holder). Sorted defensively, since the editor appends rows in
+   whatever order they're typed. A balance under every tier's floor earns the
+   lowest configured rate rather than nothing — a list starting at 1,000,000
+   means "above a million you get more", not "below it you get zero". */
+function bankTierRate(interest,balance){
+  const tiers=((interest&&interest.tiers)||[])
+    .filter(t=>t&&isFinite(Number(t.from))&&isFinite(Number(t.rate)))
+    .sort((a,b)=>Number(a.from)-Number(b.from));
+  if(!tiers.length)return null;
+  let rate=null;
+  tiers.forEach(t=>{if(balance>=Number(t.from))rate=Number(t.rate);});
+  return rate==null?Number(tiers[0].rate):rate;
+}
+function bankValuation(bank,asOf){
+  const balance=Number(bank&&bank.balance)||0;
+  const since=(bank&&bank.balanceAsOf)||null;
+  const off={balance,value:balance,accrued:0,days:0,periods:0,rate:null,netRate:0,active:false,since};
+  const it=bank&&bank.interest;
+  if(!it||it.enabled===false)return off;
+  // An overdraft doesn't earn interest, and charging it is a different
+  // feature nobody asked for — leave a negative balance exactly as typed.
+  if(balance<=0)return off;
+  const anchor=dayNumber(since);
+  const now=dayNumber(asOf||new Date().toISOString().slice(0,10));
+  if(anchor==null||now==null||now<=anchor)return off;
+  const rate=bankTierRate(it,balance);
+  if(rate==null||!(rate>0))return off;
+  const netRate=rate*(1-(Number(it.taxPct)||0)/100);
+  const days=now-anchor;
+  const monthly=it.crediting==="monthly";
+  const periods=monthly?completedMonths(since,asOf||new Date().toISOString().slice(0,10)):days;
+  const perPeriod=(netRate/100)/(monthly?12:365);
+  const value=Math.round(balance*Math.pow(1+perPeriod,periods)*100)/100;
+  return{balance,value,accrued:Math.round((value-balance)*100)/100,days,periods,rate,netRate,active:true,since};
+}
+/* The number every total should use. Thin wrapper so the reduce call sites
+   read like the plain `b.balance` they replaced. */
+function bankValue(bank,asOf){return bankValuation(bank,asOf).value;}
+/* Reconcile: fold the accrued estimate into the stored balance and re-anchor
+   to today. Anything that credits or debits an account has to do this first,
+   or a later day's accrual gets applied to money that only arrived today. */
+function settledBankPatch(bank,asOf){
+  return{balance:bankValue(bank,asOf),balanceAsOf:asOf};
+}
+
 /* ── Liability remaining balance (auto-decrements by month) ── */
 function liabilityBalance(liab){
   if(!liab.installment)return Number(liab.value)||0;
@@ -1501,6 +1706,7 @@ function liabilityBalance(liab){
 
 /* ── Default data ── */
 function defaultData(){
+  const today=new Date().toISOString().slice(0,10);
   const groups=[{id:"g1",name:"Invest & Grow"},{id:"g2",name:"Savings"},{id:"g3",name:"Essentials"},{id:"g4",name:"Personal"},{id:"g5",name:"Commitments"}];
   const UNTRACKED=new Set(["Investment (GoTrade)","Long Term Savings","Savings (Seabank)","Misc. Savings"]);
   const seed=[
@@ -1515,7 +1721,9 @@ function defaultData(){
   const buyDate=new Date().toISOString().slice(0,10);
   return{
     currency:"SAR",owners:{me:"Me",wife:"My wife"},theme:"light",
-    payPeriods:{me:{enabled:false,payday:28},wife:{enabled:false,payday:1}},
+    // `actualStarts` records the days a period really began, where that
+    // differed from payday — see the pay-period utilities block.
+    payPeriods:{me:{enabled:false,payday:28,actualStarts:{}},wife:{enabled:false,payday:1,actualStarts:{}}},
     activePlanId:{me:"p1",wife:"pw1"},
     plans:[
       {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:22000,groups,categories},
@@ -1561,10 +1769,14 @@ function defaultData(){
       cardVisibility:{hero:true,portfolio:true,savingsInvesting:true,trackedSpending:true,goals:true},
     },
     projection:{monthly:1500,years:20,rate:8},
+    // `interest` is null on a fresh account — an account with no interest
+    // block behaves exactly as it did before that feature existed.
+    // `balanceAsOf` is the day the balance was last confirmed; see
+    // bankValuation().
     banks:[
-      {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000},
-      {id:uid(),owner:"me",name:"Savings",bank:"BDO",country:"PH",currency:"PHP",balance:150000},
-      {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000},
+      {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000,balanceAsOf:today,interest:null},
+      {id:uid(),owner:"me",name:"Savings",bank:"BDO",country:"PH",currency:"PHP",balance:150000,balanceAsOf:today,interest:null},
+      {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000,balanceAsOf:today,interest:null},
     ],
     assets:[
       {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000},
@@ -1632,7 +1844,20 @@ function migrate(d){
   });
   // ensure monthlyPlans have owner
   (d.monthlyPlans||[]).forEach(m=>{if(!m.owner)m.owner="me";if(!m.updatedAt)m.updatedAt="2000-01-01T00:00:00.000Z";});
-  (d.banks||[]).forEach(b=>{if(!b.owner)b.owner="me";if(!b.updatedAt)b.updatedAt="2000-01-01T00:00:00.000Z";});
+  (d.banks||[]).forEach(b=>{
+    if(!b.owner)b.owner="me";
+    if(!b.updatedAt)b.updatedAt="2000-01-01T00:00:00.000Z";
+    /* Interest accrual: every pre-existing account predates both fields. A
+       null `interest` block means "behaves exactly as before", so the
+       backfilled `balanceAsOf` is inert until someone turns interest on —
+       which re-stamps it to that day (see the enable handler in BanksView).
+       That matters, because `updatedAt` is only a proxy for "when the balance
+       was confirmed": it also moves on a rename, and it's the year-2000
+       sentinel above for records old enough to predate it. Accruing 26 years
+       of interest off that sentinel is exactly what the re-stamp prevents. */
+    if(b.interest===undefined)b.interest=null;
+    if(!b.balanceAsOf)b.balanceAsOf=(b.updatedAt||"").slice(0,10)||new Date().toISOString().slice(0,10);
+  });
   (d.goals||[]).forEach(g=>{
     if(!g.owner)g.owner="me";
     if(!g.type)g.type="savings";
@@ -1764,6 +1989,12 @@ function migrate(d){
   if(!d.payPeriods)d.payPeriods={me:{enabled:false,payday:28},wife:{enabled:false,payday:1}};
   if(!d.payPeriods.me)d.payPeriods.me={enabled:false,payday:28};
   if(!d.payPeriods.wife)d.payPeriods.wife={enabled:false,payday:1};
+  /* Corrected period starts. Absent for everyone before this shipped, and an
+     empty map is also the fast path in periodKeyFor — so an owner who never
+     corrects a period pays exactly what they always did. */
+  ["me","wife"].forEach(o=>{
+    if(!d.payPeriods[o].actualStarts||typeof d.payPeriods[o].actualStarts!=="object")d.payPeriods[o].actualStarts={};
+  });
   if(!d.quickTransferLast)d.quickTransferLast={};
   if(!d.netWorthAutoHistory)d.netWorthAutoHistory=[];
   if(!d.targets)d.targets=[];
@@ -3494,7 +3725,14 @@ function App(){
     const now=new Date().toISOString();
     const receipt={id:uid(),year:Number(year),amount:Number(amount),date,note,bankId:bankId||null,createdAt:now,updatedAt:now};
     setData(d=>({...d,investments:(d.investments||[]).map(x=>x.id===invId?{...x,paidDividends:[...(x.paidDividends||[]),receipt],updatedAt:now}:x)}));
-    if(bankId)setData(d=>({...d,banks:(d.banks||[]).map(b=>b.id===bankId?{...b,balance:(Number(b.balance)||0)+Number(amount),updatedAt:now}:b)}));
+    // Settle any accrued interest and re-anchor before crediting: adding to
+    // the stale stored balance would then compound past days' interest onto
+    // money that only arrived today (see settledBankPatch).
+    if(bankId)setData(d=>({...d,banks:(d.banks||[]).map(b=>{
+      if(b.id!==bankId)return b;
+      const s=settledBankPatch(b,now.slice(0,10));
+      return{...b,...s,balance:s.balance+Number(amount),updatedAt:now};
+    })}));
     pushImportantRef.current();
   };
 
@@ -3517,7 +3755,12 @@ function App(){
     setData(d=>({
       ...d,
       investments:(d.investments||[]).map(x=>x.id===invId?{...x,status:"closed",transferBankId:bankId,transferredAt:now,updatedAt:now}:x),
-      banks:(d.banks||[]).map(b=>b.id===bankId?{...b,balance:(Number(b.balance)||0)+Number(inv.confirmedFinalAmount),updatedAt:now}:b),
+      // Same settle-then-credit rule as recordMp2Payout above.
+      banks:(d.banks||[]).map(b=>{
+        if(b.id!==bankId)return b;
+        const s=settledBankPatch(b,now.slice(0,10));
+        return{...b,...s,balance:s.balance+Number(inv.confirmedFinalAmount),updatedAt:now};
+      }),
     }));
     pushImportantRef.current();
   };
@@ -3660,7 +3903,12 @@ function App(){
 
   /* net worth */
   const sarOf=(amt,ccy)=>{const v=convert(amt,ccy,"SAR");return v==null?0:v;};
-  const banksSar=banks.reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+  /* Every bank total in the app values through bankValue(), so an
+     interest-earning account contributes its accrued estimate rather than the
+     last figure someone typed. Pinned to one date string per render pass so
+     three totals computed microseconds apart can't land on different days. */
+  const todayStr=new Date().toISOString().slice(0,10);
+  const banksSar=banks.reduce((s,b)=>s+sarOf(bankValue(b,todayStr),b.currency),0);
   /* Investment Accounts (Phase 1): one shared valuation loop, called once for
      the combined (household) total and again — filtered — per owner, so
      Home's per-profile cards (HeroCard/PortfolioCard/SavingsInvestingCard)
@@ -3760,7 +4008,7 @@ function App(){
      debounce-then-write-only-if-changed shape as the effect above, just
      looped over 3 profiles and keyed by day instead of month. */
   const ownerNetWorthSar=owner=>{
-    const ownerBanksSar=banks.filter(b=>b.owner===owner).reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+    const ownerBanksSar=banks.filter(b=>b.owner===owner).reduce((s,b)=>s+sarOf(bankValue(b,todayStr),b.currency),0);
     return ownerBanksSar+invSarForOwner(owner)+assetSar-liabSar;
   };
   const snapshots=data.snapshots||[];
@@ -3782,7 +4030,7 @@ function App(){
           const pInvs=investmentsForProfile(invs,profile);
           const net=profile==="household"?netWorth:ownerNetWorthSar(profile);
           const investmentsVal=profile==="household"?invSar:invSarForOwner(profile);
-          const profileBanksSar=profile==="household"?banksSar:banks.filter(b=>b.owner===profile).reduce((s,b)=>s+sarOf(b.balance,b.currency),0);
+          const profileBanksSar=profile==="household"?banksSar:banks.filter(b=>b.owner===profile).reduce((s,b)=>s+sarOf(bankValue(b,todayStr),b.currency),0);
           const breakdown=investmentBreakdownSar(pInvs);
           const rounded={
             net:Math.round(net),
@@ -3953,6 +4201,15 @@ function App(){
 
   const setOwnerName=(key,name)=>setData(d=>({...d,owners:{...d.owners,[key]:name}}));
   const setPayPeriod=(owner,patch)=>setData(d=>({...d,payPeriods:{...(d.payPeriods||{}),[owner]:{...((d.payPeriods||{})[owner]||{enabled:false,payday:1}),...patch}}}));
+  /* Record (or clear) the day a period really began. Goes through
+     withActualStart so the "clear removes the key" rule lives in one place —
+     see the pay-period utilities block. Pushed immediately rather than left to
+     the idle autosave: it re-buckets expenses, so the other device should see
+     it before someone logs against the old boundary. */
+  const setActualStart=(owner,periodKey,value)=>{
+    setData(d=>({...d,payPeriods:withActualStart(d.payPeriods,owner,periodKey,value)}));
+    pushImportantRef.current();
+  };
 
   /* derived */
   const allocated=useMemo(()=>plan.categories.reduce((s,c)=>s+(Number(c.amount)||0),0),[plan]);
@@ -4113,7 +4370,7 @@ function App(){
         </div>
 
         <TabPane tab={tab}>
-          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
+          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest,setActualStart}}/>}
           {tab==="budget"&&<BudgetView {...{planForMonth,monthlyPlans,plans,clonePlanForMonth,removePlanForMonth,activePlanId,setCatsFor,setGrpsFor,patchPlanById,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,clonePlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,setCatsFor,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
@@ -5200,7 +5457,169 @@ function GoalContributionSheet({goals,addContribution,onClose}){
 /* Composition root — see the block comment above for the "small sibling
    components" rationale. Adding a new card later = write <YCard/> above and
    add one line to the JSX below. */
-function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
+/* ── "Salary arrived" — correcting a pay period's boundaries ───────────────
+   Salary sometimes lands early (or late), and until now the app kept counting
+   it against the old period's budget while the money was already being spent.
+
+   Auto-advance stays: periods still roll over on payday exactly as before, so
+   a forgotten button can never strand anyone in a stale period. This control
+   only makes CORRECTIONS, and the failure mode when life gets busy is
+   "nothing happened" rather than "the budget is lying".
+
+   Lives on Home so it isn't forgotten, and only for an owner who actually uses
+   pay periods. Household has no period of its own — it just says so quietly
+   when the two owners are in different ones. Per the Home doctrine, the card
+   returns null whenever there's nothing to correct: it appears in a window
+   around the boundary, or whenever a correction is currently in force. ─────── */
+const PP_WINDOW_DAYS=5;
+function PayPeriodCard({profile,owners,payPeriods,expenses,setActualStart}){
+  const[sheetFor,setSheetFor]=useState(null);   // period key awaiting a date
+  const today=todayISO();
+
+  /* Household has no period of its own, and with two different paydays the
+     two owners are ALWAYS in different periods — saying so permanently would
+     be noise. What's worth surfacing is that a period has been corrected, so
+     the combined figures span a window nobody explicitly set. */
+  if(profile==="household"){
+    const bothOn=["me","wife"].every(o=>ownerUsesPayPeriod(payPeriods,o));
+    if(!bothOn)return null;
+    const mine=bucketNow(payPeriods,"me"),hers=bucketNow(payPeriods,"wife");
+    const meOver=periodActualStart(mine,payPeriods.me)!==mine;
+    const wifeOver=periodActualStart(hers,payPeriods.wife)!==hers;
+    if(!meOver&&!wifeOver)return null;
+    const who=meOver&&wifeOver?`${owners.me} and ${owners.wife} have`:`${meOver?owners.me:owners.wife} has`;
+    return(
+      <div className="home-card" style={homeCardStyle()}>
+        <div style={{fontSize:13,fontWeight:600,color:P.neuInk,marginBottom:10}}>Pay periods</div>
+        <Verdict tone="flat">{who} a corrected pay period, so these totals span different dates</Verdict>
+        <div style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
+          {owners.me}: {bucketLabel(mine,payPeriods,"me")}<br/>
+          {owners.wife}: {bucketLabel(hers,payPeriods,"wife")}<br/>
+          Switch to a person to correct their dates.
+        </div>
+      </div>
+    );
+  }
+
+  if(!ownerUsesPayPeriod(payPeriods,profile))return null;
+  const cfg=payPeriods[profile];
+  const current=bucketNow(payPeriods,profile);
+  const next=shiftPeriod(current,cfg,1);
+  const curStart=periodRange(current,cfg).start;
+  const curOverride=(cfg.actualStarts||{})[current];
+  const nextPending=periodActualStart(next,cfg)===null;
+  const dayDiff=(a,b)=>Math.round((a-b)/86400000);
+  const todayD=keyToDate(today);
+  const daysToNextNominal=dayDiff(keyToDate(next),todayD);
+  const daysSinceCurStart=dayDiff(todayD,curStart);
+  // "Arrived early" targets the NEXT period (it's the one about to begin);
+  // "hasn't arrived" flags the CURRENT one, which drops us back a period.
+  const canSayEarly=!nextPending&&daysToNextNominal<=PP_WINDOW_DAYS&&daysToNextNominal>0;
+  const canSayLate=!nextPending&&!curOverride&&daysSinceCurStart>=0&&daysSinceCurStart<=PP_WINDOW_DAYS;
+  const hasOverride=!!curOverride||nextPending;
+  if(!hasOverride&&!canSayEarly&&!canSayLate)return null;
+
+  const shortDate=s=>keyToDate(s).toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  const nominalStart=current;                       // the key IS the nominal start
+  const offBy=curOverride?dayDiff(keyToDate(curOverride),keyToDate(nominalStart)):0;
+
+  let tone="flat",line=null;
+  if(nextPending){
+    tone="warn";
+    line=<>Waiting for your salary — this period is still open, {periodLength(current,cfg)} days so far</>;
+  }else if(curOverride){
+    tone="good";
+    line=<>This period started {shortDate(curOverride)}, {Math.abs(offBy)} {Math.abs(offBy)===1?"day":"days"} {offBy<0?"early":"late"}</>;
+  }else if(canSayEarly){
+    line=<>Payday is in {daysToNextNominal} {daysToNextNominal===1?"day":"days"}</>;
+  }else{
+    line=<>This period started {shortDate(current)}</>;
+  }
+
+  const act=(label,onClick,danger)=>(
+    <button key={label} onClick={onClick} className="neu-btn"
+      style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,padding:"8px 10px",
+        fontSize:12,fontWeight:600,color:danger?P.neuSub:P.jade,flex:"1 1 auto",minWidth:0}}>
+      {label}
+    </button>
+  );
+  const buttons=[];
+  if(nextPending)buttons.push(act("It arrived",()=>setSheetFor(next)));
+  if(canSayEarly)buttons.push(act("Salary arrived early",()=>setSheetFor(next)));
+  if(canSayLate)buttons.push(act("Hasn't arrived yet",()=>setActualStart(profile,current,PERIOD_PENDING)));
+  if(hasOverride)buttons.push(act("Undo",()=>setActualStart(profile,nextPending?next:current,null),true));
+
+  return(
+    <div className="home-card" style={homeCardStyle()}>
+      <div style={{fontSize:13,fontWeight:600,color:P.neuInk,marginBottom:10}}>Pay period</div>
+      <Verdict tone={tone}>{line}</Verdict>
+      <div style={{fontSize:11,color:P.faint,marginBottom:10,lineHeight:1.5}}>
+        {bucketLabel(current,payPeriods,profile)} · {periodLength(current,cfg)} days
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{buttons}</div>
+      {sheetFor&&
+        <SalaryArrivedSheet periodKey={sheetFor} cfg={cfg} owner={profile} owners={owners} expenses={expenses}
+          onClose={()=>setSheetFor(null)}
+          onConfirm={date=>{setActualStart(profile,sheetFor,date);setSheetFor(null);}}/>}
+    </div>
+  );
+}
+
+/* Date picker for "my salary actually arrived on…". Shows the consequence
+   before it's committed — the new boundaries, the new length, and how many
+   already-logged expenses move into this period — because moving a boundary
+   silently re-buckets real transactions. */
+function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,onClose,onConfirm}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const[date,setDate]=useState(todayISO());
+  const v=periodStartValidity(periodKey,cfg,date);
+  const preview=useMemo(()=>{
+    if(!v.ok)return null;
+    const trial={...cfg,actualStarts:{...(cfg.actualStarts||{}),[periodKey]:date}};
+    const{start,end}=periodRange(periodKey,trial);
+    // expenses that currently sit elsewhere and would land in this period
+    const moving=(expenses||[]).filter(e=>e.date&&!e.deletedAt&&(e.owner||"me")===owner
+      &&periodKeyFor(e.date,cfg)!==periodKey&&periodKeyFor(e.date,trial)===periodKey).length;
+    return{start,end,len:periodLength(periodKey,trial),moving};
+  },[date,periodKey,cfg,expenses,owner,v.ok]);
+  const fmtD=d=>d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>When did it arrive?</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+          {owners[owner]}'s pay period · normally starts {keyToDate(periodKey).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+        </div>
+        <input type="date" value={date} max={todayISO()} onChange={e=>setDate(e.target.value)}
+          style={{width:"100%",borderRadius:10,padding:"12px",fontSize:16,fontWeight:600,
+            background:"rgba(0,0,0,.05)",border:"none",color:P.ink,marginBottom:12}}/>
+        <div style={{...neuInset(12),padding:"10px 12px",marginBottom:16,fontSize:12,color:P.neuSub,lineHeight:1.6,minHeight:52}}>
+          {v.ok&&preview
+            ?<>This period runs <strong style={{color:P.neuInk}}>{fmtD(preview.start)} – {fmtD(preview.end)}</strong> ({preview.len} days).
+               <br/>{preview.moving>0
+                 ?<>{preview.moving} logged {preview.moving===1?"expense moves":"expenses move"} into it.</>
+                 :<>No logged expenses change period.</>}
+               <br/><span style={{color:P.faint}}>Budget amounts don't change — the daily allowance adjusts instead.</span></>
+            :<span style={{color:P.wine}}>{v.why}</span>}
+        </div>
+        <button onClick={()=>{if(v.ok)onConfirm(date);}} disabled={!v.ok}
+          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,
+            padding:"12px 0",fontSize:14,fontWeight:600,border:"none",
+            background:v.ok?P.jade:P.sfA,color:v.ok?"#fff":P.faint,cursor:v.ok?"pointer":"default"}}>
+          <I.Check size={14}/>Save
+        </button>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest,setActualStart}){
   const[profile,setProfile]=useState(budgetOwner);
   const setProfileSynced=p=>{setProfile(p);if(p==="me"||p==="wife")setBudgetOwner(p);};
   const[goalSheet,setGoalSheet]=useState(false);
@@ -5233,7 +5652,7 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
   const netWorthByProfile=useCallback(profileKey=>{
     if(profileKey==="household")return netWorth;
     const ownerBanksSar=(banks||[]).filter(b=>b.owner===profileKey).reduce((s,b)=>{
-      const v=convert?convert(b.balance,b.currency,"SAR"):null;return s+(v==null?0:v);
+      const v=convert?convert(bankValue(b),b.currency,"SAR"):null;return s+(v==null?0:v);
     },0);
     return ownerBanksSar+invSarForOwner(profileKey)+assetSar-liabSar;
   },[banks,invSarForOwner,assetSar,liabSar,convert,netWorth]);
@@ -5273,6 +5692,14 @@ function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSa
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div className="home-grid">
+        {/* Above the hero, deliberately: it appears only around a pay
+            boundary or while a correction is in force, and it asks for an
+            action. Same rule as a matured Time Deposit — something needing a
+            decision doesn't get buried. Guards itself, so no condition here. */}
+        <div className="home-cell cell-payperiod">
+          <PayPeriodCard profile={profile} owners={owners} payPeriods={payPeriods}
+            expenses={expenses} setActualStart={setActualStart}/>
+        </div>
         {isVisible("hero")&&
           <div className="home-cell cell-hero">
             <HeroCard profile={profile} setProfile={setProfileSynced} owners={owners}
@@ -5354,23 +5781,25 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
   useEffect(()=>{setViewMonth(bucketNow(payPeriods,budgetOwner));},[budgetOwner,JSON.stringify(payPeriods)]);
   const[expandedSubs,setExpandedSubs]=useState({});
   const toggleSubs=id=>setExpandedSubs(s=>({...s,[id]:!s[id]}));
-  /* Move-sub-items selection. Plan-wide: subs from any number of categories
-     can be ticked at once and land in a single destination. Keyed by sub id
-     (uid() is unique within a plan) mapping to its owning category id, which
-     the destination sheet needs for its consequence summary. */
+  /* Move-categories selection. Groups (Invest & Grow, Essentials, …) are the
+     fixed frame; the CATEGORY rows under them are what gets reorganised, so
+     this ticks categories and moves them to a different group. Plan-wide:
+     categories from any number of groups can be ticked at once and land in a
+     single destination. Keyed by category id → its current group id, which the
+     destination sheet needs for its before/after summary. */
   const[selectMode,setSelectMode]=useState(false);
-  const[selectedSubs,setSelectedSubs]=useState({});
+  const[selectedCats,setSelectedCats]=useState({});
   const[showMoveSheet,setShowMoveSheet]=useState(false);
   useScrollLock(showMoveSheet);
   const moveSheetRef=useDialogA11y(()=>setShowMoveSheet(false),showMoveSheet);
-  const exitSelect=()=>{setSelectMode(false);setSelectedSubs({});setShowMoveSheet(false);};
-  const toggleSelectSub=(catId,subId)=>setSelectedSubs(s=>{
-    if(s[subId]){const n={...s};delete n[subId];return n;}
-    return{...s,[subId]:catId};
+  const exitSelect=()=>{setSelectMode(false);setSelectedCats({});setShowMoveSheet(false);};
+  const toggleSelectCat=(catId,groupId)=>setSelectedCats(s=>{
+    if(s[catId]){const n={...s};delete n[catId];return n;}
+    return{...s,[catId]:groupId};
   });
   // a selection is only meaningful within one plan — drop it when the plan
   // under it changes out from under the user (month nav, owner switch)
-  useEffect(()=>{setSelectMode(false);setSelectedSubs({});setShowMoveSheet(false);},[viewMonth,budgetOwner]);
+  useEffect(()=>{setSelectMode(false);setSelectedCats({});setShowMoveSheet(false);},[viewMonth,budgetOwner]);
   // Mobile UX fix: deletion of a group/category/sub-item used to be a bare
   // icon button sitting right next to the tracking-toggle and expand
   // buttons — a prime accidental-tap spot. Deletes now route through this
@@ -5422,63 +5851,49 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
     return Number(c.amount)||0;
   };
 
-  /* ── move sub-items between categories ──────────────────────────────────
-     A sub is {id,name,amount} nested in its category, and nothing outside the
-     subs array ever references a sub id (expenses, targets and envelopes all
-     key on the *category* id), so a move is a pure structural edit — no
-     remapping anywhere else. Two consequences are worth surfacing to the user
-     before they commit, which the sheet below does:
-       • a category emptied of all its subs has its cached amount zeroed —
-         syncAmt deliberately leaves `amount` alone at zero subs, and letting
-         the last sub-sum linger there would silently resurface as a manual
-         value the next time the category rendered;
-       • moving into a category with a different trackExpenses setting shifts
-         that money between the tracked Envelopes list and the untracked
-         quick-transfer list, and in or out of Home's tracked-spending card. */
-  const selectedIds=Object.keys(selectedSubs);
-  const selectedInfo=useMemo(()=>{
-    const cats=monthPlan.categories||[];
-    let total=0;
-    const sourceIds=new Set();
-    const byCat={}; // how much each source category is giving up
-    cats.forEach(c=>(c.subs||[]).forEach(s=>{
-      if(!selectedSubs[s.id])return;
-      const amt=Number(s.amount)||0;
-      total+=amt;
-      byCat[c.id]=(byCat[c.id]||0)+amt;
-      sourceIds.add(c.id);
-    }));
-    // categories that would be left with no subs at all
-    const emptied=cats.filter(c=>sourceIds.has(c.id)&&(c.subs||[]).every(s=>selectedSubs[s.id]));
-    return{total,sourceIds,byCat,emptied};
-  },[monthPlan,selectedSubs]);
+  /* ── move categories between groups ─────────────────────────────────────
+     Groups are the fixed frame of a budget; the categories under them are what
+     actually gets reorganised as life changes. A category carries its own
+     `amount`/`subs`/`trackExpenses` and everything that references it keys on
+     the CATEGORY id (expenses, targets, envelopes, quick transfers), so
+     changing `groupId` moves the money with it and rewires nothing else. No
+     amount is created, destroyed or reinterpreted — group totals are derived
+     sums, so they simply re-add.
 
-  const moveSelectedTo=destId=>{
-    setCatsFor(pid,cats=>{
-      const moving=[];
-      const stripped=cats.map(c=>{
-        if(c.id===destId)return c;
-        const keep=[],take=[];
-        (c.subs||[]).forEach(s=>(selectedSubs[s.id]?take:keep).push(s));
-        if(take.length===0)return c;
-        moving.push(...take);
-        return keep.length>0?syncAmt({...c,subs:keep}):{...c,subs:[],amount:0};
-      });
-      if(moving.length===0)return cats;
-      return stripped.map(c=>{
-        if(c.id!==destId)return c;
-        /* A category's amount is a manual figure only while it has no subs —
-           the moment one exists, effectiveAmt reads the sub sum instead. So
-           dropping items into a subs-less category would silently discard its
-           whole manual budget (a SAR 4,200 "Bills" would become the SAR 820
-           that just arrived). Preserve it as a sub of its own first. */
-        const existing=c.subs||[];
-        const seed=(existing.length===0&&(Number(c.amount)||0)>0)
-          ?[{id:uid(),name:c.name||"Existing budget",amount:Number(c.amount)||0}]:[];
-        return syncAmt({...c,subs:[...seed,...existing,...moving]});
-      });
+     The one real consequence, surfaced in the sheet below: `investTarget`
+     keys on group NAMES, so moving a category into or out of a group named
+     there changes the Invest & Grow figure. That is usually the intent, but it
+     should never be a surprise. */
+  const selectedIds=Object.keys(selectedCats);
+  const selectedInfo=useMemo(()=>{
+    const cats=(monthPlan.categories||[]).filter(c=>selectedCats[c.id]);
+    let total=0;
+    const sourceGroupIds=new Set();
+    const byGroup={};  // how much each source group is giving up
+    cats.forEach(c=>{
+      const amt=effectiveAmt(c);
+      total+=amt;
+      byGroup[c.groupId]=(byGroup[c.groupId]||0)+amt;
+      sourceGroupIds.add(c.groupId);
     });
-    setExpandedSubs(s=>({...s,[destId]:true}));
+    // groups that would be left with no categories at all
+    const emptied=(monthPlan.groups||[]).filter(g=>sourceGroupIds.has(g.id)
+      &&(monthPlan.categories||[]).filter(c=>c.groupId===g.id).every(c=>selectedCats[c.id]));
+    return{total,cats,sourceGroupIds,byGroup,emptied};
+  },[monthPlan,selectedCats]);
+
+  const moveSelectedTo=destGroupId=>{
+    setCatsFor(pid,cats=>{
+      const moving=cats.filter(c=>selectedCats[c.id]&&c.groupId!==destGroupId);
+      if(moving.length===0)return cats;
+      const movingIds=new Set(moving.map(c=>c.id));
+      /* Display order inside a group is array order (rendering filters
+         categories by groupId), so appending puts the moved rows at the end of
+         the destination group — predictable, rather than interleaving them at
+         whatever positions they happened to occupy in the source. */
+      return[...cats.filter(c=>!movingIds.has(c.id)),
+             ...moving.map(c=>({...c,groupId:destGroupId}))];
+    });
     exitSelect();
   };
 
@@ -5723,8 +6138,10 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
         </div>
       )}
 
-      {/* ── move sub-items: selection bar ── */}
-      {editable&&(monthPlan.categories||[]).some(c=>(c.subs||[]).length>0)&&(
+      {/* ── move categories: selection bar ──
+          Needs at least two groups to have somewhere to move to, and at least
+          one category to move. */}
+      {editable&&(monthPlan.groups||[]).length>1&&(monthPlan.categories||[]).length>0&&(
         selectMode
           ?<div style={{...neu(14),padding:"8px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
              <span style={{fontSize:12,fontWeight:600,color:P.neuInk}}>
@@ -5743,7 +6160,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
            </div>
           :<button onClick={()=>setSelectMode(true)} className="status-pill"
              style={{marginBottom:12,cursor:"pointer",border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub}}>
-             Select sub-items to move
+             Select categories to move
            </button>
       )}
 
@@ -5767,15 +6184,24 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
               const subs=c.subs||[];
               const hasSubs=subs.length>0;
               const effAmt=effectiveAmt(c);
-              // in select mode, force every category that *has* subs open so the
-              // selection genuinely reaches plan-wide; empty ones stay collapsed
-              const subsOpen=expandedSubs[c.id]||(selectMode&&hasSubs);
+              // Selection works on the category rows themselves, so nothing
+              // needs force-opening — collapsed rows are what makes a
+              // plan-wide selection scannable in the first place.
+              const subsOpen=expandedSubs[c.id];
               return(
                 <div key={c.id} style={{borderBottom:"1px solid rgba(0,0,0,.06)"}}>
                   {/* Category row */}
                   <div className="cat-row">
                     <div className="cat-row-name">
-                      <span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>
+                      {/* the checkbox replaces the colour dot rather than
+                          sitting beside it — the row is already tight at
+                          mobile widths */}
+                      {selectMode
+                        ?<input type="checkbox" checked={!!selectedCats[c.id]}
+                           aria-label={`Select ${c.name||"category"}`}
+                           onChange={()=>toggleSelectCat(c.id,c.groupId)}
+                           style={{width:16,height:16,flexShrink:0,accentColor:P.jade}}/>
+                        :<span style={{width:10,height:10,borderRadius:999,background:c.color,flexShrink:0}}/>}
                       <input value={c.name} onChange={e=>updateCat(c.id,{name:e.target.value})} className="bare"
                         style={{flex:1,fontSize:14,minWidth:0,fontWeight:hasSubs?600:400,
                           color:c.trackExpenses===false?P.neuSub:P.neuInk,fontStyle:c.trackExpenses===false?"italic":"normal"}}/>
@@ -5837,15 +6263,7 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
                       {subs.map(sub=>(
                         <div key={sub.id} className="sub-row" style={{borderBottom:"1px solid rgba(0,0,0,.05)"}}>
                           <div className="sub-row-name">
-                            {selectMode
-                              /* the checkbox replaces the indent dot rather than
-                                 sitting beside it — the row is already tight at
-                                 mobile widths */
-                              ?<input type="checkbox" checked={!!selectedSubs[sub.id]}
-                                 aria-label={`Select ${sub.name||"sub-item"}`}
-                                 onChange={()=>toggleSelectSub(c.id,sub.id)}
-                                 style={{width:16,height:16,flexShrink:0,accentColor:P.jade}}/>
-                              :<span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>}
+                            <span style={{width:6,height:6,borderRadius:999,background:P.neuSub,flexShrink:0}}/>
                             <input value={sub.name} onChange={e=>handleSubChange(c.id,sub.id,{name:e.target.value})}
                               className="bare" style={{flex:1,fontSize:13,minWidth:0,color:P.neuInk}}/>
                           </div>
@@ -5909,56 +6327,60 @@ function BudgetView({planForMonth,monthlyPlans,plans,clonePlanForMonth,removePla
           <div className="sheet" ref={moveSheetRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <h3 style={{margin:0,fontSize:16,fontWeight:600}}>
-                Move {selectedIds.length} sub-item{selectedIds.length===1?"":"s"}
+                Move {selectedIds.length} categor{selectedIds.length===1?"y":"ies"}
               </h3>
               <IconButton icon={I.X} label="Close" onClick={()=>setShowMoveSheet(false)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
             </div>
             <div style={{fontSize:13,color:P.sub,marginBottom:12,lineHeight:1.5}}>
-              Moving <strong>{fmt(selectedInfo.total)}</strong> to another category. Amounts travel with the items — nothing is retyped.
+              Moving <strong>{fmt(selectedInfo.total)}</strong> to another group. Each category keeps its own
+              amount, sub-items and tracking — only which group it sits under changes.
+            </div>
+            <div style={{fontSize:12,color:P.faint,marginBottom:12,lineHeight:1.5}}>
+              {selectedInfo.cats.map(c=>c.name||"Untitled").join(", ")}
             </div>
             {selectedInfo.emptied.length>0&&(
               <div style={{fontSize:12,color:P.br,background:P.brS,borderRadius:10,padding:"8px 12px",marginBottom:12,lineHeight:1.45}}>
-                {selectedInfo.emptied.map(c=>c.name||"Untitled").join(", ")} {selectedInfo.emptied.length===1?"loses":"lose"} every sub-item and will be left at {fmt(0)}.
+                {selectedInfo.emptied.map(g=>g.name||"Untitled").join(", ")} {selectedInfo.emptied.length===1?"is":"are"} left with no categories at all.
               </div>
             )}
             <div style={{maxHeight:"45dvh",overflowY:"auto",marginBottom:16}}>
-              {(monthPlan.groups||[]).map(g=>{
-                const opts=(monthPlan.categories||[]).filter(c=>c.groupId===g.id
-                  // skip a category only if every selected sub already lives there
-                  &&!(selectedInfo.sourceIds.size===1&&selectedInfo.sourceIds.has(c.id)));
-                if(opts.length===0)return null;
-                return(
-                  <div key={g.id} style={{marginBottom:12}}>
-                    <div style={{fontSize:10,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:P.faint,marginBottom:6}}>{g.name}</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {opts.map(c=>{
-                        const untracked=c.trackExpenses===false;
-                        const mixing=selectedInfo.sourceIds.size>0&&(monthPlan.categories||[])
-                          .some(s=>selectedInfo.sourceIds.has(s.id)&&(s.trackExpenses===false)!==untracked);
-                        return(
-                          <button key={c.id} onClick={()=>moveSelectedTo(c.id)}
-                            style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,
-                              padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",border:"none",
-                              background:"rgba(0,0,0,.05)",color:P.ink}}>
-                            <div style={{minWidth:0}}>
-                              <div style={{fontWeight:600,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                                {c.name||"Untitled"}
-                                {untracked&&<span style={{fontSize:9,fontWeight:700,color:P.sub,border:`1px solid ${P.line}`,borderRadius:999,padding:"1px 6px"}}>NOT TRACKED</span>}
-                              </div>
-                              <div style={{fontSize:11,color:P.faint,marginTop:2}}>
-                                {/* a destination can also be a source (partial move
-                                    out of it), so net its own contribution back out */}
-                                {fmt(effectiveAmt(c))} → {fmt(effectiveAmt(c)-(selectedInfo.byCat[c.id]||0)+selectedInfo.total)}
-                                {mixing?` · changes ${untracked?"out of":"into"} tracked spending`:""}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {(monthPlan.groups||[]).map(g=>{
+                  // a group everything selected already sits in is not a move
+                  if(selectedInfo.sourceGroupIds.size===1&&selectedInfo.sourceGroupIds.has(g.id))return null;
+                  const items=(monthPlan.categories||[]).filter(c=>c.groupId===g.id);
+                  const before=items.reduce((s,c)=>s+effectiveAmt(c),0);
+                  // a destination can also be a source (a partial move out of
+                  // it), so net its own contribution back out
+                  const after=before-(selectedInfo.byGroup[g.id]||0)+selectedInfo.total;
+                  const staying=items.filter(c=>!selectedCats[c.id]).length;
+                  const arriving=selectedInfo.cats.filter(c=>c.groupId!==g.id).length;
+                  /* investTarget keys on group NAMES, so this move can change
+                     what counts toward Invest & Grow. Usually the intent —
+                     never a surprise. */
+                  const investNames=investTarget?.groupNames||[];
+                  const intoInvest=investNames.includes(g.name);
+                  const outOfInvest=selectedInfo.cats.some(c=>{
+                    const sg=(monthPlan.groups||[]).find(x=>x.id===c.groupId);
+                    return sg&&investNames.includes(sg.name);
+                  });
+                  return(
+                    <button key={g.id} onClick={()=>moveSelectedTo(g.id)}
+                      style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,
+                        padding:"10px 14px",borderRadius:12,fontSize:14,textAlign:"left",border:"none",
+                        background:"rgba(0,0,0,.05)",color:P.ink}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:600}}>{g.name||"Untitled group"}</div>
+                        <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                          {fmt(before)} → {fmt(after)} · {staying+arriving} categor{staying+arriving===1?"y":"ies"}
+                          {intoInvest&&!outOfInvest?" · counts toward Invest & Grow":""}
+                          {!intoInvest&&outOfInvest?" · leaves Invest & Grow":""}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <button onClick={()=>setShowMoveSheet(false)}
               style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
@@ -6348,7 +6770,7 @@ function ExpenseTrackerView({data,plans,planForMonth,clonePlanForMonth,assignPla
     const onPace=depleteDay>=daysInMonth;
     let depleteDate=null;
     if(!onPace){
-      const{start}=usesPayPeriod?periodRange(viewMonth,(payPeriods||{})[budgetOwner]?.payday||1):{start:(()=>{const[y,mo]=viewMonth.split("-").map(Number);return new Date(y,mo-1,1);})()};
+      const{start}=usesPayPeriod?periodRange(viewMonth,(payPeriods||{})[budgetOwner]||{payday:1}):{start:(()=>{const[y,mo]=viewMonth.split("-").map(Number);return new Date(y,mo-1,1);})()};
       depleteDate=new Date(start);
       depleteDate.setDate(depleteDate.getDate()+Math.min(depleteDay,daysInMonth)-1);
     }
@@ -7404,13 +7826,20 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
 
    Amounts run through evalMathExpr, same as the inline field it replaces, so
    "250+80" still works. Portalled for the same containing-block reason as
-   every other sheet in this file — see Portal's note near the top. */
+   every other sheet in this file — see Portal's note near the top.
+
+   This sheet is also where interest accrual gets reconciled. It starts from
+   the *accrued* value, not the stored balance, and all three modes re-anchor
+   `balanceAsOf` to today — so Set means "this is the real figure, start again
+   from here", and Add/Subtract can't compound past days' interest onto money
+   that only moved today. */
 function UpdateBalanceSheet({account,onClose,onConfirm}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
   const[mode,setMode]=useState("add");
   const[amount,setAmount]=useState("");
-  const cur=Number(account.balance)||0;
+  const val=bankValuation(account);
+  const cur=val.value;
   const MODES=[["add","Add",P.jade],["subtract","Subtract",P.wine],["set","Set",P.br]];
   const idx=Math.max(0,MODES.findIndex(([k])=>k===mode));
   const parsed=evalMathExpr(amount,NaN);
@@ -7421,7 +7850,10 @@ function UpdateBalanceSheet({account,onClose,onConfirm}){
   // Subtracting past zero is allowed (an overdraft is a real thing) but worth
   // flagging, since it's more often a mode mistake than an intentional entry.
   const goesNegative=hasAmount&&next<0;
-  const canSave=hasAmount&&(mode==="set"||parsed!==0)&&next!==cur;
+  // With accrual running, committing the accrued figure unchanged is still a
+  // meaningful action — it confirms the estimate and re-anchors the date — so
+  // the usual "nothing would change" guard doesn't apply.
+  const canSave=hasAmount&&(mode==="set"||parsed!==0)&&(next!==cur||val.active);
   const submit=()=>{if(canSave)onConfirm(next);};
   return(
     <Portal>
@@ -7431,9 +7863,18 @@ function UpdateBalanceSheet({account,onClose,onConfirm}){
           <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Update balance</h3>
           <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
         </div>
-        <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+        <div style={{fontSize:12,color:P.faint,marginBottom:val.active?8:14}}>
           {account.name||"Account"}{account.bank?` · ${account.bank}`:""}
         </div>
+        {/* Says out loud that the starting figure is an estimate, not the
+            number last typed — otherwise "Add 500" to an accrued balance looks
+            like the app quietly changed the balance on its own. */}
+        {val.active&&
+          <div style={{fontSize:11,color:P.neuSub,marginBottom:14,lineHeight:1.5}}>
+            Starting from the estimated balance — {num(val.balance)} confirmed on{" "}
+            {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+            {" "}plus {num(val.accrued)} accrued. Saving re-anchors it to today.
+          </div>}
 
         <div role="group" aria-label="Update mode" className="seg-control" style={{width:"100%",marginBottom:14}}>
           <div className="seg-indicator" style={{transform:`translateX(${idx*100}%)`,background:MODES[idx][2]}}/>
@@ -7479,11 +7920,96 @@ function UpdateBalanceSheet({account,onClose,onConfirm}){
   );
 }
 
+/* ── Interest setup for one account ───────────────────────────────────────
+   Lives inside the account's settings panel (behind the gear) rather than on
+   the card, so accounts that don't earn interest — most of them — never see
+   it. Everything here is configuration; the maths is bankValuation()'s.
+
+   Enabling stamps `balanceAsOf` to today. That is load-bearing: migrate()
+   backfills the anchor from `updatedAt`, which for an old record is the
+   year-2000 sentinel, and accruing from there would invent decades of
+   interest the moment the toggle is flipped. ── */
+function InterestSettings({b,updateBank,todayStr,accent}){
+  const it=b.interest;
+  const on=!!(it&&it.enabled!==false);
+  const patch=next=>updateBank(b.id,{interest:{...(it||DEFAULT_BANK_INTEREST()),...next}});
+  const tiers=(it&&it.tiers)||[];
+  const setTier=(i,next)=>patch({tiers:tiers.map((t,j)=>j===i?{...t,...next}:t)});
+  const toggle=()=>{
+    if(!it)updateBank(b.id,{interest:DEFAULT_BANK_INTEREST(),balanceAsOf:todayStr});
+    else if(it.enabled===false)updateBank(b.id,{interest:{...it,enabled:true},balanceAsOf:todayStr});
+    else patch({enabled:false});  // keep the tiers, just stop accruing
+  };
+  const field={...neuInset(8),flex:1,minWidth:0,textAlign:"right",fontSize:13,padding:"5px 8px",color:P.neuInk};
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:8,paddingTop:8,borderTop:`1px solid ${P.line}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:12,color:P.neuSub}}>Earns interest</span>
+        <button onClick={toggle} aria-pressed={on} className="status-pill status-pill-fixed"
+          style={{marginLeft:"auto",cursor:"pointer",border:`1px solid ${on?P.grS:P.line}`,
+            background:on?P.grS:"transparent",color:on?P.grD:P.neuSub}}>
+          {on?<I.Check size={13}/>:<I.X size={13}/>}{on?"On":"Off"}
+        </button>
+      </div>
+
+      {on&&<>
+        {/* Whole-balance tiers: the balance picks ONE rate and it applies to
+            all of it. Said in the UI because the marginal reading is the more
+            common convention and would quietly give a different number. */}
+        <div style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
+          The balance picks one rate and it applies to the whole amount — not
+          just the part above each threshold.
+        </div>
+        {tiers.map((t,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>{i===0?"From":"From"}</span>
+            <NumField value={t.from} onCommit={v=>setTier(i,{from:v})} min={0}
+              className="bare tnum" style={field}/>
+            <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>at</span>
+            <NumField value={t.rate} onCommit={v=>setTier(i,{rate:v})} min={0}
+              className="bare tnum" style={{...field,maxWidth:70}}/>
+            <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>%</span>
+            {tiers.length>1&&
+              <IconButton icon={I.Trash} label={`Remove tier ${i+1}`} size={13}
+                onClick={()=>patch({tiers:tiers.filter((_,j)=>j!==i)})}
+                style={{color:P.wine,opacity:.5,flexShrink:0}}/>}
+          </div>
+        ))}
+        <button onClick={()=>patch({tiers:[...tiers,{from:0,rate:0}]})} className="neu-btn"
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,padding:"5px 0",
+            fontSize:11,fontWeight:600,color:accent}}>
+          <I.Plus size={11}/>Add tier
+        </button>
+
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>Withholding tax</span>
+          <NumField value={(it&&it.taxPct)!=null?it.taxPct:20} onCommit={v=>patch({taxPct:v})} min={0} max={100}
+            className="bare tnum" style={{...field,maxWidth:70}}/>
+          <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>%</span>
+          <select value={(it&&it.crediting)||"daily"} onChange={e=>patch({crediting:e.target.value})}
+            aria-label="Interest crediting frequency"
+            style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub,flexShrink:0}}>
+            {BANK_CREDITING.map(([k,l])=><option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
+        <div style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
+          Accruing from {b.balanceAsOf
+            ?new Date(b.balanceAsOf+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})
+            :"—"}. Updating the balance re-anchors this to that day.
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,syncNow}){
   const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
   const[balanceEditId,setBalanceEditId]=useState(null); // account id whose Update-balance sheet is open
   const sar=n=>formatMoney(n,{code:"SAR"});
-  const sarOf=b=>{const v=convert(b.balance,b.currency,"SAR");return v==null?0:v;};
+  // One date for the whole view, so every card and every total on screen is
+  // computed against the same day (see bankValuation).
+  const todayStr=new Date().toISOString().slice(0,10);
+  const sarOf=b=>{const v=convert(bankValue(b,todayStr),b.currency,"SAR");return v==null?0:v;};
   const total=banks.reduce((s,b)=>s+sarOf(b),0);
   const usdTotal=sarRate?Math.round(total/sarRate):null;
   const phpTotal=convert?convert(total,"SAR","PHP"):null;
@@ -7494,6 +8020,14 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
     const isOpen=openId===b.id;
     const accent=b.owner==="me"?P.jade:P.br;
     const accentS=b.owner==="me"?P.jadeS:P.brS;
+    const val=bankValuation(b,todayStr);
+    // Whole units on the headline: accrual always produces cents, and at 26px
+    // serif "PHP 150,203.14" wraps to two lines and collides with the Update
+    // button. Every other money figure in the app (the totals above, sar())
+    // already rounds — the card was the outlier. The exact stored figure is
+    // still visible and editable in the settings panel's Balance field.
+    const money=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+    const money2=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:2});
     return(
       <div key={b.id} style={{...neu(16),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
         {/* accent strip — reads as the "card network" band of a wallet pass */}
@@ -7513,9 +8047,19 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
 
           <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:8}}>
             <div style={{minWidth:0}}>
-              <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
-                {b.currency} {Number(b.balance||0).toLocaleString("en-US")}
+              <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk,whiteSpace:"nowrap"}}>
+                {b.currency} {money(val.value)}
               </div>
+              {/* Accrual is always labelled an estimate and always says what
+                  it's an estimate *since*, because the app can never separate
+                  interest from a deposit after the fact — the honest claim is
+                  only ever "since you last confirmed this". */}
+              {val.active&&
+                <div className="tnum" style={{fontSize:11,color:accent,marginTop:2}}>
+                  ≈ {money2(val.accrued)} accrued since{" "}
+                  {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                  <span style={{color:P.faint}}> · est.</span>
+                </div>}
               {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
             </div>
             {/* Primary action on this card — updating a balance is by far the
@@ -7557,9 +8101,14 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:12,color:P.neuSub}}>Balance ({b.currency})</span>
-              <NumField value={b.balance} onCommit={v=>{updateBank(b.id,{balance:v});syncNow&&syncNow();}}
+              {/* Typing here is a confirmation too, so it re-anchors the
+                  accrual date exactly like the Update sheet's Set mode. */}
+              <NumField value={b.balance} onCommit={v=>{updateBank(b.id,{balance:v,balanceAsOf:todayStr});syncNow&&syncNow();}}
                 className="bare tnum" style={{...neuInset(8),flex:1,textAlign:"right",fontSize:14,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
             </div>
+
+            <InterestSettings b={b} updateBank={updateBank} todayStr={todayStr} accent={accent}/>
+
             <button onClick={()=>{removeBank(b.id);setOpenId(null);}} className="neu-btn"
               style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"7px 0",
                 fontSize:12,fontWeight:600,color:P.wine}}>
@@ -7625,7 +8174,13 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
         const acct=banks.find(b=>b.id===balanceEditId);
         if(!acct)return null;
         return <UpdateBalanceSheet account={acct} onClose={()=>setBalanceEditId(null)}
-          onConfirm={newBalance=>{updateBank(acct.id,{balance:newBalance});setBalanceEditId(null);syncNow&&syncNow();}}/>;
+          onConfirm={newBalance=>{
+            // Every mode re-anchors: the figure being saved is true as of
+            // today, whether it came from a deposit, a withdrawal or a
+            // statement. Accrual restarts from here.
+            updateBank(acct.id,{balance:newBalance,balanceAsOf:todayStr});
+            setBalanceEditId(null);syncNow&&syncNow();
+          }}/>;
       })()}
     </div>
   );
