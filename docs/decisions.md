@@ -1342,3 +1342,36 @@ secrets, new Finnhub key. Rewriting history with `git-filter-repo` would have
 meant a force-push and broken clones to scrub strings that are already dead.
 Rotating is what actually removes the risk; scrubbing only removes the
 embarrassment.
+
+### SRI on the CDN scripts, and why the Recharts URL had to change
+Moving the passphrase into `localStorage` (above) made the CDN a live threat
+rather than a theoretical one: anything executing on this origin can read that
+key, and five of the page's scripts are fetched from jsDelivr. A compromised CDN
+or a hijacked connection would have handed over the credential the previous
+change had just finished protecting. SRI is the answer — the browser hashes what
+it received and refuses to run it on a mismatch.
+
+The non-obvious part: **the pinned URL must be a real file inside the npm
+package.** The app was loading `recharts@2.12.7/umd/Recharts.min.js`, which the
+package does not contain — jsDelivr was generating it from `umd/Recharts.js` and
+prepending a banner. Its own banner text says "Do NOT use SRI with dynamically
+generated files", because those bytes can change when jsDelivr's pipeline
+changes, which would blank the app for no traceable reason. Fixed by pointing at
+`umd/Recharts.js`, which is already minified (the 273-byte difference *is* the
+banner). `sw.js`'s `APP_SHELL` has to list the identical URL or the service
+worker caches something the page never asks for.
+
+Hashes were cross-checked against unpkg as well as jsDelivr. Pinning to whatever
+one CDN happens to serve defeats the point of pinning; agreement between two
+independent mirrors of the same npm tarball is what makes the value trustworthy.
+
+Accepted cost: bumping a library version now requires regenerating that
+library's hash, or the app goes blank with a console-only error. That trap is
+documented in `CLAUDE.md` next to the regeneration one-liner, because the
+failure mode gives no on-screen hint about its cause.
+
+Not done: SRI on the app's own `index.html` (same-origin, and it changes every
+deploy), and Content-Security-Policy headers (GitHub Pages can't set them; a
+`<meta>` CSP would help but Babel's in-browser JSX compilation needs
+`unsafe-eval`, so it would be weak. Worth revisiting only if the app ever gains
+a build step).

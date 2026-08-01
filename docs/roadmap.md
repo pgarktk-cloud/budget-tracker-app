@@ -389,6 +389,32 @@ Small, independent, none blocking:
    sync a bad clone up); verified byte-identical no-op against the live blob
    and idempotent across loads.
 
+## Security — residual items after the 2026-08-01 secrets work
+
+The public-repo credential leak is fixed (see `docs/decisions.md`). What's left,
+roughly in order of how much it actually matters:
+
+1. **Assume the pre-2026-08-01 dataset may already be public.** `SYNC_TOKEN` was
+   readable in the served `index.html` for months. Rotation protects everything
+   from here on but cannot un-copy what may already have been taken. No evidence
+   of access; there is also no logging that *could* show it. Nothing to build —
+   just don't treat the old data as having been private.
+2. **Cloudflare account 2FA is now the most valuable key in the chain.** KV
+   stores the dataset as plain JSON, so account access = full read. Confirm it's
+   on.
+3. **No rate limiting on the Worker.** Nothing stops an attacker grinding
+   passphrase guesses. Currently mitigated only by the passphrase being five
+   random words (~64 bits — infeasible). If it's ever shortened for convenience,
+   add Cloudflare Rate Limiting on `/sync*` first, not after.
+4. **One shared passphrase, not per-person accounts.** Fine for two people who
+   already share the dataset; it does mean no revoking one device without
+   rotating for everyone. Rotation is cheap (change the Worker secret, re-enter
+   on each device), so this is a deliberate trade, not an oversight.
+5. **No Content-Security-Policy.** GitHub Pages can't set headers, and a `<meta>`
+   CSP would need `unsafe-eval` for Babel's in-browser JSX compilation, making it
+   weak. Only worth revisiting if the app ever gains a build step — at which
+   point dropping Babel and adding a real CSP become the same piece of work.
+
 ## Explicitly not recommended without a separate design conversation
 - Extending banks/goals to support a literal `"household"` owner (currently
   Household is a Home-only aggregate for those — see decisions.md). Doing this

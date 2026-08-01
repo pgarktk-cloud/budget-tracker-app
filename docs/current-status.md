@@ -1,6 +1,33 @@
 # Current Status
 
-_Last updated: 2026-08-01 (secrets moved out of the public repo)_
+_Last updated: 2026-08-01 (secrets out of the public repo; CDN scripts pinned)_
+
+## CDN scripts pinned with SRI (2026-08-01)
+
+Build `2026.08.01.0003` / v1.18.1. Follow-on to the secrets work below, closing
+the one path that bypassed it: anything running on this origin can read the sync
+passphrase out of `localStorage`, and five scripts on the page come from
+jsDelivr. All five now carry `integrity="sha384-…"`, so the browser refuses to
+execute a file whose bytes don't match.
+
+**Recharts changed URL.** The package ships `umd/Recharts.js` (already minified)
+and does *not* ship `umd/Recharts.min.js` — jsDelivr was synthesising that file
+with a generated banner. Its own docs: "Do NOT use SRI with dynamically
+generated files." `sw.js`'s `APP_SHELL` was updated to the same URL, or the
+service worker caches something the page never requests. The two files differ by
+273 bytes (the banner), so there's no size cost.
+
+Hashes were cross-checked byte-for-byte against unpkg, so no single CDN dictates
+what we pin.
+
+**Maintenance cost, documented in `CLAUDE.md`:** bumping a library version
+without regenerating its hash blanks the app — the error is in the console, not
+on screen.
+
+**Verified** in-browser on a local static server: app mounts, Recharts sparklines
+draw, zero console errors (an integrity mismatch blanks the page loudly, so a
+clean render is the proof). Settings correctly showed the not-connected
+passphrase form. `parsecheck.cjs` OK; all eight runners pass.
 
 ## Secrets removed from the public repo (2026-08-01)
 

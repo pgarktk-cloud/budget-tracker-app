@@ -358,6 +358,16 @@ Any new background-derived data should be stamped `auto:true` and added to
   on `KVSync._ready()` rather than a `PASTE_` check.
 - `file://` URLs don't work with the Chrome automation extension — serve
   over `http://localhost` (a one-line Node static server is enough).
+- **`curl` in this environment fails every HTTPS request with exit 35**
+  (`CRYPT_E_REVOCATION_OFFLINE` — schannel can't reach the cert revocation
+  server). It looks exactly like the remote host being down. Add
+  `--ssl-no-revoke`. Worth knowing before concluding the Worker is broken.
+- Old **localhost origins keep their own `localStorage`**, and copies served
+  before 2026-08-01 auto-pulled the real dataset (the token was hardcoded then),
+  so a stale but real financial snapshot can still be sitting on some
+  `localhost:PORT` from a past session. Inert now — no passphrase, so it can't
+  sync — but don't be alarmed to see real figures on a test server, and don't
+  mistake one for live data.
 
 ## Docs
 
