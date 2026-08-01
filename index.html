@@ -32,11 +32,26 @@
   }catch(e){}
 })();
 </script>
-<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.10/babel.min.js" crossorigin="anonymous"></script>
+<!-- Subresource Integrity: the browser refuses to run a file whose bytes don't
+     hash to the pinned value, so a compromised CDN (or a hijacked connection)
+     can't inject code into this page. That matters here specifically because
+     anything running on this origin can read the sync passphrase out of
+     localStorage — SRI is what stops a swapped-in script from exfiltrating it.
+
+     Every URL below must be a REAL FILE IN THE NPM PACKAGE, never one jsDelivr
+     generates on the fly. Recharts is why: the package ships umd/Recharts.js
+     (already minified), and requesting umd/Recharts.min.js made jsDelivr
+     synthesise a file with a generated banner — whose bytes can change under
+     us. jsDelivr says so itself: "Do NOT use SRI with dynamically generated
+     files." Hashes below were cross-checked byte-for-byte against unpkg.
+
+     BUMPING A LIBRARY VERSION MEANS REGENERATING ITS HASH, or the app goes
+     blank with a console error. See CLAUDE.md for the one-liner. -->
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js" crossorigin="anonymous" integrity="sha384-/AfDwVDXNopzPvhxMPQ11y1OCpR6mVkWx47qzSwIiquvxkcMkZddEzDNtIOtfCpk"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" crossorigin="anonymous" integrity="sha384-d1XH4LhwLW8j0l6VXMP8yJabdGY9ZqtZk7k7PaPk5NoUCcZ/hDkL5aaKioKQbcZg"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.10/babel.min.js" crossorigin="anonymous" integrity="sha384-BcI7nduYchENm39cFMEVJXHEE7fwHONANyn/pY2YTa+BNtrWF2bKBZeI0wqVithi"></script>
 <style>
 :root{
   --bg:#E4E7E9;--ink:#15243B;--sub:#56657E;--faint:#8A98AD;
@@ -1474,8 +1489,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.18.0";
-const BUILD_ID="2026.08.01.0002";
+const APP_VERSION="1.18.1";
+const BUILD_ID="2026.08.01.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */

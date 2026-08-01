@@ -5,7 +5,7 @@
 // index.html and with version.json — all three should be bumped together
 // on every deploy so the displayed build and the cached app release always
 // correspond.
-const BUILD_ID = '2026.08.01.0002';
+const BUILD_ID = '2026.08.01.0003';
 const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
@@ -15,7 +15,9 @@ const APP_SHELL = [
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
   'https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js',
   'https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js',
-  'https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js',
+  // Real package file, not jsDelivr's generated .min.js — must stay identical
+  // to the <script src> in index.html, which pins it with an SRI hash.
+  'https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js',
   'https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.10/babel.min.js',
 ];
 

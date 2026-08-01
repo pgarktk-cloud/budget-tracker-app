@@ -336,6 +336,18 @@ Any new background-derived data should be stamped `auto:true` and added to
   (`SYNC_TOKEN_KEY`), so a copy served on a fresh port has a clean
   `localStorage`, is unconnected, and starts from `defaultData()` — just don't
   type the real passphrase into it. Nothing needs editing out of the file.
+- **The five CDN `<script>` tags are pinned with SRI hashes.** Bumping a
+  library version WITHOUT regenerating its `integrity` value blanks the app
+  (the browser refuses the file; the error is in the console, not on screen).
+  Regenerate with:
+  `curl -sS <url> | openssl dgst -sha384 -binary | openssl base64 -A`
+  Two rules: the URL must be a **real file inside the npm package**, never one
+  jsDelivr synthesises — asking for `recharts@2.12.7/umd/Recharts.min.js` (which
+  the package doesn't ship) got a generated file with a jsDelivr banner, whose
+  bytes can change under you; the real file is `umd/Recharts.js`, already
+  minified. And cross-check the hash against unpkg before trusting it, so a
+  single compromised CDN can't dictate what you pin. `sw.js`'s `APP_SHELL` must
+  list the identical URLs or it caches files the page never asks for.
 - **Nothing in this repo may be secret** — it's public, because GitHub Pages
   serves `index.html` from it. `SYNC_TOKEN`/`FINNHUB_KEY` are Cloudflare
   Worker env secrets read via `env` in `worker.js`; `PROXY_URL` is a plain
