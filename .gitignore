@@ -8,9 +8,12 @@ yarn-error.log*
 .pnpm-store/
 
 # ── Secrets and credentials ───────────────────────────────────────────────
-# NOTE: this project's real secrets are NOT in .env files — SYNC_TOKEN,
-# FINNHUB_KEY and PROXY_URL are hardcoded in index.html and worker.js, which
-# .gitignore cannot help with. See docs/decisions.md and the repo README.
+# This repo is public (GitHub Pages serves index.html from it), so nothing in
+# it may be secret. SYNC_TOKEN and FINNHUB_KEY live as encrypted Cloudflare
+# Worker secrets, read via `env` in worker.js; the sync passphrase lives only
+# in each device's localStorage, typed once in Settings. PROXY_URL is a plain
+# public URL — it identifies the Worker, it doesn't authorize anything.
+# If you ever need a local secret, put it in .dev.vars (ignored below).
 .env
 .env.*
 !.env.example

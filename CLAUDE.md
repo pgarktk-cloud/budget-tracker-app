@@ -328,15 +328,22 @@ Any new background-derived data should be stamped `auto:true` and added to
   `Bash` tool's own `run_in_background:true`, not a trailing shell `&` —
   backgrounded-via-`&` processes don't reliably survive past the tool call
   in this environment.
-- **The sync token in `index.html` (`SYNC_TOKEN`) is hardcoded, not
-  per-login** — even a brand-new browser profile/tab will pull the real
-  user's live financial data from Cloudflare KV on load. Never edit fields
-  while connected to the real store during testing.
-- To test safely: copy `index.html`, replace `SYNC_TOKEN` with any
-  `"PASTE_"`-prefixed dummy value (the app's own convention for "not
-  configured" — same pattern as `PROXY_URL`/`FINNHUB_KEY`/`GOOGLE_CLIENT_ID`),
-  and serve that copy on a different port so it gets a clean `localStorage`
-  and starts from `defaultData()`.
+- **Testing is safe by default now, and used to not be.** The sync token was
+  once a hardcoded constant in `index.html`, so any fresh browser profile
+  pulled the real user's live financial data on load; older doc entries below
+  still describe the workaround (a `"PASTE_"`-prefixed dummy value). Since
+  2026-08-01 the passphrase lives per-device in `localStorage`
+  (`SYNC_TOKEN_KEY`), so a copy served on a fresh port has a clean
+  `localStorage`, is unconnected, and starts from `defaultData()` — just don't
+  type the real passphrase into it. Nothing needs editing out of the file.
+- **Nothing in this repo may be secret** — it's public, because GitHub Pages
+  serves `index.html` from it. `SYNC_TOKEN`/`FINNHUB_KEY` are Cloudflare
+  Worker env secrets read via `env` in `worker.js`; `PROXY_URL` is a plain
+  public URL that authorizes nothing. Never reintroduce a credential literal.
+- The Worker authenticates **every** endpoint, `/quote` and `/name` included
+  (they were open proxies until 2026-08-01). So live prices, not just sync,
+  are off until a device has its passphrase — `fetchQuotes`/`fetchName` gate
+  on `KVSync._ready()` rather than a `PASTE_` check.
 - `file://` URLs don't work with the Chrome automation extension — serve
   over `http://localhost` (a one-line Node static server is enough).
 

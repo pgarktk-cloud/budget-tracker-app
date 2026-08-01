@@ -1474,8 +1474,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.17.0";
-const BUILD_ID="2026.08.01.0001";
+const APP_VERSION="1.18.0";
+const BUILD_ID="2026.08.01.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1496,9 +1496,10 @@ async function fetchRates(){
 }
 
 /* ── Stock quotes via Cloudflare Worker proxy ──
-   Worker fetches Yahoo Finance server-side (no CORS), returns JSON.
-   Finnhub handles US stocks directly as a fast fallback.                 */
-const FINNHUB_KEY="d94h0p9r01qib64ang9gd94h0p9r01qib64anga0";
+   The Worker fetches Yahoo Finance server-side (no CORS), and falls back to
+   Finnhub for anything Yahoo misses. Both providers are called from the
+   Worker, never from here — this page is served publicly from GitHub Pages,
+   so it must not contain an API key. See worker.js.                     */
 
 /* ── Gold spot price (Phase 3) ──
    Reuses the exact same Worker→Yahoo proxy as stock quotes (no new API, no
@@ -1526,11 +1527,16 @@ function baseKey(t){return t.toUpperCase().replace(/\.L$|\.AS$|\.DE$/i,"");}
 async function fetchQuotes(tickers){
   const out={};
 
-  /* ── 1. Cloudflare Worker → Yahoo Finance (handles VWRA + all tickers) */
-  if(!PROXY_URL.startsWith("PASTE_")){
+  /* ── Cloudflare Worker → Yahoo Finance, then Finnhub for anything missing.
+     Both provider calls happen inside the Worker; this just asks for prices.
+     KVSync is declared further down the file but is only *read* here at call
+     time (from effects, long after module init), so the forward reference is
+     safe. /quote requires the sync token now, so an unconfigured device gets
+     no live prices — same rule sync already followed.                      */
+  if(KVSync._ready()){
     const syms=tickers.map(toYahooSym).join(",");
     try{
-      const r=await fetch(`${PROXY_URL}/quote?symbols=${encodeURIComponent(syms)}`);
+      const r=await fetch(`${PROXY_URL}/quote?symbols=${encodeURIComponent(syms)}`,{headers:KVSync._headers()});
       if(r.ok){
         const j=await r.json();
         Object.entries(j).forEach(([sym,q])=>{
@@ -1543,23 +1549,6 @@ async function fetchQuotes(tickers){
         });
       }
     }catch(e){}
-  }
-
-  /* ── 2. Finnhub direct (US, real-time, no proxy needed) ── */
-  if(!FINNHUB_KEY.startsWith("PASTE_")){
-    const missing=tickers.filter(t=>!out[baseKey(t)]);
-    await Promise.all(missing.map(async t=>{
-      try{
-        const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(baseKey(t))}&token=${FINNHUB_KEY}`);
-        if(!r.ok)return;
-        const j=await r.json();
-        // Finnhub already returns both current (c) and previous-close (pc) —
-        // previously only `pc` was read, as a same-value fallback for the
-        // price when `c` was missing, and previousClose itself was discarded.
-        const p=j.c>0?j.c:(j.pc>0?j.pc:null);
-        if(p)out[baseKey(t)]={price:p,previousClose:j.pc>0?j.pc:null};
-      }catch(e){}
-    }));
   }
 
   if(Object.keys(out).length===0)throw new Error("no quotes");
@@ -2278,23 +2267,51 @@ function computeBillsReserve(d){
 }
 const billMonthKeyOf=n=>{const dt=n?new Date(n):new Date();return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`;};
 
-/* ── Cloudflare KV Sync ──────────────────────────────────────────────────────
-   No login ever required. Set SYNC_TOKEN to the same secret you put in worker.js.
-   The Worker URL is already set above as PROXY_URL.
-   ─────────────────────────────────────────────────────────────────────────── */
-const SYNC_TOKEN="kgTZEPzv2cSIcG79rv04pZFeyK2mPg2bhw2gh";
+/* ── Sync passphrase — per device, never shipped in this file ────────────────
+   This page is served publicly from GitHub Pages out of a public repo, so it
+   cannot contain a secret: the token used to be a literal here, which meant
+   anyone who viewed source could read and overwrite the whole dataset. The
+   passphrase now lives ONLY in this device's localStorage, typed once in
+   Settings → Cloudflare KV Sync, and is checked against the SYNC_TOKEN secret
+   held by the Worker (see worker.js).
 
+   Deliberately kept out of `data`, exactly like VIEW_PROFILE_KEY below: it is
+   a per-device credential, so putting it in `data` would upload it to the
+   cloud, dirty the doc, and dump it into every manual JSON backup. It must
+   never appear in defaultData(), migrate(), or either fingerprint.
+   ─────────────────────────────────────────────────────────────────────────── */
+const SYNC_TOKEN_KEY="allocation:syncToken";
+let _syncToken; // undefined = not read yet, "" = genuinely unset
+function getSyncToken(){
+  if(_syncToken===undefined){try{_syncToken=localStorage.getItem(SYNC_TOKEN_KEY)||"";}catch(e){_syncToken="";}}
+  return _syncToken;
+}
+function setSyncToken(v){
+  _syncToken=(v||"").trim();
+  try{_syncToken?localStorage.setItem(SYNC_TOKEN_KEY,_syncToken):localStorage.removeItem(SYNC_TOKEN_KEY);}catch(e){}
+}
+
+/* ── Cloudflare KV Sync ──────────────────────────────────────────────────────
+   No login ever required. The Worker URL is set above as PROXY_URL; the
+   passphrase comes from getSyncToken() above.
+   ─────────────────────────────────────────────────────────────────────────── */
 const KVSync={
   lastPulledAt:null,
   lastKnownRev:0, // best-known cloud revision, updated by every successful load/save/meta check
-  _ready(){return !PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");},
-  _headers(){return{"Content-Type":"application/json","X-Sync-Token":SYNC_TOKEN};},
+  /* HTTP status of the most recent call, so callers can tell "network down"
+     (null) apart from "passphrase rejected" (401) — otherwise a rotated
+     passphrase is indistinguishable from an ordinary sync failure. */
+  lastStatus:null,
+  _ready(){return !PROXY_URL.startsWith("PASTE_")&&!!getSyncToken();},
+  _headers(){return{"Content-Type":"application/json","X-Sync-Token":getSyncToken()};},
   /* Full download. Returns {data, savedAt, rev} | null (null only on
      network/parse failure — a genuinely-empty account still resolves with
      data:null, rev:0, which callers distinguish from a failed fetch). */
   async load(){
     if(!this._ready())return null;
+    this.lastStatus=null;
     const r=await fetch(`${PROXY_URL}/sync`,{headers:this._headers()});
+    this.lastStatus=r.status;
     if(!r.ok)return null;
     const j=await r.json();
     if(j.savedAt)this.lastPulledAt=j.savedAt;
@@ -2305,7 +2322,9 @@ const KVSync={
      null. This is what the "app became active" check uses. */
   async checkMeta(){
     if(!this._ready())return null;
+    this.lastStatus=null;
     const r=await fetch(`${PROXY_URL}/sync/meta`,{headers:this._headers()});
+    this.lastStatus=r.status;
     if(!r.ok)return null;
     const j=await r.json();
     if(Number.isFinite(j.rev))this.lastKnownRev=j.rev;
@@ -2318,8 +2337,10 @@ const KVSync={
   async save(data,baseRev){
     if(!this._ready())return{ok:false,reason:"not configured"};
     const body=JSON.stringify({data,savedAt:new Date().toISOString(),rev:baseRev||0});
+    this.lastStatus=null;
     const r=await fetch(`${PROXY_URL}/sync`,{method:"POST",headers:this._headers(),body});
-    if(!r.ok)return{ok:false,reason:`HTTP ${r.status}`};
+    this.lastStatus=r.status;
+    if(!r.ok)return{ok:false,reason:r.status===401?"Passphrase rejected":`HTTP ${r.status}`};
     const j=await r.json();
     if(j.savedAt)this.lastPulledAt=j.savedAt;
     if(Number.isFinite(j.rev))this.lastKnownRev=j.rev;
@@ -2933,7 +2954,12 @@ function App(){
   const[expensesFilterRequest,setExpensesFilterRequest]=useState(null); // {catNames,nonce} — Home's Savings & Investing card drill-down (Phase 4)
   const[syncMsg,setSyncMsg]=useState("");
   const[themeTick,setThemeTick]=useState(0); // bumped to force re-render after P/SEG mutate
-  const kvReady=!PROXY_URL.startsWith("PASTE_")&&!SYNC_TOKEN.startsWith("PASTE_");
+  /* Whether this device has a sync passphrase is STATE, not a constant: typing
+     one in Settings has to re-render the app so the sync buttons and the
+     load/save effects come alive without a reload. getSyncToken() is the
+     source of truth; this just mirrors "is it set" into React. */
+  const[syncTokenSet,setSyncTokenSet]=useState(()=>!!getSyncToken());
+  const kvReady=!PROXY_URL.startsWith("PASTE_")&&syncTokenSet;
 
   /* ── local-first sync state ──────────────────────────────────────────── */
   const[hasUnsyncedChanges,setHasUnsyncedChanges]=useState(false);
@@ -3589,7 +3615,7 @@ function App(){
 
   /* ── manual Pull from Cloud — GET only, never POSTs ──────────────────── */
   const pullFromCloud=async()=>{
-    if(!kvReady){setSyncMsg("Add Worker URL + sync token first");setTimeout(()=>setSyncMsg(""),3000);return;}
+    if(!kvReady){setSyncMsg("Enter your sync passphrase in Settings first");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(!isOnline){setSyncStatus("offline");setSyncMsg("Offline — can't pull right now");setTimeout(()=>setSyncMsg(""),3000);return;}
     setSyncOp("pull");setSyncMsg("Pulling…");
     try{
@@ -3653,6 +3679,24 @@ function App(){
   };
   const pullFromCloudRef=useRef(pullFromCloud);
   useEffect(()=>{pullFromCloudRef.current=pullFromCloud;});
+
+  /* ── First pull after connecting a device ────────────────────────────────
+     The boot effect runs once with [], so a device that started without a
+     passphrase never reaches the cloud until something asks it to. Entering
+     the passphrase in Settings has to behave like a reload: pull straight
+     away, or the device sits on its local-only copy until the person happens
+     to hit Pull. Skips the initial mount, so a device that already had a
+     passphrase doesn't pull twice on open. pullFromCloud auto-merges and
+     stashes a pre-cloud backup, so this is safe on a device that has local
+     edits it hasn't shared yet. */
+  const wasSyncTokenSet=useRef(syncTokenSet);
+  useEffect(()=>{
+    const justConnected=syncTokenSet&&!wasSyncTokenSet.current;
+    wasSyncTokenSet.current=syncTokenSet;
+    if(!justConnected||!loaded)return;
+    cloudConfirmedRef.current=true;
+    pullFromCloudRef.current();
+  },[syncTokenSet,loaded]);
 
   /* ── Automatic cloud refresh on activate ─────────────────────────────────
      This is the actual fix for "edited on iPhone, iPad still shows old
@@ -4722,14 +4766,14 @@ function App(){
                 {theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
               </button>
               <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"}
-                title={kvReady?"Pull from Cloud":"Configure Worker URL and sync token to enable sync"}
+                title={kvReady?"Pull from Cloud":"Enter your sync passphrase in Settings to enable sync"}
                 aria-label="Pull from Cloud"
                 style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
                   color:P.sub,background:"transparent",border:`1px solid ${P.line}`,opacity:kvReady?1:.5}}>
                 <I.Refresh size={14} style={syncOp==="pull"?{animation:"spin .9s linear infinite"}:null}/>
               </button>
               <button onClick={()=>saveToCloud()} disabled={!kvReady||syncOp==="push"}
-                title={kvReady?(!isOnline?"Offline — will sync when back online":syncStatus==="failed"?`Sync failed${lastSyncError?`: ${lastSyncError}`:""}`:hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Configure Worker URL and sync token to enable sync"}
+                title={kvReady?(!isOnline?"Offline — will sync when back online":syncStatus==="failed"?`Sync failed${lastSyncError?`: ${lastSyncError}`:""}`:hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Enter your sync passphrase in Settings to enable sync"}
                 style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,
                   background:!kvReady?P.sf:!isOnline?P.sf:syncStatus==="failed"?P.amberS:P.grS,
                   color:!kvReady?P.sub:!isOnline?P.sub:syncStatus==="failed"?P.amber:P.grD,
@@ -4809,7 +4853,7 @@ function App(){
         </TabPane>
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
-        pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
+        pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
         preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
@@ -8856,28 +8900,20 @@ function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,add
   const tdInvs=filteredInvs.filter(x=>x.type==="td");
   const goldInvs=filteredInvs.filter(x=>x.type==="gold");
 
-  /* Look up a company / fund name for a ticker.
-     1) Cloudflare proxy → Yahoo (best for ETFs like VWRA, using the mapped symbol)
-     2) Finnhub search (good for US stocks)                                   */
+  /* Look up a company / fund name for a ticker. The Cloudflare Worker tries
+     Yahoo first (best for ETFs like VWRA, using the mapped symbol) then
+     Finnhub search (good for US stocks) — that two-tier chain moved into
+     worker.js so the Finnhub key never reaches the browser.                */
   const fetchName=async(id,ticker)=>{
     const t=(ticker||"").trim().toUpperCase();
     if(!t)return;
     setFetchingName(s=>({...s,[id]:true}));
     let name=null;
-    if(!PROXY_URL.startsWith("PASTE_")){
+    if(KVSync._ready()){
       try{
         const ys=toYahooSym(t);
-        const res=await fetch(`${PROXY_URL}/name?symbol=${encodeURIComponent(ys)}`);
+        const res=await fetch(`${PROXY_URL}/name?symbol=${encodeURIComponent(ys)}`,{headers:KVSync._headers()});
         if(res.ok){const j=await res.json();if(j&&j.name)name=j.name;}
-      }catch(e){}
-    }
-    if(!name&&!FINNHUB_KEY.startsWith("PASTE_")){
-      try{
-        const res=await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`);
-        const j=await res.json();
-        const list=j.result||[];
-        const match=list.find(x=>x.symbol===t)||list.find(x=>x.symbol===t+".US")||list.find(x=>x.symbol===baseKey(t))||list[0];
-        if(match&&match.description)name=match.description;
       }catch(e){}
     }
     if(name)updateInv(id,{name});
@@ -8947,9 +8983,9 @@ function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,add
       },0);
       if(newTotVal>0)addPortSnap(newTotVal);
     }catch(e){
-      setErr(PROXY_URL.startsWith("PASTE_")&&FINNHUB_KEY.startsWith("PASTE_")
-        ?"Set up your Cloudflare Worker (for VWRA/LSE) and/or Finnhub key (for US stocks) — see the setup guide."
-        :"Price fetch failed — check your Worker URL or Finnhub key.");
+      setErr(!KVSync._ready()
+        ?"Live prices need your sync passphrase — enter it in Settings → Cloudflare KV Sync."
+        :"Price fetch failed — check your connection, or re-enter your sync passphrase in Settings.");
     }
     setLoading(false);
   };
@@ -10904,7 +10940,7 @@ function SyncDiagnostics({localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,h
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
   const[confirm,setConfirm]=useState(false);
@@ -10912,6 +10948,29 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
   const[ppSheet,setPpSheet]=useState(null);    // {owner,periodKey,heading}
   const[ppConfirm,setPpConfirm]=useState(null);// {owner,count,turningOn?,repay?,apply}
   const fileRef=useRef(null);
+  /* ── Sync passphrase (per device) ──────────────────────────────────────
+     `pass` is the draft in the input; it is never persisted until the Worker
+     has actually accepted it, so a typo can't leave this device holding a
+     credential that will only fail later, silently, in a background save. */
+  const[pass,setPass]=useState("");
+  const[passState,setPassState]=useState("idle"); // idle | checking | bad | error
+  const[forgetConfirm,setForgetConfirm]=useState(false);
+  const connectPass=async()=>{
+    const typed=pass.trim();
+    if(!typed)return;
+    setPassState("checking");
+    try{
+      // /sync/meta is the cheapest authenticated endpoint — it transfers no
+      // dataset, so it's the right thing to test a passphrase against.
+      const r=await fetch(`${PROXY_URL}/sync/meta`,{headers:{"X-Sync-Token":typed}});
+      if(r.ok){setSyncToken(typed);setSyncTokenSet(true);setPass("");setPassState("idle");flash("Connected ✓");return;}
+      setPassState(r.status===401?"bad":"error");
+    }catch(e){setPassState("error");}
+  };
+  const forgetPass=()=>{
+    setSyncToken("");setSyncTokenSet(false);setForgetConfirm(false);
+    setPass("");setPassState("idle");flash("Passphrase forgotten on this device");
+  };
   /* How many of an owner's logged expenses would land in a different bucket
      under `trial`. The same comparison SalaryArrivedSheet shows before moving a
      boundary, but through bucketKeyFor rather than periodKeyFor, because
@@ -11263,6 +11322,18 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                   ?{icon:I.Cloud,label:`Local changes pending${changesSinceSave?` (${changesSinceSave})`:""}`,color:P.amber,bg:P.amberS}
                   :{icon:I.Check,label:"Cloud is up to date",color:P.gr,bg:P.grS},
               };
+              /* A rejected passphrase (the Worker's SYNC_TOKEN was rotated, or
+                 this device holds an old one) otherwise looks identical to an
+                 ordinary sync failure, and the fix is completely different —
+                 so it gets its own row rather than "Sync failed". */
+              if(KVSync.lastStatus===401)return(
+                <div style={{fontSize:12,color:P.amber,marginBottom:8,padding:"8px 10px",background:P.amberS,borderRadius:10,lineHeight:1.6}}>
+                  <span style={{display:"inline-flex",alignItems:"center",gap:6}}><I.X size={13}/>Passphrase rejected</span>
+                  <div style={{fontSize:11,color:P.faint,marginTop:4}}>
+                    The cloud didn't accept this device's passphrase — it was probably changed. Forget it below and enter the new one. Your data on this device is untouched.
+                  </div>
+                </div>
+              );
               const s=statusMap[syncStatus]||statusMap.idle;
               return(
                 <div style={{fontSize:12,color:s.color,marginBottom:8,padding:"8px 10px",background:s.bg,borderRadius:10,lineHeight:1.6}}>
@@ -11290,6 +11361,9 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               <button onClick={restorePreCloudBackup} style={{...btn,width:"100%",marginBottom:8}}>
                 <I.Reset size={14}/>Restore previous local copy
               </button>}
+            <button onClick={()=>setForgetConfirm(true)} style={{...btn,width:"100%",marginBottom:8}}>
+              <I.EyeOff size={14}/>Forget passphrase on this device
+            </button>
             <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginBottom:8}}>
               Changes save automatically on this device. Cloud upload only happens when you tap Save to Cloud. Opening the app checks the cloud automatically — pull-to-sync on mobile saves pending changes first, or pulls the latest copy when this device is already clean.
             </div>
@@ -11298,9 +11372,30 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             </div>
             <SyncDiagnostics {...{localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,hasUnsyncedChanges,changesSinceSave,syncStatus,isOnline,lastSyncError}}/>
           </div>
-          :<div style={{marginBottom:16,fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
-            Add your Worker URL and Sync Token to <code>index.html</code> to enable sync.
-            See the setup guide for instructions.
+          :<div style={{marginBottom:16}}>
+            <div style={{fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6,marginBottom:10}}>
+              This device isn't connected to the cloud yet. Everything still works and saves here — enter your sync passphrase to share data with your other devices and turn on live prices.
+            </div>
+            <label style={{display:"block",fontSize:11,color:P.faint,marginBottom:4}}>Sync passphrase</label>
+            <div style={{display:"flex",gap:8,marginBottom:6}}>
+              <input type="password" value={pass} autoComplete="current-password"
+                onChange={e=>{setPass(e.target.value);if(passState!=="idle")setPassState("idle");}}
+                onKeyDown={e=>{if(e.key==="Enter")connectPass();}}
+                placeholder="Type your passphrase"
+                style={{flex:1,minWidth:0,borderRadius:10,padding:"10px 12px",fontSize:14,
+                  background:P.sf,border:`1px solid ${passState==="bad"?P.amber:P.line}`,color:P.ink}}/>
+              <button onClick={connectPass} disabled={!pass.trim()||passState==="checking"}
+                style={{...btn,flexShrink:0,opacity:(!pass.trim()||passState==="checking")?.5:1}}>
+                {passState==="checking"?"Checking…":"Connect"}
+              </button>
+            </div>
+            {passState==="bad"&&
+              <div style={{fontSize:11,color:P.amber,marginBottom:6}}>That passphrase didn't work. Check it and try again.</div>}
+            {passState==="error"&&
+              <div style={{fontSize:11,color:P.amber,marginBottom:6}}>Couldn't reach the server. Check your connection and try again.</div>}
+            <div style={{fontSize:11,color:P.faint,lineHeight:1.6}}>
+              Stored on this device only — it is never uploaded, never included in a backup file, and isn't in the app's source. It's the same passphrase set as <code>SYNC_TOKEN</code> in your Cloudflare Worker, and you'll enter it once on each device.
+            </div>
           </div>
         }
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Manual backup</div>
@@ -11350,6 +11445,13 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         danger={false}
         onConfirm={()=>{ppConfirm.apply();setPpConfirm(null);}}
         onCancel={()=>setPpConfirm(null)}/>
+      <ConfirmDialog open={forgetConfirm}
+        title="Forget passphrase on this device?"
+        message="This device will stop syncing and live prices will turn off until you enter it again. Nothing on this device is deleted, and nothing in the cloud changes."
+        confirmLabel="Forget it"
+        danger={false}
+        onConfirm={forgetPass}
+        onCancel={()=>setForgetConfirm(false)}/>
     </div>
   );
 }

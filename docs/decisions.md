@@ -1136,6 +1136,11 @@ Future sessions testing this app in a browser should follow the same pattern —
 do not assume "fresh tab" == "safe to edit," because the sync token isn't
 tied to browser session/login state.
 
+**Superseded 2026-08-01** (see "Secrets out of the public repo" below): the
+passphrase is now per-device, so a fresh tab genuinely *is* safe — it starts
+unconnected. Step 2's "overwrite `SYNC_TOKEN` to a dummy" is no longer needed
+or possible.
+
 ---
 
 ## Budget carry-forward chain, transaction entry order, pay periods to Settings (2026-07-31)
@@ -1263,3 +1268,77 @@ began Jul 30 makes August Jul 30–Aug 31 (33 days) and shortens July to
 Jul 1–Jul 29. It does not cascade; September still starts nominally. Periods
 are never pro-rated, so the daily allowance absorbs the length change. The
 Settings row shows the resulting range and day count for exactly this reason.
+
+---
+
+## Secrets out of the public repo (2026-08-01)
+
+### The problem: a static page cannot hold a secret
+`index.html` is served from GitHub Pages out of a **public** repo, and it
+contained `SYNC_TOKEN` (the only thing guarding `/sync`) and `FINNHUB_KEY` as
+plain literals. Anyone who opened the site and viewed source could read and
+overwrite the entire household dataset. `/quote` and `/name` on the Worker were
+additionally unauthenticated, making it a free Yahoo Finance proxy billed to
+this Cloudflare account.
+
+Making the repo private wouldn't have fixed it: the deployed page still ships
+its own source to every visitor. The credential had to stop being *in* the page.
+
+### Chosen: passphrase per device, in `localStorage`
+`index.html` ships with no credential at all. The passphrase is typed once per
+device in Settings → Cloudflare KV Sync, held in `localStorage` under
+`SYNC_TOKEN_KEY`, and checked against the `SYNC_TOKEN` **secret** in the
+Worker's environment. `getSyncToken()`/`setSyncToken()` are the only accessors.
+
+Rejected alternative: keep the token embedded and lock the Worker to the
+GitHub Pages `Origin`. CORS is enforced by *browsers*; `curl` ignores it
+entirely, so an origin allowlist is worthless against anyone who has read the
+token out of the public page — which is everyone. The allowlist is still there
+(`ALLOWED_ORIGINS` in `worker.js`) but strictly as defense in depth; the token
+remains the only real gate.
+
+### The passphrase is deliberately NOT in `data`
+Same reasoning as `VIEW_PROFILE_KEY`: it's a per-device credential, not part of
+the financial document. In `data` it would be uploaded to the cloud, dirty the
+doc on every device, and — worse — land in every Settings → Download backup
+JSON, which people email to themselves. It must stay out of `defaultData()`,
+`migrate()`, `fingerprint()` and `userFingerprint()`.
+
+### Validate before persisting
+"Connect" tests the typed value against `GET /sync/meta` (the cheapest
+authenticated endpoint — no dataset transfer) and only writes to `localStorage`
+on a 200. Persisting first would leave a device holding a typo'd credential
+whose only symptom is background saves failing silently, days later.
+
+`KVSync.lastStatus` exists for the same reason at the other end: a 401 means
+"the passphrase was rotated, re-enter it" and a network failure means "wait",
+and they need different words. Without it a rotated token renders identically
+to ordinary sync failure.
+
+### `kvReady` had to become state
+It was a module-constant expression evaluated once. Entering a passphrase must
+bring the sync effects and buttons alive without a reload, so it now derives
+from a `syncTokenSet` state cell. The boot effect runs with `[]`, so a
+just-connected device also fires one `pullFromCloud()` — which auto-merges and
+stashes a pre-cloud backup, so it's safe on a device with unshared local edits.
+
+### Finnhub moved into the Worker rather than being dropped
+The two-tier "Yahoo first, Finnhub for whatever's missing" chain moved verbatim
+into `worker.js`'s `/quote` and `/name` handlers. Adding new endpoints was the
+obvious alternative; folding it into the existing ones meant the client's URLs
+didn't change at all. Note Finnhub takes its key as a **query parameter** —
+that's their API design, and the fix isn't to hide it but to make the call
+server-side, where query strings don't reach browser history or referrers.
+
+### Consequence accepted: no passphrase, no live prices
+Authenticating `/quote`/`/name` means an unconnected device shows no market
+data. That's correct — it's the same rule sync already followed — but it does
+mean `fetchQuotes`/`fetchName` now gate on `KVSync._ready()` rather than a
+`PASTE_` check, and the error copy points at Settings, not at the setup guide.
+
+### Rotation, not history rewrite
+The old values remain in git history. They were revoked instead: new Worker
+secrets, new Finnhub key. Rewriting history with `git-filter-repo` would have
+meant a force-push and broken clones to scrub strings that are already dead.
+Rotating is what actually removes the risk; scrubbing only removes the
+embarrassment.

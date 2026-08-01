@@ -1,6 +1,49 @@
 # Current Status
 
-_Last updated: 2026-08-01 (per-profile asset tabs, Expenses hero, live name suggestions)_
+_Last updated: 2026-08-01 (secrets moved out of the public repo)_
+
+## Secrets removed from the public repo (2026-08-01)
+
+Build `2026.08.01.0002` / v1.18.0. `index.html` carried `SYNC_TOKEN` and
+`FINNHUB_KEY` as plain literals while being served publicly from GitHub Pages
+out of a public repo — anyone who viewed source could read and overwrite the
+entire dataset. `/quote` and `/name` on the Worker were unauthenticated on top
+of that, making it a free Yahoo Finance proxy on this Cloudflare account.
+
+**Now:** every secret is a Cloudflare Worker env secret (`env.SYNC_TOKEN`,
+`env.FINNHUB_KEY`); the client ships none. The sync passphrase is typed once per
+device in Settings → Cloudflare KV Sync and held in `localStorage` under
+`SYNC_TOKEN_KEY` — never in `data`, so it is not uploaded, not fingerprinted,
+and not in backup files. `getSyncToken()`/`setSyncToken()` are the only
+accessors.
+
+- **Every** Worker endpoint authenticates now, `/quote` and `/name` included.
+  Consequence accepted: no passphrase → no live prices, not just no sync.
+  `fetchQuotes`/`fetchName` gate on `KVSync._ready()`, not a `PASTE_` check.
+- The Yahoo→Finnhub fallback chain moved verbatim into `worker.js`, so the
+  client's URLs are unchanged and the Finnhub key never reaches a browser.
+- CORS limited to `ALLOWED_ORIGINS` + localhost, with `Vary: Origin`. Defense in
+  depth only — curl ignores CORS, so the token stays the real gate.
+- `authOk` compares in constant time after a length check.
+- Connect validates against `GET /sync/meta` before persisting, so a typo can't
+  leave a device holding a credential that only fails later, silently, in a
+  background save. `KVSync.lastStatus===401` gets its own Settings row —
+  "passphrase rejected" and "sync failed" need different words because they need
+  different fixes.
+- `kvReady` is state (`syncTokenSet`), not a constant, so connecting works
+  without a reload; a just-connected device fires one `pullFromCloud()`, which
+  auto-merges and stashes a pre-cloud backup.
+- Settings gained "Forget passphrase on this device" (confirmed; local data
+  untouched).
+
+Old values were **rotated, not scrubbed from git history** — see
+`docs/decisions.md` for why. Testing is now safe by default: a fresh browser
+profile starts unconnected, so the old "replace SYNC_TOKEN with a PASTE_ dummy"
+sandbox recipe is obsolete.
+
+**Verified:** `parsecheck.cjs` OK; all eight committed runners pass (156
+assertions). Browser verification is pending the Worker redeploy — it cannot be
+done before the new secrets exist.
 
 ## Profile separation across the asset tabs, plus four UX fixes (2026-08-01)
 
