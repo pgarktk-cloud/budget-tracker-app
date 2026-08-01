@@ -94,6 +94,12 @@ hero is only the head of it.
   is the chosen semantics, not a rounding error.
 - Per-profile trend lines step on upgrade day; old snapshot rows were
   deliberately not rewritten.
+- **No tracked-vs-untracked split of the budget allocation exists anywhere**,
+  so the unaccounted figure can't be reconciled against the plan without
+  hand-summing every category row. Scoped in `roadmap.md`, not built.
+  Related trap when reconciling by hand: an Expenses envelope card shows
+  **base allocation + extra funds**, so summing those against plan income
+  double-counts extra funds.
 
 
 ## Budget move feature corrected: categories → groups (2026-07-31)

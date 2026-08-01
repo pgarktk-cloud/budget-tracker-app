@@ -98,6 +98,18 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   and the **no-op guard is load-bearing** because `NumField` commits even when
   you re-type the same number, so without it merely tapping around a past month
   creates plans. Paging to a month must write nothing.
+- **`isExtraFunds` rows are money coming IN, stored as ordinary expenses.**
+  `addExtraFunds` writes a normal expense row with the flag set (a spouse
+  sending cash earmarked for a category). `spentMap` excludes them,
+  `extraFundsMap` collects them, and an envelope's displayed budget is
+  **base + extra funds** — as is the Expenses hero's "of X". So **any new
+  reduce over `expenses` must classify `isExtraFunds` explicitly**: treating
+  those rows as spending is what made "salary not yet spent" go *down* when
+  money arrived (fixed 2026-08-01). The same trap bites when reconciling by
+  hand — summing envelope budgets against plan income double-counts them.
+  Likewise `isTransfer` is set by **both** untracked transfers and goal
+  contributions; `catId` matching a live goal id is the only discriminator,
+  so a deleted goal silently reclassifies its contributions as transfers.
 - **Transaction order lives in record fields, never array position.**
   `mergeArrayById` re-sorts expenses by id on every sync and `fingerprint`
   canonicalizes with `sortedById`, so array order is erased the first time two

@@ -1,4 +1,57 @@
-# Implementation Roadmap — Investment Module
+# Implementation Roadmap
+
+## Next up — reconcile plan vs actual in the Expenses unaccounted sheet (scoped 2026-08-01, NOT built)
+
+Surfaced by the user trying to check the unaccounted figure by hand after
+v1.17.0 shipped, and worth building because the reconciliation is currently
+impossible without a calculator.
+
+**The gap.** The unaccounted sheet is entirely *actuals* — every subtraction is
+a logged transaction. The Budget tab is entirely *plan*. Nothing anywhere shows
+the allocation split **tracked vs untracked**, so to answer "did I transfer what
+I meant to transfer?" the user has to hand-sum ~19 category rows. They did, got
+a 203 discrepancy, and there was no way to place it from the UI.
+
+Compounding it: an Expenses envelope card shows **base allocation + extra
+funds**, not the base — so hand-summing the Expenses tab and comparing against
+plan income silently double-counts extra funds. That's correct behaviour and
+correctly reflected in the hero total, but it's an easy trap when reconciling.
+
+**Proposed shape** — a planned figure beside each actual in `UnaccountedSheet`:
+
+    Income for this period          + SAR 22,000.00
+    Tracked spending                −  ...  (of 5,304 allocated)
+    Transfers out                   − SAR 16,696.00  (of 16,493 allocated)  ⚠ 203 over
+    Goal contributions              −  ...
+    Still unaccounted for              SAR ...
+
+**Implementation notes.**
+
+- The plan side is derivable from what the view already holds: `envelopes` is
+  the tracked allocation, `untrackedEnvelopes` the untracked one. Neither is
+  currently summed for this purpose. **Use base `e.budget`, NOT
+  `budget + extraFundsMap[id]`** — extra funds are already their own `+` line
+  in the sheet, so folding them into "allocated" double-counts them.
+- Keep the existing four lines as the arithmetic of record. The planned figures
+  are annotation only; the sheet must still sum to the headline, and
+  `UnaccountedSheet`'s lines must keep reconciling exactly.
+- A third bucket exists that belongs to neither envelope list: "Transfers out"
+  counts every `isTransfer` row that isn't a *live* goal contribution, so it
+  also picks up a transfer whose category was deleted from the plan, one
+  against a category later switched to tracked, and a goal contribution whose
+  goal was deleted (it loses its goal id and falls through to transfers). Those
+  appear in the total but in no card. A "⚠ N over" annotation should therefore
+  say *what* the excess is, or at minimum not imply it's necessarily an
+  over-transfer.
+
+**Deliberately not doing:** making the unaccounted card read from the budget.
+It answers "is all my pay accounted for", which is an actuals question; the
+plan figures are context beside it, not inputs to it.
+
+
+---
+
+## Investment Module
 
 ## Phase 1 — Architecture & ownership (DONE, 2026-07-28)
 Investment Accounts data model (`owner`, `type`), migration, Home page
