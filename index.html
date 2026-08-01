@@ -489,7 +489,7 @@ function Portal({children}){
   return ReactDOM.createPortal(children,document.body);
 }
 const _RC=(typeof Recharts!=='undefined')?Recharts:window.Recharts||{};
-const{PieChart,Pie,Cell,ResponsiveContainer,LineChart,Line,AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
+const{ResponsiveContainer,LineChart,Line,AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip}=_RC;
 
 /* ── Animation helpers ── */
 
@@ -748,6 +748,7 @@ const I={
   Users:Ic([<path key="a" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>,<circle key="b" cx="9" cy="7" r="4"/>,<path key="c" d="M23 21v-2a4 4 0 0 0-3-3.87"/>,<path key="d" d="M16 3.13a4 4 0 0 1 0 7.75"/>]),
   Refresh:Ic([<polyline key="a" points="23 4 23 10 17 10"/>,<polyline key="b" points="1 20 1 14 7 14"/>,<path key="c" d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>]),
   Check:Ic([<polyline key="a" points="20 6 9 17 4 12"/>]),
+  Info:Ic([<circle key="c" cx="12" cy="12" r="10"/>,<line key="b" x1="12" y1="11" x2="12" y2="16"/>,<line key="d" x1="12" y1="8" x2="12" y2="8"/>]),
   Chevron:Ic([<polyline key="a" points="6 9 12 15 18 9"/>]),
   Cloud:Ic([<path key="a" d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>]),
   Download:Ic([<path key="a" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>,<polyline key="b" points="7 10 12 15 17 10"/>,<line key="c" x1="12" y1="15" x2="12" y2="3"/>]),
@@ -906,7 +907,10 @@ const COUNTRIES=[["SA","Saudi Arabia"],["PH","Philippines"],["Other","Other"]];
    live quotes) — the others are selectable now but simply won't accrue
    value until a later phase teaches the app how to price them. */
 const INVESTMENT_OWNERS=["me","wife","household"];
-const investmentOwnerLabel=(owner,owners)=>owner==="household"?"Household":((owners||{})[owner]||owner);
+/* "Joint", not "Household" — household is now the name of the combined VIEW
+   across the asset tabs, so reusing it for a single account's owner read as
+   "shown everywhere" rather than "owned by both". */
+const investmentOwnerLabel=(owner,owners)=>owner==="household"?"Joint":((owners||{})[owner]||owner);
 const INVESTMENT_TYPES=[
   ["stocks","Stocks / ETF"],
   ["mp2","Pag-IBIG MP2"],
@@ -1470,8 +1474,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.16.1";
-const BUILD_ID="2026.07.31.0013";
+const APP_VERSION="1.17.0";
+const BUILD_ID="2026.08.01.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1767,6 +1771,16 @@ function investmentsForProfile(invs,owner){
   return(invs||[]).filter(x=>(x.owner||"me")===owner);
 }
 
+/* Same rule for assets and liabilities, which gained an `owner` alongside the
+   per-profile Net Worth view. The fallback differs on purpose: an investment
+   with no owner is "me" (it predates joint accounts and was always personal),
+   but an asset with no owner is "household" — migrate() defaults them there
+   because the app never asked who owned the car or the loan. Shared so App()
+   and NetWorthView filter through exactly one predicate. */
+function ownerMatch(rec,profile){
+  return profile==="household"||((rec&&rec.owner)||"household")===profile;
+}
+
 /* ── Bank interest accrual ─────────────────────────────────────────────────
    Bank balances go stale between manual updates. A bank that credits interest
    daily (Maribank PH does) drifts a little further from reality every day the
@@ -1948,8 +1962,8 @@ function defaultData(){
       {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000,balanceAsOf:today,interest:null},
     ],
     assets:[
-      {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000},
-      {id:uid(),name:"Car loan",kind:"liability",currency:"SAR",value:0,
+      {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000,owner:"household"},
+      {id:uid(),name:"Car loan",kind:"liability",currency:"SAR",value:0,owner:"household",
        installment:true,monthly:1100,monthsRemaining:24,asOfDate:new Date().toISOString().slice(0,10)},
     ],
     history:[],
@@ -2142,6 +2156,14 @@ function migrate(d){
   (d.assets||[]).forEach(a=>{
     if(a.kind==="liability"&&!a.installment){a.installment=false;}
     if(!a.updatedAt)a.updatedAt="2000-01-01T00:00:00.000Z";
+    /* Assets and liabilities never had an owner, and per-owner net worth used
+       to add ALL of them to BOTH people. Default to "household" (joint) rather
+       than guessing a person: the app never asked, and attributing everything
+       to "me" would silently hand one person the other's liabilities. The
+       visible consequence is that each person's net worth is banks +
+       investments until items are re-assigned in Net Worth — see
+       docs/decisions.md. */
+    if(!a.owner)a.owner="household";
   });
   if(!d.livePrice)d.livePrice={};
   if(d.livePriceAt===undefined)d.livePriceAt=null;
@@ -2324,6 +2346,9 @@ const loadSyncedSnapshot=()=>{try{const raw=localStorage.getItem(LAST_SYNCED_DAT
 const syncedSnapshotObj=()=>{if(_syncedSnapObj===undefined)_syncedSnapObj=loadSyncedSnapshot();return _syncedSnapObj;};
 const PRE_CLOUD_BACKUP_KEY="salaryPlanner:v3:preCloudRestore";
 const PROFILE_KEY="allocation:preferredProfile";
+/* which profile the asset tabs are being VIEWED as — me | wife | household.
+   Separate from PROFILE_KEY, which is the remembered default *person*. */
+const VIEW_PROFILE_KEY="allocation:viewProfile";
 
 /* theme is a per-device UI preference (see PROFILE_KEY / allocation:theme in
    localStorage) that also happens to ride along inside the shared `data`
@@ -3029,8 +3054,31 @@ function App(){
     try{return !localStorage.getItem(PROFILE_KEY);}catch(e){return false;}
   });
   const[profilePickerDismissable,setProfilePickerDismissable]=useState(false);
+
+  /* ── VIEWING profile — the me/wife/household switch shared by Home, Banks,
+     Investments and Net Worth. "household" is NOT a third person: it is the
+     combined view of both people plus anything jointly owned (see CLAUDE.md).
+     It lives in localStorage, never in `data` — it's a per-device UI
+     preference, and putting it in the doc would dirty it and sync your
+     current view to the other device. This used to be local to HomeView.
+     budgetOwner stays me/wife only, since a budget plan belongs to a person;
+     when the view profile is "household", Budget/Expenses simply keep showing
+     whoever was picked last, with their own 2-way toggle. ────────────────── */
+  const[profile,setProfile]=useState(()=>{
+    try{return localStorage.getItem(VIEW_PROFILE_KEY)||localStorage.getItem(PROFILE_KEY)||"me";}catch(e){return "me";}
+  });
+  const setProfileSynced=p=>{
+    setProfile(p);
+    try{localStorage.setItem(VIEW_PROFILE_KEY,p);}catch(e){}
+    if(p==="me"||p==="wife")setBudgetOwner(p);
+  };
+  /* Budget/Expenses own toggle drives the global view too, so switching person
+     there doesn't leave Banks/Investments/Net Worth on the other one. */
+  const setBudgetOwnerSynced=p=>{setBudgetOwner(p);setProfileSynced(p);};
+
   const chooseDefaultProfile=ok=>{
     setBudgetOwner(ok);
+    setProfileSynced(ok);
     try{localStorage.setItem(PROFILE_KEY,ok);}catch(e){}
     setShowProfilePicker(false);
   };
@@ -4239,8 +4287,8 @@ function App(){
   const assets=(data.assets||[]).filter(a=>!a.deletedAt);
   const addAsset=kind=>setData(d=>({...d,assets:[...(d.assets||[]),
     kind==="liability"
-      ?{id:uid(),name:"New liability",kind:"liability",currency:"SAR",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10),updatedAt:new Date().toISOString()}
-      :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",value:0,updatedAt:new Date().toISOString()}
+      ?{id:uid(),name:"New liability",kind:"liability",currency:"SAR",owner:"household",value:0,installment:true,monthly:0,monthsRemaining:0,asOfDate:new Date().toISOString().slice(0,10),updatedAt:new Date().toISOString()}
+      :{id:uid(),name:"New asset",kind:"asset",currency:"SAR",owner:"household",value:0,updatedAt:new Date().toISOString()}
   ]}));
   const updateAsset=(id,patch)=>setData(d=>({...d,assets:(d.assets||[]).map(a=>a.id===id?{...a,...patch,updatedAt:new Date().toISOString()}:a)}));
   const removeAsset=id=>{
@@ -4307,9 +4355,32 @@ function App(){
   };
   const invSar=investmentsSarValue(invs);
   const invSarForOwner=useCallback(owner=>investmentsSarValue(investmentsForProfile(invs,owner)),[invs,livePrice,sarRate,convert,mp2RatesByYear,includeMp2Estimate]);
-  const assetSar=assets.filter(a=>a.kind==="asset").reduce((s,a)=>s+sarOf(a.value,a.currency),0);
-  const liabSar=assets.filter(a=>a.kind==="liability").reduce((s,a)=>s+sarOf(liabilityBalance(a),a.currency),0);
-  const netWorth=banksSar+invSar+assetSar-liabSar;
+
+  /* ── Net worth, per profile. One helper rather than a reduce per call site
+     (see CLAUDE.md). "household" is the combined view: everything, including
+     jointly-owned records. A person's view is strictly what they own, so
+     me + wife does NOT equal household whenever anything is joint — that's
+     deliberate, not a rounding bug.
+
+     Banks filter literally (a joint bank belongs to neither person's view);
+     investments go through investmentsForProfile, which already encodes the
+     same rule; assets/liabilities use ownerMatch, whose "no owner" fallback
+     is household because migrate() defaults them there. ──────────────────── */
+  const netWorthParts=p=>{
+    const pBanksSar=p==="household"
+      ?banksSar
+      :banks.filter(b=>b.owner===p).reduce((s,b)=>s+sarOf(bankValue(b,todayStr),b.currency),0);
+    const pInvSar=p==="household"?invSar:invSarForOwner(p);
+    const mine=assets.filter(a=>ownerMatch(a,p));
+    const pAssetSar=mine.filter(a=>a.kind==="asset").reduce((s,a)=>s+sarOf(a.value,a.currency),0);
+    const pLiabSar=mine.filter(a=>a.kind==="liability").reduce((s,a)=>s+sarOf(liabilityBalance(a),a.currency),0);
+    return{banks:pBanksSar,investments:pInvSar,assets:pAssetSar,liabilities:pLiabSar,
+      net:pBanksSar+pInvSar+pAssetSar-pLiabSar};
+  };
+  const householdParts=netWorthParts("household");
+  const assetSar=householdParts.assets;
+  const liabSar=householdParts.liabilities;
+  const netWorth=householdParts.net;
 
   /* history */
   const history=data.history||[];
@@ -4355,10 +4426,7 @@ function App(){
      investment breakdown, feeding the new range-selectable charts. Same
      debounce-then-write-only-if-changed shape as the effect above, just
      looped over 3 profiles and keyed by day instead of month. */
-  const ownerNetWorthSar=owner=>{
-    const ownerBanksSar=banks.filter(b=>b.owner===owner).reduce((s,b)=>s+sarOf(bankValue(b,todayStr),b.currency),0);
-    return ownerBanksSar+invSarForOwner(owner)+assetSar-liabSar;
-  };
+  const ownerNetWorthSar=owner=>netWorthParts(owner).net;
   const snapshots=data.snapshots||[];
   useEffect(()=>{
     if(!netWorthReady)return;
@@ -4376,16 +4444,18 @@ function App(){
         let changed=false;
         ["me","wife","household"].forEach(profile=>{
           const pInvs=investmentsForProfile(invs,profile);
-          const net=profile==="household"?netWorth:ownerNetWorthSar(profile);
-          const investmentsVal=profile==="household"?invSar:invSarForOwner(profile);
-          const profileBanksSar=profile==="household"?banksSar:banks.filter(b=>b.owner===profile).reduce((s,b)=>s+sarOf(bankValue(b,todayStr),b.currency),0);
+          /* All five fields come from the one helper. assets/liabilities used
+             to store the HOUSEHOLD figures on every profile's row, which made
+             Net Worth's per-person "What's driving it" wrong no matter what
+             the hero showed. */
+          const parts=netWorthParts(profile);
           const breakdown=investmentBreakdownSar(pInvs);
           const rounded={
-            net:Math.round(net),
-            investments:Math.round(investmentsVal),
-            banks:Math.round(profileBanksSar),
-            assets:Math.round(assetSar),
-            liabilities:Math.round(liabSar),
+            net:Math.round(parts.net),
+            investments:Math.round(parts.investments),
+            banks:Math.round(parts.banks),
+            assets:Math.round(parts.assets),
+            liabilities:Math.round(parts.liabilities),
             byType:{stocks:Math.round(breakdown.stocks),mp2:Math.round(breakdown.mp2),td:Math.round(breakdown.td),gold:Math.round(breakdown.gold)},
           };
           const idx=snaps.findIndex(s=>s.date===today&&s.profile===profile);
@@ -4404,7 +4474,10 @@ function App(){
       });
     },1500);
     return()=>clearTimeout(t);
-  },[netWorth,banksSar,invSar,assetSar,liabSar,invs,netWorthReady]);
+    // `assets` is in the deps as well as the derived assetSar/liabSar: editing
+    // an item's OWNER moves value between profiles without changing either
+    // household total, so the derived numbers alone wouldn't re-fire this.
+  },[netWorth,banksSar,invSar,assetSar,liabSar,assets,banks,invs,netWorthReady]);
 
   /* ── automatic market-data refresh ────────────────────────────────────────
      Keeps stock quotes and FX rates from silently going stale for people who
@@ -4718,18 +4791,18 @@ function App(){
         </div>
 
         <TabPane tab={tab}>
-          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
-          {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
+          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,profile,setProfile:setProfileSynced,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
-          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
-          {tab==="investments"&&<InvestmentsView {...{invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap,snapshots,owners:data.owners,
+          {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,profile,setProfile:setProfileSynced,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
+          {tab==="investments"&&<InvestmentsView {...{profile,setProfile:setProfileSynced,invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap,snapshots,owners:data.owners,
             mp2Rates,mp2RatesByYear,addMp2Rate,updateMp2Rate,removeMp2Rate,
             addMp2Contribution,updateMp2Contribution,removeMp2Contribution,recordMp2Payout,
             confirmTdMaturity,transferTdProceeds,banks,
             includeMp2Estimate}}/>}
-          {tab==="networth"&&<NetWorthView {...{netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
+          {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
@@ -5885,9 +5958,11 @@ function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,heading,onClose
   );
 }
 
-function HomeView({budgetOwner,setBudgetOwner,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
-  const[profile,setProfile]=useState(budgetOwner);
-  const setProfileSynced=p=>{setProfile(p);if(p==="me"||p==="wife")setBudgetOwner(p);};
+function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
+  /* profile/setProfile now come from App() and are shared with Banks,
+     Investments and Net Worth — see VIEW_PROFILE_KEY. setProfile is already
+     the synced setter, so this alias just keeps the call sites below. */
+  const setProfileSynced=setProfile;
   const[goalSheet,setGoalSheet]=useState(false);
   const[qaSheet,setQaSheet]=useState(false);
   useScrollLock(goalSheet);
@@ -6317,37 +6392,37 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
         </div>
       </div>
 
-      {/* ── allocation breakdown: donut + list (replaces the old linear bar; also folds in what used to be the separate Overview tab) ── */}
+      {/* ── allocation breakdown: proportion bar + list. The donut that used to
+             sit here was decorative (no click, no filter, just a hover tooltip)
+             and cost a whole card of height, so it's a stacked bar now — same
+             SEG colours, same shape as Net Worth's Composition bar. ── */}
       {(()=>{
         const groupData=(monthPlan.groups||[]).map((g,i)=>({
           name:g.name,
           value:(monthPlan.categories||[]).filter(c=>c.groupId===g.id).reduce((s,c)=>s+effectiveAmt(c),0),
           color:SEG[i%SEG.length],
         })).filter(d=>d.value>0);
+        if(!groupData.length)return null;
+        /* proportions of what's ALLOCATED, so the bar always fills — the
+           income-vs-allocated gap is already stated in the card above. */
+        const allocTotal=groupData.reduce((s,d)=>s+d.value,0);
         return(
-          <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
-            <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200}}>
-              <div style={{width:"100%",height:190}}>
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie data={groupData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={78} innerRadius={44} paddingAngle={2}>
-                      {groupData.map((d,i)=><Cell key={i} fill={d.color}/>)}
-                    </Pie>
-                    <Tooltip formatter={v=>fmt(v)}/>
-                  </PieChart>
-                </ResponsiveContainer>
+          <div style={{...neu(16),padding:16,marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Where {fmt(income)} goes</div>
+            <div style={{...neuInset(999),height:12,width:"100%",overflow:"hidden",marginBottom:12,position:"relative"}}>
+              <div style={{display:"flex",height:"100%",width:"100%"}}>
+                {groupData.map(d=><div key={d.name} className="bar-animated liquid-fill" title={`${d.name} · ${fmt(d.value)}`}
+                  style={{width:`${(d.value/allocTotal)*100}%`,height:"100%",background:liquidFillBg(d.color)}}/>)}
               </div>
             </div>
-            <div style={{...neu(16),padding:16,flex:"1 1 200px",minWidth:200,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-              <div style={{fontSize:11,fontWeight:600,color:P.neuSub,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>Where {fmt(income)} goes</div>
-              {groupData.map(d=>(
-                <div key={d.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,padding:"4px 0"}}>
-                  <span style={{width:9,height:9,borderRadius:999,background:d.color,flexShrink:0}}/>
-                  <span style={{flex:1,color:P.neuSub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
-                  <span className="tnum" style={{color:P.neuSub,fontSize:12,opacity:.75}}>{pct(d.value).toFixed(2)}%</span>
-                </div>
-              ))}
-            </div>
+            {groupData.map(d=>(
+              <div key={d.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,padding:"4px 0"}}>
+                <span style={{width:9,height:9,borderRadius:999,background:d.color,flexShrink:0}}/>
+                <span style={{flex:1,color:P.neuSub,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</span>
+                <span className="tnum" style={{color:P.neuSub,fontSize:12,opacity:.75}}>{fmt(d.value)}</span>
+                <span className="tnum" style={{color:P.neuSub,fontSize:12,opacity:.75,minWidth:52,textAlign:"right"}}>{pct(d.value).toFixed(2)}%</span>
+              </div>
+            ))}
           </div>
         );
       })()}
@@ -6752,6 +6827,74 @@ function PlanSwitcher({ownerPlans,plan,switchPlan,addPlan,removePlan,renamePlan,
   );
 }
 
+/* Rank remembered transaction names against what the user has typed so far.
+   Substring match, so "amazon" still finds "Buy Amazon gift card" — but a
+   prefix match ranks above a mid-string one, and ties keep the caller's order,
+   which is already most-recent-first. Pure + module scope so suggesttest.cjs
+   can slice it out (see CLAUDE.md on testing). */
+function rankNameSuggestions(names,query,limit=6){
+  const list=names||[];
+  const q=(query||"").trim().toLowerCase();
+  if(!q)return list.slice(0,limit);
+  const hits=[];
+  list.forEach((n,i)=>{
+    const at=String(n).toLowerCase().indexOf(q);
+    if(at>=0)hits.push({n,rank:at===0?0:1,i});
+  });
+  hits.sort((a,b)=>a.rank-b.rank||a.i-b.i);
+  return hits.map(h=>h.n).slice(0,limit);
+}
+
+/* Explains the "unaccounted" figure in the Expenses hero. Portalled for the
+   same reason as ConfirmDialog/AdjustReserveSheet — ExpenseTrackerView renders
+   inside TabPane, whose stuck transform would otherwise anchor this to the tab
+   pane rather than the viewport. */
+function UnaccountedSheet({monthLabel,income,parts,total,fmt,onClose}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  /* income always shows (even at zero — a blank plan is exactly what you'd want
+     explained); the rest only when they actually contributed something */
+  const rows=[{label:"Income for this period",value:income,sign:1}].concat([
+    {label:"Extra funds received",value:parts.extraFunds,sign:1},
+    {label:"Tracked spending",value:parts.trackedSpend,sign:-1},
+    {label:"Transfers out (Savings, Investment…)",value:parts.untrackedTransfers,sign:-1},
+    {label:"Goal contributions",value:parts.goalContribs,sign:-1},
+  ].filter(r=>r.value>0));
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+        onClick={e=>e.stopPropagation()} style={{maxHeight:"85dvh",overflowY:"auto"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>{total<0?"Over-transferred":"Unaccounted"} — {monthLabel}</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+          Everything logged against this period, whether you tracked it as spending or just moved it somewhere.
+        </div>
+        {rows.map(r=>(
+          <div key={r.label} style={{display:"flex",alignItems:"baseline",gap:10,padding:"7px 0",borderBottom:`1px solid ${P.line}`}}>
+            <span style={{flex:1,fontSize:13,color:P.sub,minWidth:0}}>{r.label}</span>
+            <span className="tnum" style={{fontSize:14,fontWeight:600,color:r.sign>0?P.gr:P.ink}}>
+              {r.sign>0?"+":"−"} {fmt(r.value)}
+            </span>
+          </div>
+        ))}
+        <div style={{display:"flex",alignItems:"baseline",gap:10,paddingTop:12}}>
+          <span style={{flex:1,fontSize:13,fontWeight:600,color:P.ink}}>{total<0?"Over-transferred":"Still unaccounted for"}</span>
+          <span className="tnum" style={{fontSize:20,fontWeight:700,color:total<0?P.wine:P.br}}>{fmt(Math.abs(total))}</span>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginTop:12}}>
+          {total<0
+            ?"You've logged more than this period's income — either the plan's income is low, or something was logged against the wrong period."
+            :"Money from this period's pay that hasn't been spent, transferred or put toward a goal yet."}
+        </div>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
 /* ── EXPENSE TRACKER VIEW ── */
 function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
@@ -6766,6 +6909,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   const[addMode,setAddMode]=useState("tracked"); // "tracked" | "untracked" | "goals" — unified add-transaction modal routing
   const[editTx,setEditTx]=useState(null); // transaction id being edited, or null for "add" mode
   const[filterCat,setFilterCat]=useState("all");
+  const[showUnaccounted,setShowUnaccounted]=useState(false); // hero pill → breakdown sheet
   const[expandedEnvelopes,setExpandedEnvelopes]=useState({}); // envelope card inline transaction expansion
   const toggleEnvelope=id=>setExpandedEnvelopes(s=>({...s,[id]:!s[id]}));
   const[collapsedMonths,setCollapsedMonths]=useState({});
@@ -6888,11 +7032,28 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   const totalSpent=envelopes.reduce((s,e)=>s+(spentMap[e.id]||0),0);
   const totalLeft=totalBudget-totalSpent;
 
-  /* salary remaining — income minus EVERY logged transaction (tracked + untracked),
-     since untracked transfers (Savings, Investment) still consume real salary. */
+  /* Salary remaining — what's left of this bucket's pay once everything logged
+     against it is accounted for. Untracked transfers (Savings, Investment) and
+     goal contributions still consume real salary, so they subtract; extra funds
+     are money coming IN (a spouse sending cash for a category), so they ADD.
+     They used to subtract, which made incoming cash lower your unspent salary
+     — the reason this figure never made sense. Classified off the raw rows,
+     not off totalSpent, which drops zero-budget categories at `envelopes`. */
   const totalIncome=Number(monthPlan.income)||0;
-  const totalLoggedAllCats=viewMonthExpenses.reduce((s,e)=>s+e.amount,0);
-  const totalUnallocatedOrUntransferred=totalIncome-totalLoggedAllCats;
+  const unaccountedParts=useMemo(()=>{
+    let trackedSpend=0,untrackedTransfers=0,goalContribs=0,extraFunds=0;
+    const goalIds=new Set((goals||[]).map(g=>g.id));
+    viewMonthExpenses.forEach(e=>{
+      const amt=Number(e.amount)||0;
+      if(e.isExtraFunds)extraFunds+=amt;
+      else if(e.isTransfer&&goalIds.has(e.catId))goalContribs+=amt;
+      else if(e.isTransfer)untrackedTransfers+=amt;
+      else trackedSpend+=amt;
+    });
+    return{trackedSpend,untrackedTransfers,goalContribs,extraFunds};
+  },[viewMonthExpenses,goals]);
+  const totalUnallocatedOrUntransferred=totalIncome+unaccountedParts.extraFunds
+    -unaccountedParts.trackedSpend-unaccountedParts.untrackedTransfers-unaccountedParts.goalContribs;
 
   /* Shared with Home's Tracked Spending card — see spendStatusColor/Bg at
      module scope. Aliased so every call site below stays unchanged. */
@@ -6928,14 +7089,20 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       .forEach(e=>{if(!seen.has(e.name))seen.set(e.name,e.catId);});
     return[...seen.keys()].slice(0,40);
   },[expenses,budgetOwner]);
-  /* names filtered to the currently selected category, falling back to all names */
-  const nameSuggestions=useMemo(()=>{
-    if(!form.catId)return recentNames.slice(0,8);
-    const scoped=[...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer)
-      .sort((a,b)=>(b.date||"").localeCompare(a.date||""));
-    const seen=new Set();const out=[];
-    scoped.forEach(e=>{if(!seen.has(e.name)){seen.add(e.name);out.push(e.name);}});
-    return out.slice(0,8);
+  /* Candidate pool for the name suggestions: names used in the selected
+     category first, then everything else this owner has typed. Deliberately
+     unsliced — rankNameSuggestions does the filtering and capping at render
+     time, so the list narrows as you type instead of disappearing. */
+  const nameCandidates=useMemo(()=>{
+    const out=[];const seen=new Set();
+    const push=n=>{if(n&&!seen.has(n)){seen.add(n);out.push(n);}};
+    if(form.catId){
+      [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer)
+        .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+        .forEach(e=>push(e.name));
+    }
+    recentNames.forEach(push);
+    return out;
   },[expenses,budgetOwner,form.catId,recentNames]);
 
   const openAdd=(presetCatId)=>{
@@ -7168,52 +7335,79 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
         </div>
       </div>
 
-      {/* ── remaining-to-allocate / untransferred salary ── */}
-      <div className="fade-up" style={{...neu(14),padding:"12px 14px",marginBottom:12,
-        display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-        <div>
-          <div style={{fontSize:11,fontWeight:600,color:totalUnallocatedOrUntransferred<0?P.wine:P.br,textTransform:"uppercase",letterSpacing:".06em"}}>
-            {totalUnallocatedOrUntransferred<0?"Over-transferred":"Salary not yet spent or transferred"}
-          </div>
-          <div style={{fontSize:11,color:P.neuSub,marginTop:1}}>Income minus every logged transaction, tracked or not</div>
-        </div>
-        <span className="tnum" key={totalUnallocatedOrUntransferred} style={{fontSize:18,fontWeight:700,color:totalUnallocatedOrUntransferred<0?P.wine:P.br}}>
-          {fmt(Math.abs(totalUnallocatedOrUntransferred))}
-        </span>
-      </div>
-
-      {/* ── hero summary (neumorphic dark tile + signature liquid-glass bar) ── */}
+      {/* ── hero summary (neumorphic dark tile + signature liquid-glass bar).
+             The "salary not yet spent" figure used to be its own card above
+             this one; it's now the tappable pill in the header, which opens
+             the breakdown sheet rather than leaving the maths unexplained. ── */}
       <div className="fade-up-1" style={{borderRadius:18,padding:16,marginBottom:16,
         background:isFuture?`linear-gradient(135deg,${P.br} 0%,${P.grD} 100%)`:P.deep,color:"#fff",
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
-          {fmtMonth(viewMonth)} {isFuture?"plan":"spending"}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:500,color:P.deepHi}}>
+            {fmtMonth(viewMonth)} {isFuture?"plan":"spending"}
+          </div>
+          <button onClick={()=>setShowUnaccounted(true)} aria-label="How this is calculated"
+            className="tnum" style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,
+              borderRadius:999,padding:"4px 10px",border:"none",background:"rgba(0,0,0,.25)",
+              color:totalUnallocatedOrUntransferred<0?"#F87171":P.deepHi}}>
+            {totalUnallocatedOrUntransferred<0?"Over-transferred":"Unaccounted"} {fmt(Math.abs(totalUnallocatedOrUntransferred))}
+            <I.Info size={12}/>
+          </button>
         </div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:20,alignItems:"baseline"}}>
-          <div>
-            <div style={{fontSize:11,color:P.deepHi}}>{isFuture?"Planned":"Spent"}</div>
-            <div key={totalSpent} className="serif tnum num-flash" style={{fontSize:28,fontWeight:600,
-              color:totalSpent>totalBudget?"#F87171":"#fff"}}>{fmt(totalSpent)}</div>
+        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:7,minWidth:0}}>
+            <span key={totalSpent} className="serif tnum num-flash" style={{fontSize:28,fontWeight:600,
+              color:totalSpent>totalBudget?"#F87171":"#fff"}}>{fmt(totalSpent)}</span>
+            <span className="tnum" style={{fontSize:14,color:P.deepHi}}>of {fmt(totalBudget)}</span>
           </div>
-          <div>
-            <div style={{fontSize:11,color:P.deepHi}}>Budget</div>
-            <div className="tnum" style={{fontSize:20,fontWeight:600,color:P.deepHi}}>{fmt(totalBudget)}</div>
-          </div>
-          <div style={{marginLeft:"auto",textAlign:"right"}}>
-            <div style={{fontSize:11,color:P.deepHi}}>{totalLeft>=0?(isFuture?"Available":"Remaining"):"Over budget"}</div>
-            <div key={totalLeft} className="tnum num-flash" style={{fontSize:20,fontWeight:600,
-              color:totalLeft>=0?"#4ADE80":"#F87171"}}>{fmt(Math.abs(totalLeft))}</div>
+          <div style={{textAlign:"right"}}>
+            <span key={totalLeft} className="tnum num-flash" style={{fontSize:18,fontWeight:600,
+              color:totalLeft>=0?"#4ADE80":"#F87171"}}>{fmt(Math.abs(totalLeft))}</span>
+            <span style={{fontSize:12,color:P.deepHi,marginLeft:5}}>
+              {totalLeft>=0?(isFuture?"available":"left"):"over"}
+            </span>
           </div>
         </div>
-        <div style={{marginTop:12,height:10,background:"rgba(0,0,0,.28)",borderRadius:999,overflow:"hidden",
+        <div style={{marginTop:12,height:16,background:"rgba(0,0,0,.28)",borderRadius:999,overflow:"hidden",
           boxShadow:"inset 2px 2px 5px rgba(0,0,0,.35),inset -1px -1px 3px rgba(255,255,255,.06)"}}>
           {(()=>{
             const fc=totalSpent>=totalBudget?"#F87171":totalSpent/totalBudget>=.8?"#E07B2A":"#4ADE80";
-            return <div className="bar-animated liquid-fill" style={{width:`${Math.min(100,totalBudget>0?(totalSpent/totalBudget)*100:0)}%`,
+            return <div className="bar-animated liquid-fill" style={{height:"100%",width:`${Math.min(100,totalBudget>0?(totalSpent/totalBudget)*100:0)}%`,
               background:`linear-gradient(180deg, rgba(255,255,255,.6) 0%, rgba(255,255,255,.05) 45%, ${fc}CC 45%, ${fc} 100%)`}}/>;
           })()}
         </div>
+        {/* biggest spenders — the full envelope list is right below, so this is
+            just the top few, as bars rather than Home's text-only rows */}
+        {(()=>{
+          const top=envelopes
+            .map(e=>({name:e.name,spent:spentMap[e.id]||0,budget:e.budget+(extraFundsMap[e.id]||0)}))
+            .filter(r=>r.spent>0)
+            .sort((a,b)=>b.spent-a.spent)
+            .slice(0,4);
+          if(!top.length)return null;
+          return(
+            <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:8}}>
+              {top.map(r=>{
+                const p=r.budget>0?(r.spent/r.budget)*100:100;
+                const c=statusColor(r.spent,r.budget);
+                return(
+                  <div key={r.name} style={{display:"flex",alignItems:"center",gap:9,fontSize:12}}>
+                    <span style={{width:"32%",flexShrink:0,color:P.deepHi,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+                    <span style={{flex:1,height:6,background:"rgba(0,0,0,.28)",borderRadius:999,overflow:"hidden"}}>
+                      <span style={{display:"block",height:"100%",width:`${Math.min(100,p)}%`,background:c,borderRadius:999,transition:"width .4s ease"}}/>
+                    </span>
+                    <span className="tnum" style={{width:38,textAlign:"right",flexShrink:0,color:c,fontWeight:600}}>{Math.round(p)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
+
+      {showUnaccounted&&
+        <UnaccountedSheet monthLabel={fmtMonth(viewMonth)} income={totalIncome} parts={unaccountedParts}
+          total={totalUnallocatedOrUntransferred} fmt={fmt} onClose={()=>setShowUnaccounted(false)}/>}
 
       {/* ── envelopes ── */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8,flexWrap:"wrap"}}>
@@ -7545,22 +7739,30 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Title{addMode==="goals"&&!editTx?<span style={{color:P.faint,fontWeight:400}}> (optional)</span>:null}</div>
               <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
-                placeholder={addMode==="goals"&&!editTx?"e.g. Monthly deposit":"e.g. Amazon Now"} list="tx-name-suggestions"
+                placeholder={addMode==="goals"&&!editTx?"e.g. Monthly deposit":"e.g. Amazon Now"}
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                   background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
-              <datalist id="tx-name-suggestions">
-                {nameSuggestions.map(n=><option key={n} value={n}/>)}
-              </datalist>
-              {nameSuggestions.length>0&&!form.name&&addMode==="tracked"&&(
-                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
-                  {nameSuggestions.slice(0,5).map(n=>(
-                    <button key={n} onClick={()=>setForm(f=>({...f,name:n}))}
-                      style={{fontSize:11,borderRadius:999,padding:"3px 9px",background:"rgba(0,0,0,.05)",border:"none",color:P.sub}}>
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Remembered names, narrowing as you type. Rendered in flow (the
+                  modal scrolls, so an absolutely positioned popup would clip),
+                  and onMouseDown-prevented so the tap lands before the input's
+                  blur can tear the list down. */}
+              {addMode==="tracked"&&(()=>{
+                const sugg=rankNameSuggestions(nameCandidates,form.name);
+                const typed=(form.name||"").trim().toLowerCase();
+                if(!sugg.length)return null;
+                if(sugg.length===1&&String(sugg[0]).toLowerCase()===typed)return null;
+                return (
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
+                    {sugg.map(n=>(
+                      <button key={n} onMouseDown={e=>e.preventDefault()}
+                        onClick={()=>setForm(f=>({...f,name:n}))}
+                        style={{fontSize:11,borderRadius:999,padding:"3px 9px",background:"rgba(0,0,0,.05)",border:"none",color:P.sub}}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{marginBottom:12}}>
@@ -8397,7 +8599,14 @@ function InterestSettings({b,updateBank,todayStr,accent}){
   );
 }
 
-function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,syncNow}){
+/* Bank owner keys. "household" is a JOINT account — it belongs to both, so it
+   shows only in the Combined view, never in either person's. Kept here rather
+   than inlined so the label and the accent stay in one place. */
+const BANK_OWNERS=["me","wife","household"];
+function bankOwnerLabel(k,owners){return k==="household"?"Joint":(owners&&owners[k])||k;}
+function bankOwnerAccent(k){return k==="wife"?{c:P.br,s:P.brS}:k==="household"?{c:P.amber,s:P.amberS}:{c:P.jade,s:P.jadeS};}
+
+function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,setProfile,owners,syncNow}){
   const[openId,setOpenId]=useState(null); // account id whose settings panel is expanded
   const[balanceEditId,setBalanceEditId]=useState(null); // account id whose Update-balance sheet is open
   const sar=n=>formatMoney(n,{code:"SAR"});
@@ -8405,16 +8614,21 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
   // computed against the same day (see bankValuation).
   const todayStr=new Date().toISOString().slice(0,10);
   const sarOf=b=>{const v=convert(bankValue(b,todayStr),b.currency,"SAR");return v==null?0:v;};
-  const total=banks.reduce((s,b)=>s+sarOf(b),0);
+  /* Everything on screen follows the profile switch. Combined shows all three
+     owner buckets; a person's view shows strictly their own accounts. */
+  const visibleBanks=profile==="household"?banks:banks.filter(b=>b.owner===profile);
+  const total=visibleBanks.reduce((s,b)=>s+sarOf(b),0);
   const usdTotal=sarRate?Math.round(total/sarRate):null;
   const phpTotal=convert?convert(total,"SAR","PHP"):null;
-  const meTotal=banks.filter(b=>b.owner==="me").reduce((s,b)=>s+sarOf(b),0);
-  const wifeTotal=banks.filter(b=>b.owner==="wife").reduce((s,b)=>s+sarOf(b),0);
+  /* Per-owner tiles, including Joint — without that third bucket the tiles
+     didn't add up to the total whenever a jointly-owned account existed. */
+  const ownerTotals={};
+  BANK_OWNERS.forEach(k=>{ownerTotals[k]=banks.filter(b=>b.owner===k).reduce((s,b)=>s+sarOf(b),0);});
+  const hasJoint=banks.some(b=>b.owner==="household");
 
   const Card=b=>{
     const isOpen=openId===b.id;
-    const accent=b.owner==="me"?P.jade:P.br;
-    const accentS=b.owner==="me"?P.jadeS:P.brS;
+    const{c:accent,s:accentS}=bankOwnerAccent(b.owner);
     const val=bankValuation(b,todayStr);
     // Whole units on the headline: accrual always produces cents, and at 26px
     // serif "PHP 150,203.14" wraps to two lines and collides with the Update
@@ -8471,7 +8685,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
           <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
             <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",background:accentS,color:accent}}>{b.currency}</span>
             <span style={{fontSize:10,color:P.neuSub}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
-            <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{owners[b.owner]}</span>
+            <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{bankOwnerLabel(b.owner,owners)}</span>
           </div>
         </div>
 
@@ -8492,6 +8706,13 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
               <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})}
                 style={{...neu(8),padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
                 {BANK_CCY.map(c=><option key={c}>{c}</option>)}
+              </select>
+              {/* Owner is editable here as well as via which section you added
+                  from — without this, "household" (joint) would be unreachable. */}
+              <select value={b.owner} onChange={e=>updateBank(b.id,{owner:e.target.value})}
+                aria-label="Account owner"
+                style={{...neu(8),padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                {BANK_OWNERS.map(k=><option key={k} value={k}>{bankOwnerLabel(k,owners)}</option>)}
               </select>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -8522,40 +8743,51 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`,
         display:"flex",flexWrap:"wrap",gap:16,alignItems:"center"}}>
         <div style={{flex:"1 1 200px"}}>
-          <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total liquid assets</div>
+          <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
+            Total liquid assets{profile!=="household"?` · ${owners[profile]||""}`:""}
+          </div>
           <span className="serif tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
           <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:P.deepHi,fontSize:14}}>
             <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
             <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
           </div>
         </div>
-        <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
-          <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
-            <div style={{fontSize:11,color:P.deepHi}}>{owners.me}</div>
-            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(meTotal)}</div>
+        {profile==="household"&&(
+          <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
+            {BANK_OWNERS.filter(k=>k!=="household"||hasJoint).map(k=>(
+              <div key={k} style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
+                <div style={{fontSize:11,color:P.deepHi}}>{bankOwnerLabel(k,owners)}</div>
+                <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(ownerTotals[k])}</div>
+              </div>
+            ))}
           </div>
-          <div style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
-            <div style={{fontSize:11,color:P.deepHi}}>{owners.wife}</div>
-            <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(wifeTotal)}</div>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* ── card grid, per owner ── */}
-      {["me","wife"].map(ok=>{
+      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+        <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+      </div>
+
+      {/* ── card grid, per owner. Combined lists all three buckets; a person's
+             view lists only theirs, so joint money never lands in one name. ── */}
+      {(profile==="household"?BANK_OWNERS:[profile]).map(ok=>{
         const items=banks.filter(b=>b.owner===ok);
+        // don't advertise a Joint section to someone who has no joint accounts
+        if(ok==="household"&&!items.length&&profile!=="household")return null;
+        const{c:accent}=bankOwnerAccent(ok);
+        const who=bankOwnerLabel(ok,owners);
         return(
           <section key={ok} style={{marginBottom:22}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s accounts</h2>
+              <span style={{width:8,height:8,borderRadius:999,background:accent}}/>
+              <h2 style={{fontSize:14,fontWeight:600,color:accent,margin:0}}>{ok==="household"?"Joint accounts":`${who}'s accounts`}</h2>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(280px,100%),1fr))",gap:12}}>
               {items.map(Card)}
               <button onClick={()=>addBank(ok)} className="neu-btn"
                 style={{borderRadius:16,minHeight:150,color:P.jade,
                   display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
-                <I.Plus size={20}/>Add {owners[ok]}'s account
+                <I.Plus size={20}/>Add {ok==="household"?"joint":`${who}'s`} account
               </button>
             </div>
           </section>
@@ -8582,7 +8814,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,owners,s
 }
 
 /* ── INVESTMENTS VIEW — trade log ── */
-function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection,setProjection,portHistory,addPortSnap,snapshots,owners,
+function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection,setProjection,portHistory,addPortSnap,snapshots,owners,
   mp2Rates,mp2RatesByYear,addMp2Rate,updateMp2Rate,removeMp2Rate,
   addMp2Contribution,updateMp2Contribution,removeMp2Contribution,recordMp2Payout,
   confirmTdMaturity,transferTdProceeds,banks,includeMp2Estimate}){
@@ -8600,14 +8832,16 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   const[expandedId,setExpandedId]=useState(null);
   const[fetchingName,setFetchingName]=useState({});
 
-  /* Section 8 filters — owner / account type / active-matured status.
-     Status only meaningfully applies to Time Deposit (stocks/MP2 don't have
-     a status field), so it's a no-op filter for the other two types. */
-  const[ownerFilter,setOwnerFilter]=useState("all");
+  /* Section 8 filters — account type / active-matured status. Owner is no
+     longer a local dropdown: it's the app-wide profile switch, where
+     "household" means the combined view (everything, including jointly-owned
+     holdings) and a person's view means strictly their own. Status only
+     meaningfully applies to Time Deposit (stocks/MP2 don't have a status
+     field), so it's a no-op filter for the other two types. */
   const[typeFilter,setTypeFilter]=useState("all");
   const[statusFilter,setStatusFilter]=useState("all"); // all | active | matured
   const passFilters=hld=>{
-    if(ownerFilter!=="all"&&(hld.owner||"me")!==ownerFilter)return false;
+    if(profile!=="household"&&(hld.owner||"me")!==profile)return false;
     if(typeFilter!=="all"&&(hld.type||"stocks")!==typeFilter)return false;
     if(statusFilter!=="all"&&hld.type==="td"){
       const st=hld.status||"active";
@@ -8684,10 +8918,16 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
   const goldTotalUsd=goldInvs.reduce((s,hld)=>s+goldValuation(hld,goldPriceUsd,convert).currentValueUsd,0);
   const grandTotalUsd=totVal+mp2TotalUsd+tdTotalUsd+goldTotalUsd;
 
+  /* Quote fetching and the portHistory snapshot deliberately use the UNFILTERED
+     holdings. They're whole-portfolio facts: prices are shared, and portHistory
+     feeds Home's Portfolio card. Deriving either from the filtered set would
+     write a partial total into history the moment the profile isn't Combined. */
+  const allStocks=invs.filter(x=>(x.type||"stocks")==="stocks");
+  const allGold=invs.filter(x=>x.type==="gold");
   const refresh=async()=>{
     const tickers=[...new Set([
-      ...stocksInvs.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean),
-      ...(goldInvs.length?[GOLD_TICKER]:[]),
+      ...allStocks.map(h=>(h.ticker||"").trim().toUpperCase()).filter(Boolean),
+      ...(allGold.length?[GOLD_TICKER]:[]),
     ])];
     if(!tickers.length){setErr("Add a ticker symbol first.");return;}
     setLoading(true);setErr("");
@@ -8700,7 +8940,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
       else if(hit<tickers.length)setErr(`Got ${hit}/${tickers.length} prices — remaining tickers not found.`);
       else setErr("");
       // auto-capture portfolio snapshot for the history chart
-      const newTotVal=stocksInvs.reduce((s,hld)=>{
+      const newTotVal=allStocks.reduce((s,hld)=>{
         const{shares}=holdingStats(hld.trades);
         const p=q[baseKey(hld.ticker||"")]||livePrice[baseKey(hld.ticker||"")]||0;
         return s+shares*p;
@@ -8736,7 +8976,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         {/* "Investments" not "Stock portfolio" once MP2/TD are in the mix
             (section 9) — the stock-only cost/gain line below stays clearly
             separate so a market % is never blended with MP2/TD accrual. */}
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total investments (USD)</div>
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Total investments (USD){profile!=="household"?` · ${owners[profile]||""}`:""}</div>
         <span key={Math.round(grandTotalUsd)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{usd(grandTotalUsd)}</span>
         {(sarRate||convert)&&(
           <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:4,fontSize:14,color:P.deepHi}}>
@@ -8765,7 +9005,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
           (kept as-is, off portHistory, for backward compatibility). */}
       <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
         <h3 style={{fontSize:14,fontWeight:600,color:P.neuSub,margin:"0 0 12px"}}>Portfolio trend</h3>
-        <HistoryRangeChart snapshots={snapshots} profile="household" field="investments"
+        <HistoryRangeChart snapshots={snapshots} profile={profile} field="investments"
           money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
           emptyText="Trend appears once 2+ days of portfolio history have been captured (captured automatically once a day)."/>
       </div>
@@ -8784,7 +9024,7 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
         <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
           Portfolio value split by account type over time.
         </p>
-        <CompositionRangeChart snapshots={snapshots} profile="household"
+        <CompositionRangeChart snapshots={snapshots} profile={profile}
           series={[
             {key:"byType.stocks",label:"Stocks / ETF",color:SEG[0]},
             {key:"byType.mp2",label:"Pag-IBIG MP2",color:SEG[3]},
@@ -8792,15 +9032,15 @@ function InvestmentsView({invs,addInv,updateInv,removeInv,addTrade,removeTrade,l
             {key:"byType.gold",label:"Gold",color:P.amber},
           ]}
           money={(v,short)=>{const u=convert?convert(v,"SAR","USD"):null;const n=u!=null?u:v;return short?`$${Math.round(n/1000)}k`:`$${Math.round(n).toLocaleString("en-US")}`;}}
-          emptyText="Appears once 2+ days of history have been captured (captured automatically once a day)."/>
+          emptyText={profile==="household"?"Appears once 2+ days of history have been captured (captured automatically once a day).":`Appears once 2+ days of history have been captured for ${owners[profile]||"this profile"} (captured automatically once a day).`}/>
       </div>
 
-      {/* Section 8 filters: owner / account type / active-matured status */}
+      {/* Section 8 filters: account type / active-matured status. Owner is the
+          app-wide profile switch above it, not a dropdown here. */}
+      <div style={{display:"flex",justifyContent:"center",marginBottom:12}}>
+        <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+      </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
-        <select value={ownerFilter} onChange={e=>setOwnerFilter(e.target.value)} style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub}}>
-          <option value="all">All owners</option>
-          {INVESTMENT_OWNERS.map(o=><option key={o} value={o}>{investmentOwnerLabel(o,owners)}</option>)}
-        </select>
         <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)} style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub}}>
           <option value="all">All types</option>
           {INVESTMENT_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
@@ -9679,11 +9919,18 @@ function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
 }
 
 /* ── Asset / liability row (top-level so it doesn't remount on each keystroke) ── */
-function AssetRow({a,updateAsset,removeAsset}){
+function AssetRow({a,updateAsset,removeAsset,owners}){
   return(
     <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(0,0,0,.06)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
         <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0,color:P.neuInk}}/>
+        {/* Whose is it? Everything predating this defaulted to Joint, so it
+            shows only in the Combined view until reassigned here. */}
+        <select value={a.owner||"household"} onChange={e=>updateAsset(a.id,{owner:e.target.value})}
+          aria-label={`Owner of ${a.name||"item"}`}
+          style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
+          {BANK_OWNERS.map(k=><option key={k} value={k}>{bankOwnerLabel(k,owners)}</option>)}
+        </select>
         <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
           {BANK_CCY.map(c=><option key={c}>{c}</option>)}
         </select>
@@ -9757,10 +10004,15 @@ function AssetRow({a,updateAsset,removeAsset}){
 }
 
 /* ── NET WORTH VIEW — installment liabilities ── */
-function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}){
+function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}){
   const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
   const[pv,setPv]=useState("");
   const sar=n=>formatMoney(n,{code:"SAR"});
+  /* Every figure below is for the selected profile; the household case is
+     just netWorthParts("household"), so the rest of this view is unchanged. */
+  const isCombined=profile==="household";
+  const _p=netWorthParts(profile);
+  const netWorth=_p.net,banksSar=_p.banks,invSar=_p.investments,assetSar=_p.assets,liabSar=_p.liabilities;
   const usd=sarRate?Math.round(netWorth/sarRate):null;
   const php=convert?convert(netWorth,"SAR","PHP"):null;
   const parts=[{label:"Bank accounts",value:banksSar,color:SEG[0]},{label:"Investments",value:invSar,color:SEG[3]},{label:"Other assets",value:assetSar,color:SEG[5]},{label:"Liabilities",value:-liabSar,color:P.red}];
@@ -9768,15 +10020,19 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
   const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
   const sorted=[...history].sort((a,b)=>a.month.localeCompare(b.month));
   const last=sorted[sorted.length-1];
-  const delta=last?netWorth-last.net:null;
-  const assetItems=assets.filter(a=>a.kind==="asset");
-  const liabItems=assets.filter(a=>a.kind==="liability");
+  /* `history` is written household-only, so this delta is meaningless beside a
+     per-person figure — show it only in the Combined view. */
+  const delta=(isCombined&&last)?netWorth-last.net:null;
+  const assetItems=assets.filter(a=>a.kind==="asset"&&ownerMatch(a,profile));
+  const liabItems=assets.filter(a=>a.kind==="liability"&&ownerMatch(a,profile));
 
   return(
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.deep,color:"#fff",
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>Net worth</div>
+        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
+          Net worth{isCombined?" · Combined":` · ${owners[profile]||""}`}
+        </div>
         <span key={Math.round(netWorth)} className="serif tnum num-flash" style={{fontSize:38,fontWeight:600}}>{sar(netWorth)}</span>
         <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:P.deepHi,fontSize:14}}>
           <span>{usd!=null?`≈ $${usd.toLocaleString("en-US")}`:"USD —"}</span>
@@ -9785,6 +10041,14 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         {(usd==null||php==null)&&<div style={{fontSize:11,marginTop:6,color:"#E89B8C"}}>{ratesErr?"Couldn't load live rates — tap refresh in Currency tab.":"Loading live rates…"}</div>}
         {delta!=null&&<div className="tnum" style={{fontSize:14,marginTop:6,color:delta>=0?"#6FC6DA":"#E89B8C"}}>{delta>=0?"▲":"▼"} {sar(Math.abs(delta))} since last snapshot</div>}
       </div>
+
+      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+        <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+      </div>
+      {!isCombined&&
+        <div style={{fontSize:11,color:P.faint,textAlign:"center",marginTop:-8,marginBottom:16}}>
+          Jointly-owned accounts, assets and liabilities appear only under Household.
+        </div>}
 
       <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
         <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Composition</h3>
@@ -9805,7 +10069,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
           silently the only one on the tab with no entrance animation. */}
       <div className="fade-up-2" style={{...neu(16),padding:16,marginBottom:16}}>
         <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Net worth trend</h3>
-        <HistoryRangeChart snapshots={snapshots} profile="household" field="net"
+        <HistoryRangeChart snapshots={snapshots} profile={profile} field="net"
           money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
           emptyText="Trend appears once 2+ days of history have been captured (captured automatically once a day)."/>
       </div>
@@ -9817,7 +10081,7 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
         <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
           Assets stack above the line, debt below it. Net worth is what's left after the two cancel out.
         </p>
-        <CompositionRangeChart snapshots={snapshots} profile="household"
+        <CompositionRangeChart snapshots={snapshots} profile={profile}
           series={[
             {key:"banks",label:"Bank accounts",color:SEG[0]},
             {key:"investments",label:"Investments",color:SEG[3]},
@@ -9825,15 +10089,15 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
             {key:"liabilities",label:"Liabilities",color:P.red,negate:true},
           ]}
           money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
-          emptyText="Appears once 2+ days of history have been captured (captured automatically once a day)."/>
+          emptyText={profile==="household"?"Appears once 2+ days of history have been captured (captured automatically once a day).":`Appears once 2+ days of history have been captured for ${owners[profile]||"this profile"} (captured automatically once a day).`}/>
       </div>
 
       <div className="fade-up-2" style={{...neu(16),overflow:"hidden",marginBottom:16}}>
         <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub}}>Assets</div>
-        {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
+        {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
         <button onClick={()=>addAsset("asset")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}><I.Plus size={14}/>Add asset</button>
         <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub,borderTop:"1px solid rgba(0,0,0,.06)"}}>Liabilities</div>
-        {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset}/>)}
+        {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
         <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.wine,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
       </div>
 
@@ -9843,7 +10107,12 @@ function NetWorthView({netWorth,banksSar,invSar,assetSar,liabSar,sarRate,convert
           granularity toggle went with it — it only ever switched that chart's
           x-axis. The per-month values it conveyed are all still here as chips. */}
       <div className="fade-up-4" style={{...neu(16),padding:16}}>
-        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Monthly snapshot log</h3>
+        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 4px",color:P.neuSub}}>Monthly snapshot log</h3>
+        {/* This log has only ever been household-wide; say so rather than
+            letting it read as the selected person's history. */}
+        <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
+          {isCombined?"Whole-household totals, one row per month.":"Whole-household totals — this log is not split by person."}
+        </p>
         {sorted.length===0&&
           <p style={{fontSize:13,color:P.neuSub}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginTop:12}}>

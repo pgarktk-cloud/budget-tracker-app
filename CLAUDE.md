@@ -31,14 +31,34 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   `defaultData()`, or existing users' saved data will be missing it.
 - Owners: the two named people are stored under fixed keys `"me"` / `"wife"`
   (labels customizable via `data.owners.me`/`.wife` — in this user's data
-  they're "Jastine"/"Charlene"). `"household"` is a separate concept:
-  - For **Home-tab aggregation only** (banks, goals, budget/expenses):
-    `"household"` is a *view-only* pseudo-profile with no literal value
-    stored anywhere — it just means "me + wife combined."
-  - For **investment ownership** specifically: `"household"` **is** a real
-    stored `owner` value (a joint account), introduced in the Investment
-    module Phase 1. Don't assume these two behave the same way — see
-    `docs/decisions.md`.
+  they're "Jastine"/"Charlene"). **`"household"` is never a third person.**
+  It carries two related meanings, and both are load-bearing:
+  - As a **profile** (Home, Banks, Investments, Net Worth) it is a view-only
+    pseudo-profile meaning "everything combined", with no literal value
+    stored anywhere.
+  - As a stored **`owner`** on a record — investments (Phase 1), banks and
+    assets/liabilities (2026-08-01) — it means *jointly owned*. Such a record
+    appears **only under the combined view**, never in either person's, so
+    **me + wife ≠ household** whenever anything is joint. That's the chosen
+    semantics; `ownertest.cjs` asserts the inequality on purpose, so don't
+    "fix" it into adding up.
+  - The two `owner` fallbacks differ and must not be unified: an
+    owner-less **investment** reads as `"me"` (predates joint accounts, always
+    personal), an owner-less **asset/liability** reads as `"household"`
+    (`migrate()` defaults them there rather than guessing a person). The one
+    predicate for assets is module-scope `ownerMatch(rec,profile)`.
+  - Per-profile net worth goes through **one** helper, `netWorthParts(p)` in
+    `App()`; `assetSar`/`liabSar`/`netWorth` are just its household case, and
+    the daily snapshot effect must use it for **all five** fields. Writing a
+    second per-owner reduce is how assets/liabilities ended up counted on
+    every profile's row. See `docs/decisions.md`.
+  - The **viewing** profile lives in `localStorage` under `VIEW_PROFILE_KEY`,
+    never in `data` — it's a per-device preference, and syncing it would dirty
+    the doc and change what the other device is looking at. `data.settings` is
+    for toggles that change *calculation*, not *what you're looking at*.
+    Budget/Expenses keep their own 2-way `OwnerToggle` (a plan belongs to a
+    person) and drive the same value; `budgetOwner` never becomes
+    `"household"`, which is what makes the fallback work without extra state.
 - Soft-delete pattern: most record arrays use `deletedAt` timestamps rather
   than removing entries outright (for undo support); always filter
   `!x.deletedAt` when reading, never `splice`/filter-out on delete.
@@ -274,7 +294,8 @@ Any new background-derived data should be stamped `auto:true` and added to
   reconciler), `budgettest.cjs` (carry-forward chain + copy-on-write + plan
   clone + category moves), `banktest.cjs` (bank interest accrual),
   `periodtest.cjs` (pay-period boundaries), `txordertest.cjs` (transaction
-  display order + entry-stamp backfill).
+  display order + entry-stamp backfill), `ownertest.cjs` (per-profile
+  ownership + `netWorthParts`), `suggesttest.cjs` (transaction-name ranking).
   **Commit new ones** — `synctest.cjs`/`baltest.cjs`
   were written in-session, never committed, and are gone.
   - Three traps: `assert.deepStrictEqual` compares prototypes and therefore

@@ -1,6 +1,100 @@
 # Current Status
 
-_Last updated: 2026-07-31 (move CATEGORIES between groups — corrects v1.11.0)_
+_Last updated: 2026-08-01 (per-profile asset tabs, Expenses hero, live name suggestions)_
+
+## Profile separation across the asset tabs, plus four UX fixes (2026-08-01)
+
+Build `2026.08.01.0001` / v1.17.0. Five requests, three of which turned out to
+be masking real defects rather than being cosmetic.
+
+### 1. Remembered transaction names now filter as you type
+
+The chip row in the add-transaction modal was gated on `!form.name`, so it
+vanished on the first keystroke and left you with a native `<datalist>` —
+unreliable on mobile, which is where this is used. There is now **one**
+mechanism: module-scope `rankNameSuggestions(names,query,limit=6)` does a
+case-insensitive substring match with prefix hits ranked above mid-string ones
+and recency breaking ties, and the chips re-render on every keystroke. Typing
+`amazon` offers Amazon, Amazon Now, Amazon Prime, then Buy Amazon gift card.
+
+Tapping a chip fills the **name only** — deliberately, even though
+`recentNames` also captures the category. `onMouseDown` preventDefault on each
+chip, or the input's blur eats the tap before the click lands, and the list
+renders in flow because the modal scrolls. Covered by `suggesttest.cjs`.
+
+### 2. "Salary not yet spent" was subtracting money that came IN
+
+The old standalone card computed `plan income − every logged row`, and
+`isExtraFunds` rows are ordinary expenses with a flag — so cash a spouse sent
+for groceries **lowered** your unspent salary. That is why the figure never
+made sense. It is now:
+
+    income + extra funds received − tracked spend − transfers out − goal contributions
+
+The card is gone. The figure is a tappable pill in the Expenses hero header
+that opens `UnaccountedSheet` (portalled), itemising those five lines.
+
+Two traps handled: the classification runs off the raw `viewMonthExpenses`,
+**not** off `totalSpent`, because `envelopes` drops zero-budget categories and
+the sheet would not have reconciled with its own headline; and goal
+contributions and untracked transfers both set `isTransfer`, so `catId` is the
+only thing that separates them.
+
+### 3. Banks / Investments / Net Worth are per-profile
+
+One **global** view profile (`VIEW_PROFILE_KEY` in localStorage, never in
+`data` — it is a per-device preference, and syncing it would push your current
+view to the other device) shared by Home, Banks, Investments and Net Worth,
+rendered through the existing `HomeProfileToggle`. Budget and Expenses keep
+their 2-way `OwnerToggle` and drive the same value; when the global profile is
+`household` they show whoever was picked last, since a plan belongs to a person.
+
+- **Assets and liabilities gained a real `owner`.** They had none, and
+  `ownerNetWorthSar` added the *whole* pile to *both* people. `migrate()`
+  defaults existing ones to `household`.
+- **One aggregator**, `netWorthParts(p)`, returns
+  `{banks,investments,assets,liabilities,net}`; `assetSar`/`liabSar`/`netWorth`
+  are just its household case. `ownerNetWorthSar` is a one-liner over it, and
+  the daily snapshot effect uses it for all five fields — it used to store the
+  household assets/liabilities figures on every profile's row, which made
+  per-person "What's driving it" wrong regardless of what the hero showed.
+- **Banks** gained a Joint bucket. A bank owned anything but `me`/`wife` was
+  invisible in both sections while still counting toward the grand total; it
+  now has a section, a header tile and an owner `<select>` in the settings
+  panel — without that last one the value was unreachable, so the fix would
+  have been dead code.
+- **Investments'** owner dropdown became the toggle; `passFilters` matches
+  literally, so joint holdings appear only under Household.
+- Trend and composition charts follow the profile instead of a hardcoded
+  `"household"`. Net Worth's "since last snapshot" delta is **hidden** off
+  Household, because monthly `history` is written household-only.
+
+Covered by `ownertest.cjs`.
+
+### 4. Budget donut removed
+
+It was decorative — no click, no filter, only a hover tooltip — and cost a
+whole card of height. Replaced with a full-width stacked proportion bar over
+the same legend, which now shows amounts as well as percentages.
+`PieChart`/`Pie`/`Cell` dropped from the Recharts destructure; the dependency
+stays for the other five charts.
+
+### 5. Expenses hero rebalanced
+
+The three-figure row with `marginLeft:auto` became: month plus the unaccounted
+pill, a `spent / budget … left` line, a 16px bar (was 10px), and the top four
+spending categories as mini-bars. The full envelope list still follows, so the
+hero is only the head of it.
+
+### Known gaps
+
+- Each person's Net Worth is banks + investments until assets and liabilities
+  are re-assigned away from Joint in Net Worth → Assets.
+- Me + Charlene will not equal Combined while anything is jointly owned. That
+  is the chosen semantics, not a rounding error.
+- Per-profile trend lines step on upgrade day; old snapshot rows were
+  deliberately not rewritten.
+
 
 ## Budget move feature corrected: categories → groups (2026-07-31)
 

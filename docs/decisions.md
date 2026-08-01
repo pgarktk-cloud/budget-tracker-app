@@ -1,5 +1,99 @@
 # Architectural & Technical Decisions
 
+## "Household" is a view, not a person — and the app half-believed both (2026-08-01)
+
+The request was "Net worth and investment right now is combined, should be
+separated." The grilling turned up that the codebase held two incompatible
+meanings of `household` at once:
+
+- For Home-tab aggregation it was a **view-only pseudo-profile**: me + wife,
+  with no literal value stored anywhere.
+- For investment ownership it was a **real stored `owner`**: a joint account.
+
+Both were documented in `CLAUDE.md`, and both are still true. The mistake would
+have been to build a Me/Charlene/Combined toggle on top of the second meaning
+without noticing, which silently hides joint accounts from every view. The user
+resolved it: **household is not a third person**, it is the combined view, and
+a jointly-owned record shows up there and nowhere else.
+
+The accepted consequence is that **Me + Charlene ≠ Combined** whenever anything
+is joint. That was chosen over the alternative (joint money appearing in both
+people's views, so the singles double-count) because "my view shows what is
+mine" is the property worth keeping. `ownertest.cjs` asserts the inequality
+deliberately, so a future "bug fix" that makes them add up gets caught.
+
+### Why assets default to Joint
+
+Assets and liabilities never had an owner. `ownerNetWorthSar` added the full
+`assetSar` and `liabSar` to *every* profile, so per-person net worth was
+inflated by the whole household's car and loans. Adding the field forces a
+default for existing data, and there were only bad options:
+
+- default to `me` — silently hands one person the other's liabilities
+- ask on upgrade — a migration prompt for something the user can fix inline
+- default to `household` — honest about not knowing, but each person's net
+  worth visibly drops to banks + investments until they reassign
+
+We took the third. The app never asked who owned the car, so it should not
+pretend to know. Existing snapshot rows were **not** rewritten to match: they
+recorded what the app actually displayed at the time, and smoothing the trend
+line would be falsifying history to hide a real correction. The one-day step in
+the Me/Charlene trend on upgrade day is expected.
+
+### The profile switch is localStorage, not `data`
+
+It would have been easy to put the selected profile in `data.settings` — it is
+a user-facing toggle, which is what that object is for. But `data` syncs, and
+`fingerprint` covers it, so choosing "Charlene" on the phone would both dirty
+the document and change what the laptop was looking at. `data.settings` is for
+toggles that change *calculation* behaviour; this changes *what you are
+looking at*, which is per-device, like theme and `PROFILE_KEY`.
+
+## The unaccounted figure was arithmetically fine and semantically wrong (2026-08-01)
+
+"Remove salary not yet spent or transferred. Doesn't make sense also the math
+where it's getting the figure."
+
+The maths was `plan income − sum(every logged row)`, which is defensible on its
+face. The defect was one row type: `addExtraFunds` writes an **ordinary
+expense** with `isExtraFunds:true` — money coming *in*, earmarked for a
+category. `spentMap` excludes those rows; `totalLoggedAllCats` did not. So a
+spouse sending ₱1,000 for groceries raised that category's budget *and* lowered
+your unspent salary by the same ₱1,000.
+
+Worth recording because the flag-on-an-expense representation is what made it
+invisible: every consumer has to decide whether an extra-funds row is income or
+spending, and there was no single place enforcing that. Anything new that
+reduces over `expenses` must classify `isExtraFunds` explicitly.
+
+The second lesson is about *where* the explanation lives. The user offered
+"remove it, or make it clickable with a modal showing the computation." Given
+the figure was wrong, deleting it would have buried the bug rather than fixing
+it. Building the explanation sheet is what forced the classification to be
+written down as four named buckets that provably sum to the total — the sheet
+could not be made to reconcile against the old maths, which is how the sign
+error surfaced. **A number that resists being explained is usually wrong.**
+
+Note the sheet computes from raw `viewMonthExpenses`, not from `totalSpent`:
+`envelopes` drops categories whose effective amount is ≤ 0, so spending against
+a zero-budget tracked category is real but absent from `totalSpent`. Deriving
+the breakdown from the display figure would have made the sheet disagree with
+its own headline.
+
+## A decorative chart is not free (2026-08-01)
+
+The Budget donut had no `onClick`, no `activeIndex`, no `<Legend>`, no selected
+state — a `<Tooltip>` and nothing else. It occupied a 190px card next to the
+legend that carried the actual numbers, and it was the only use of `PieChart`,
+`Pie` and `Cell` in the file.
+
+Replacing it with a stacked proportion bar kept the one thing the donut
+genuinely conveyed (relative size, at a glance) while returning the space and
+letting the legend go full width — which made room to show amounts alongside
+the percentages, information the donut's tooltip only gave one slice at a time.
+The Recharts dependency stays regardless; five other charts use it.
+
+
 ## The move feature was built at the wrong level, twice over (2026-07-31)
 
 The user asked for a way to move things between the fixed sections of their
