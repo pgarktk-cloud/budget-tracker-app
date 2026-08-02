@@ -415,8 +415,48 @@ roughly in order of how much it actually matters:
    weak. Only worth revisiting if the app ever gains a build step — at which
    point dropping Babel and adding a real CSP become the same piece of work.
 
+## Installments (DONE, 2026-08-02)
+
+Shipped in v1.19.0 / `2026.08.02.0001`. Tabby / Tamara / Amazon / card
+pay-in-N plans, a derived Budget group, and linked ledger transfers. See
+`current-status.md` for what's in it and `decisions.md` for why.
+
+### Deliberately left out of this release
+Each of these is a separate piece of work, not an oversight:
+- Partial-pay allocation across several future payments (today an odd payment is
+  stored as-is and the schedule is edited by hand if the provider changed it).
+- Weekly / bi-weekly schedules; long-term loan amortisation; interest, penalties
+  and late fees.
+- Multi-currency. The record carries `currency`, but expense rows have no
+  per-row currency, so this needs an FX-rate-at-payment-time rule and a stored
+  rate first. Do that before offering the picker, not after.
+- Automatic bank-statement import, provider APIs, remote provider logos,
+  notifications.
+- A Home dashboard card and any new charts.
+- `"household"`-owned plans — see the bottom of this file.
+
+### Follow-ups worth considering later
+- **Re-link.** Unlinking a transaction from its installment is one-way; there is
+  no flow to attach an existing transaction to a payment. Fine for the escape
+  hatch it is, but a mis-tap is only undone by deleting and re-recording.
+- **`installmentPayments` merges without a per-record conflict UI.** It's in
+  `CONFLICT_COLLECTIONS` so it merges and counts as pending, but it's hidden
+  from Recently Deleted by `HIDE_FROM_RECENTLY_DELETED`. If two devices ever
+  edit the same schedule concurrently, the conflict modal will describe it in
+  raw `#seq / dueDate / amount` terms.
+- **Category filter.** An installment transaction's `catId` is the installment
+  id, so it never matches the Expenses category filter. If installments become
+  common, that filter may want an "Installments" option.
+- **UnaccountedSheet.** When the plan-vs-actual annotation is built, the planned
+  side of "Transfers out" must include `derivedInstallmentRowsFor(...)` for the
+  viewed bucket. It must keep reading the ledger for the actual side — see
+  decisions.md for why reading payment status too would double count.
+
 ## Explicitly not recommended without a separate design conversation
 - Extending banks/goals to support a literal `"household"` owner (currently
   Household is a Home-only aggregate for those — see decisions.md). Doing this
   silently would change what Home's existing Household toggle means for those
   cards.
+- Household-owned **installments**, for the same reason plus a sharper one: a
+  plan, its derived Budget row and its ledger transfer must all carry the same
+  owner, and a combined list would have no editable meaning.

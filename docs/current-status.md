@@ -1,6 +1,102 @@
 # Current Status
 
-_Last updated: 2026-08-01 (secrets out of the public repo; CDN scripts pinned)_
+_Last updated: 2026-08-02 (Installments module)_
+
+## Installments module (2026-08-02)
+
+Build `2026.08.02.0001` / v1.19.0. A new tab for short-term purchase
+installments — Tabby, Tamara, Amazon, credit-card pay-in-3/4. Deliberately not a
+loan system: no interest, no fees, no amortisation, no weekly schedules.
+
+**Where it lives.** `More → Installments` (`MORE_TABS`, `TAB_META` icon
+`I.Layers`). The tab renders its own portalled FAB; the global "quick add
+transaction" FAB steps aside there, as it already does on Home.
+
+**Data.** Two new flat id-keyed collections:
+
+- `data.installments` — `{id, owner:"me"|"wife", name, provider, customProviderName,
+  purchaseDate, originalAmount, currency, includeInBudget, notes, status, closedAt?,
+  payoffExpenseId?, createdAt, updatedAt, deletedAt?}`
+- `data.installmentPayments` — `{id, installmentId, owner, sequence, dueDate,
+  scheduledAmount, actualAmount?, paidDate?, status, expenseId?, cancelledBy?,
+  payoffExpenseId?, cancelledAt?, deletedWith?, createdAt, updatedAt, deletedAt?}`
+
+Both are wired into `defaultData`, `migrate`, `fingerprint`, `tryAutoMergeAll`,
+`CONFLICT_COLLECTIONS`, `countPendingChanges` and `purgeOldTombstones`. Backup
+export/import needed no change (it is whole-document).
+
+**Derived, never stored.** Remaining balance, "X of Y paid", next payment,
+expected completion and *overdue* are all computed on read by module-scope pure
+helpers (`installmentRemainingBalance`, `installmentProgress`,
+`installmentNextPayment`, `installmentExpectedCompletion`,
+`installmentPaymentDerivedStatus`, `installmentDerivedStatus`,
+`installmentSummary`). Nothing writes a running total.
+
+**Every mutation is one `setData`.** Each is a pure `(data, args) => data`
+function at module scope (`applyInstallmentCreate/Update/Payment/Payoff/Cancel/
+Delete/Restore/Unlink`, `applyInstallmentExpenseEdit/Delete/Restore`) and the
+App-level mutator is a one-liner over it plus `pushImportant()`. A plan and its
+schedule, or a payment and its ledger row, can never be persisted half-written.
+
+**Budget.** When an owner has payments due in the viewed period with
+`includeInBudget`, a visually distinct **derived** "Installments" group renders
+after the manual groups: one read-only row per payment due, counting toward
+`Allocated` and taking a segment in the "Where income goes" bar. Rows can't be
+renamed, re-priced, moved or deleted from Budget; tapping one opens the plan.
+The group is not in `monthPlan.groups`, which is what keeps it automatically
+invisible to the move-categories sheet and to `investTarget.groupNames`.
+**Viewing a month never materialises a plan** — verified in the browser
+(`monthlyPlans` stayed empty after paging) and asserted in the runner.
+
+**Expenses.** Recording a payment creates exactly one `isTransfer:true` expense
+carrying `installmentId` + `installmentPaymentId`, `catId` = the installment id
+(the same shape a goal contribution uses). It renders with an `INSTALLMENT`
+badge (`PAYOFF` for an early payoff) beside the existing `TRANSFER` pill.
+Editing one opens a locked variant of the edit sheet — category and owner fixed,
+amount/date editable, with a warned "Unlink from installment" escape hatch — and
+routes through `applyInstallmentExpenseEdit` so the payment's `actualAmount` /
+`paidDate` follow in the same write. Deleting reopens the payment; restoring
+re-settles it; both directions are tombstone-aware.
+
+`unaccountedParts` needed no arithmetic change: installment rows are
+`isTransfer` with a non-goal `catId`, so they land in "Transfers out", which is
+the intended classification. See `decisions.md` for how the pending
+plan-vs-actual annotation should read the planned side.
+
+**UI.** Four portalled sheets (`useScrollLock` + `useDialogA11y`, sized in
+`dvh`, every numeric input a `NumField`): Add/Edit with a generated but fully
+editable schedule and a live Original/Scheduled/Difference strip that blocks
+Save outside `INSTALLMENT_ROUND_TOL`; Record Payment; Pay Off Early (previews
+the remaining balance, how many payments close, and which future periods lose
+their Budget rows); Schedule. Cards are grouped into Active / Paid Off / Paid
+Off Early / Cancelled collapsible sections with Active dominant. Two new icons
+(`I.Package`, `I.Card`) — no remote logos, no provider branding.
+
+**Verified.** `installmenttest.cjs` (31 assertions, committed) plus all nine
+existing runners green and `parsecheck.cjs` clean. Browser: desktop and a
+390×844 frame, light and dark, full create → derived Budget row → record payment
+→ edit linked transaction → pay off early → delete → Recently Deleted → restore
+flow, with no app console errors.
+
+### Known gaps
+
+- **Monthly frequency only.** Weekly / bi-weekly schedules are out of scope.
+- **Single currency.** The record carries `currency`, but the picker offers only
+  `data.currency` and no conversion path exists — expense rows have no per-row
+  currency, so a foreign-currency plan needs an FX-at-payment rule first.
+- **No partial-pay allocation.** A payment that differs from its scheduled
+  amount is stored as-is and the rest of the schedule is left alone; correcting
+  it means editing the schedule by hand.
+- **No Home card, no charts, no notifications, no bank-statement import** — all
+  deliberately out of scope for this release.
+- Editing the schedule cannot change a **paid** row (by design: a recorded
+  payment is history), so fixing a mistyped past amount means editing the
+  transaction in Expenses instead.
+- An installment payment's `catId` is the installment id, so it will not appear
+  under any budget category filter in the Expenses log — it shows in the
+  all-transactions list and in "Transfers out" only.
+
+_Previously updated: 2026-08-01 (secrets out of the public repo; CDN scripts pinned)_
 
 ## CDN scripts pinned with SRI (2026-08-01)
 

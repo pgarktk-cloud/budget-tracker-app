@@ -177,6 +177,48 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   debits an account must call `settledBankPatch()` first** — folding in the
   accrual and re-anchoring — or the elapsed period's interest gets applied to
   money that arrived today. Interest tiers are **whole-balance, not marginal**.
+- **Installments: the schedule plans, Budget displays, Expenses records.** Three
+  collections own three different things and nothing owns two —
+  `data.installments` (the plan), `data.installmentPayments` (planned timing and
+  amounts), `data.expenses` (money that actually moved). Load-bearing rules:
+  - **Budget stores no copy.** It renders a *derived* group from
+    `derivedInstallmentRowsFor()`, a pure module-scope function, and the path
+    from there to the rendered rows must never touch `editPlanForMonth` —
+    viewing a month must not materialise a plan. Rows use synthetic ids
+    (`installmentRowId(paymentId)` → `inst:<id>`), never a plan category id: a
+    cloned plan remints those every month and the link would silently break.
+  - **Nothing derivable is stored.** No `remainingBalance`, `paymentsRemaining`
+    or `progress`. `"overdue"` in particular is a function of `(dueDate, today)`
+    and is *never written* — a stored flag rots while a device is closed. The
+    three stored payment states are only what a user action can cause:
+    `upcoming` / `paid` / `cancelled`.
+  - **Every mutation is a pure `(d,args)=>d` at module scope** (`apply*`), and
+    the App mutator is one line over it. A plan and its schedule, or a payment
+    and its ledger row, must land in ONE `setData` or a half-written plan can be
+    synced. This is also what makes `installmenttest.cjs` able to test the
+    shipped coupling instead of a copy.
+  - **One real payment ⇒ exactly one expense row**, `isTransfer:true` with
+    `catId` = the installment id and `installmentId`/`installmentPaymentId`
+    links — deliberately the same shape a goal contribution uses, which is why
+    `unaccountedParts` needed no change (they land in "Transfers out", never in
+    `spentMap`). Only a row carrying those exact links may update a payment;
+    never match by name or amount.
+  - **Early payoff is ONE transaction** (`installmentPayoff:true`, no
+    `installmentPaymentId`), not one per cancelled payment. Cancelled rows keep
+    their original `dueDate`/`scheduledAmount` — that single choice is what makes
+    "removes future planning, preserves history" one rule instead of two.
+    `payoffExpenseId` on each is what lets deleting the payoff reopen exactly
+    the set it closed.
+  - **`household` is never an installment owner** (unlike investments/assets),
+    and a linked chain's owner is fixed — moving one half of it is the
+    corruption the module exists to prevent.
+  - Deleting a plan tombstones it and its **unpaid** payments (stamped
+    `deletedWith` so restore returns that exact batch); paid payments and every
+    expense row are left alone. `installmentPayments` is in
+    `CONFLICT_COLLECTIONS` but in `HIDE_FROM_RECENTLY_DELETED`.
+  - `fingerprint()` emits the two collections **only when non-empty**, so
+    `migrate()` adding them is byte-identical for an existing document and
+    doesn't cost a KV write per device on first open.
 - `data.settings` is a small object for user-facing toggles that change
   *calculation* behavior (currently just `includeMp2EstimateInNetWorth`) —
   put future calculation-affecting toggles here, not as ad hoc top-level
@@ -248,6 +290,12 @@ added without landing in the slide-direction tracker. Labels/icons come from
 the single `TAB_META` registry (`short` is bar-only). z-index ladder:
 bottom nav 30 → FAB 35 → sheets/modals 40 → undo toast 80.
 
+A tab that renders its **own** `.fab-btn` (Home, Installments) must both suppress
+the global one in `App` *and* wrap its button in `<Portal>` — `.fab-btn` is
+`position:fixed`, and the `TabPane` containing-block trap below applies to it
+exactly as it does to a sheet, parking it inside the scrollable tab pane instead
+of the viewport.
+
 ## `position:sticky` and `overflow`
 
 `overflow-x:hidden` belongs on `<html>` ONLY. On `<body>` it computes to
@@ -307,9 +355,12 @@ Any new background-derived data should be stamped `auto:true` and added to
   clone + category moves), `banktest.cjs` (bank interest accrual),
   `periodtest.cjs` (pay-period boundaries), `txordertest.cjs` (transaction
   display order + entry-stamp backfill), `ownertest.cjs` (per-profile
-  ownership + `netWorthParts`), `suggesttest.cjs` (transaction-name ranking).
-  **Commit new ones** — `synctest.cjs`/`baltest.cjs`
-  were written in-session, never committed, and are gone.
+  ownership + `netWorthParts`), `suggesttest.cjs` (transaction-name ranking),
+  `synctest.cjs` (per-setting merge resolution), `installmenttest.cjs`
+  (installment schedule maths, derived Budget rows, payment/payoff/cancel/delete
+  coupling, migration byte-equivalence).
+  **Commit new ones** — `baltest.cjs`
+  was written in-session, never committed, and is gone.
   - Three traps: `assert.deepStrictEqual` compares prototypes and therefore
     fails on anything built inside the vm — use `deepEqual`. Slice markers
     are plain `indexOf` on source text, so they break silently when the code

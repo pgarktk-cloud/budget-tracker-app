@@ -1,5 +1,121 @@
 # Architectural & Technical Decisions
 
+## Installments: three owners of three different things (2026-08-02)
+
+The ask was a module for short-term purchase installments — Tabby, Tamara,
+Amazon, credit-card pay-in-3/4 — explicitly *not* a loan or debt-management
+system. The whole design turns on one question: who owns the fact that
+SAR 249.75 is due on 15 August?
+
+Three candidates already existed, and picking wrong in either direction is what
+makes this kind of feature rot:
+
+- **Budget owns it.** Rejected. It would mean writing the payment into the
+  stored monthly plan, and `clonePlanForMonth` remints every category id each
+  month, so the link from a payment back to its plan row would silently break
+  the first time a month was materialised — the same trap that forced Savings &
+  Investing to match categories by *name* (see "Savings & Investing matched by
+  name"). Worse, deriving the row on view would have to go through
+  `editPlanForMonth`, so merely paging to next month would materialise a custom
+  plan for it.
+- **Expenses owns it.** Rejected. The ledger is a record of money that actually
+  moved. A payment that hasn't happened yet is a plan, and putting it there
+  would either need a "pending" transaction state — which the app has
+  deliberately never had — or would inflate every actuals figure in the app.
+- **A third collection owns it.** Chosen.
+
+So: **`data.installmentPayments` owns planned timing and amounts. Budget renders
+a derived group and stores nothing. `data.expenses` owns actual cash movement.**
+Budget's group comes from `derivedInstallmentRowsFor(...)`, a pure function, and
+the rows carry synthetic ids (`inst:<paymentId>`) that can never be mistaken for
+a plan category — a stray write against one fails to find a target rather than
+corrupting a budget line. Nothing in that path calls a plan setter, and
+`installmenttest.cjs` asserts that at source level so a future edit can't
+quietly reintroduce it.
+
+### Nothing is stored that can be derived
+
+No `remainingBalance`, no `paymentsRemaining`, no `progress`. All three are
+functions of the live payment records, so they cannot drift after an edit, a
+deletion, a sync merge or an early payoff — the same rule bank interest
+(`bankValuation`) and the Bills Reserve (`computeBillsReserve`) already follow.
+
+`"overdue"` is the sharpest case: it is derived from `(dueDate, today)` and
+**never written**. A stored overdue flag would need something to write it, which
+means a schedule silently rots while a device is closed, and two devices
+disagree about a plan neither of them touched. The three stored payment states
+are only the ones a user action can cause: `upcoming`, `paid`, `cancelled`.
+
+### Two flat collections, not payments nested in the plan
+
+`mergeArrayByIdWithChild` exists and would have fit the shape, but both sides
+here are edited independently — one device records a payment while the other
+edits the plan's name — and each payment links to its own expense row. Flat
+id-keyed collections merge per record with `mergeArrayById`, which is what that
+usage actually wants. `owner` is duplicated onto the payment on purpose so every
+read filter is a direct field test and a payment is never resolvable only
+through a tombstoned parent.
+
+### Early payoff: one transaction, and cancelled rows keep their history
+
+Represented as **one** expense row carrying `installmentId` + `installmentPayoff:
+true` (no `installmentPaymentId` — it settles no single payment), plus the
+unpaid rows marked `status:"cancelled"`, `cancelledBy:"payoff"` and
+`payoffExpenseId:<that row>`. The alternative — one ledger entry per cancelled
+payment — would triple-count money that moved once.
+
+The cancelled rows **keep their original `dueDate` and `scheduledAmount`**. That
+is what makes "early payoff removes future planning but preserves history" a
+single rule rather than two: the rows drop out of `derivedInstallmentRowsFor`
+because they're cancelled, so future Budget periods lose them, while the
+schedule sheet can still show what the deal originally was. Storing
+`payoffExpenseId` on each one is what lets deleting the payoff transaction
+reopen *exactly* the set it closed instead of guessing from status.
+
+### Installment payments are Transfers out, not spend
+
+The ledger row is an ordinary `isTransfer:true` expense whose `catId` is the
+installment id — deliberately the same shape a goal contribution already uses
+(`catId` = goal id + `isTransfer`). That means `unaccountedParts` needed **no
+arithmetic change**: the row falls through to `untrackedTransfers`, which is
+correct, and `spentMap` ignores transfers so nothing is double counted.
+
+For the pending UnaccountedSheet plan-vs-actual work: the *planned* figure for
+the Transfers-out line is `derivedInstallmentRowsFor(...)` summed for the viewed
+bucket, added to the untracked-envelope allocation. The sheet must keep counting
+the **ledger** and must never read payment `status` — reading both is exactly
+how the same payment gets counted twice.
+
+### Deleting a plan must not delete money that moved
+
+`applyInstallmentDelete` tombstones the plan and its **unpaid** payments
+(stamped `deletedWith` so restore puts back exactly that batch), and leaves paid
+payments and every expense row alone. The confirmation says so in words. Cancel
+and Delete are separate actions because they answer different questions: the
+arrangement fell through, versus tidying up a record.
+
+`installmentPayments` is in `CONFLICT_COLLECTIONS` (it merges, it counts as
+pending, a conflict should describe it) but in `HIDE_FROM_RECENTLY_DELETED` — a
+payment tombstone is a side effect of deleting its plan, and listing a dozen of
+them per plan would bury the entries a person deleted on purpose.
+
+### The upgrade is byte-identical for anyone with no installments
+
+`migrate()` creates both arrays on every existing document, which would normally
+change `fingerprint()` and make every device look dirty on first open — one
+Cloudflare KV write per device for data nobody touched, the same class of bug
+the `userFingerprint()` split was introduced to fix. So `fingerprint()` emits
+the two keys **only when non-empty** (`JSON.stringify` drops `undefined`), and
+`installmenttest.cjs` asserts the byte equality.
+
+### Currency is stored but pinned to `data.currency`
+
+Expense rows have no per-row currency; every amount in the ledger is in
+`data.currency`. A foreign-currency installment would therefore need an
+FX-rate-at-payment-time rule and a stored rate, which is a separate design.
+The field exists on the record so adding that later needs no migration, but the
+picker offers one value and no conversion path is built.
+
 ## "Household" is a view, not a person — and the app half-believed both (2026-08-01)
 
 The request was "Net worth and investment right now is combined, should be

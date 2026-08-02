@@ -596,7 +596,7 @@ function useDialogA11y(onClose,active=true){
    CONFLICT_COLLECTIONS for no user-visible gain. Note this does make the
    Forecast view unreachable from the UI; that was the explicit ask. */
 const PRIMARY_TABS=["home","budget","expenses","banks","investments"];
-const MORE_TABS=["networth","goals","bills","household","currency"];
+const MORE_TABS=["networth","goals","installments","bills","household","currency"];
 const HIDDEN_TABS=["targets"];
 /* Tab direction tracker so we can slide left or right.
    Every tab must appear here, including "home" — it was missing, so
@@ -782,6 +782,11 @@ const I={
   Receipt:Ic([<polyline key="a" points="6 2 3 6 3 22 21 22 21 6 18 2"/>,<rect key="b" x="6" y="2" width="12" height="6"/>,<line key="c" x1="8" y1="13" x2="16" y2="13"/>,<line key="d" x1="8" y1="17" x2="16" y2="17"/>]),
   Home:Ic([<path key="a" d="M3 9.5 12 3l9 6.5"/>,<path key="b" d="M5 10v10h14V10"/>,<path key="c" d="M9 20v-6h6v6"/>]),
   MoreHorizontal:Ic([<circle key="a" cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/>,<circle key="b" cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>,<circle key="c" cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/>]),
+  /* Added for Installments provider icons — nothing in the set read as a
+     parcel or a payment card, and provider logos are deliberately not used
+     (no remote dependency, no scraped branding). */
+  Package:Ic([<path key="a" d="M21 8.5 12 3.5 3 8.5v7L12 20.5l9-5z"/>,<path key="b" d="m3 8.5 9 5 9-5"/>,<path key="c" d="M12 13.5v7"/>,<path key="d" d="m7.5 6 9 5"/>]),
+  Card:Ic([<rect key="a" x="2" y="5" width="20" height="14" rx="2"/>,<line key="b" x1="2" y1="10" x2="22" y2="10"/>,<line key="c" x1="6" y1="15" x2="10" y2="15"/>]),
 };
 
 /* ── Goal-type icons (minimalist line icons) ── */
@@ -1359,6 +1364,471 @@ function dayLabel(dateStr){
   return d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
 }
 
+/* ── INSTALLMENTS ──────────────────────────────────────────────────────────
+   Short-term purchase installments (Tabby, Tamara, Amazon, card pay-in-3/4).
+   Deliberately NOT a loan system: no interest, no fees, no amortisation.
+
+   Three collections own three different things and nothing owns two:
+     data.installments        — the plan (what was bought, from whom, by whom)
+     data.installmentPayments — the SCHEDULE: planned timing and amounts
+     data.expenses            — the LEDGER: money that actually moved
+   Budget owns none of them. It renders a *derived* group from the schedule
+   (derivedInstallmentRowsFor) and stores no copy, because a plan category id
+   is reminted every time a month's plan is cloned and would silently stop
+   matching — the same trap that made Savings & Investing match by name.
+
+   Nothing below stores a running total. Remaining balance, progress, "X of Y
+   paid", next payment and overdue are ALL derived on read, so they cannot
+   drift after an edit, a deletion, a sync merge or an early payoff. In
+   particular "overdue" is never written: it is a function of (dueDate, today),
+   so a schedule can't rot while a device is offline. The three stored payment
+   states are only the ones a user action can cause.
+
+   All of it is module scope and pure so installmenttest.cjs runs the shipped
+   code rather than a copy. ─────────────────────────────────────────────────── */
+
+/* Half a halala. Providers split totals unevenly (249.75 / 249.75 / 249.74),
+   so the schedule editor compares against a tolerance, never for equality. */
+const INSTALLMENT_ROUND_TOL=0.005;
+/* Synthetic ids for the derived Budget group. Prefixed so they can never
+   collide with a real plan group/category id, and so a stray write against one
+   fails to find a target instead of corrupting a category. */
+const INSTALLMENT_GROUP_ID="__installments__";
+function installmentRowId(paymentId){return"inst:"+paymentId;}
+
+/* Provider registry. `iconKey` names an entry in `I` — no remote logos, no
+   scraped branding. "other" carries a free-text customProviderName. */
+const INSTALLMENT_PROVIDERS=[
+  {key:"tabby",  label:"Tabby",       iconKey:"Layers",  color:"#5BC0A8"},
+  {key:"tamara", label:"Tamara",      iconKey:"Layers",  color:"#C98BB9"},
+  {key:"amazon", label:"Amazon",      iconKey:"Package", color:"#E0913A"},
+  {key:"card",   label:"Credit card", iconKey:"Card",    color:"#6E8FD0"},
+  {key:"other",  label:"Other",       iconKey:"Receipt", color:"#8C93A8"},
+];
+function installmentProvider(key){
+  return INSTALLMENT_PROVIDERS.find(p=>p.key===key)||INSTALLMENT_PROVIDERS[INSTALLMENT_PROVIDERS.length-1];
+}
+function installmentProviderLabel(inst){
+  if(!inst)return"";
+  if(inst.provider==="other")return(inst.customProviderName||"").trim()||"Other";
+  return installmentProvider(inst.provider).label;
+}
+
+/* Step an ISO date n calendar months, clamping to the target month's last day.
+   Callers always step from the FIRST due date (addMonthsISO(first,i)), never
+   iteratively, so a 31st never drifts to the 28th and stays there. */
+function addMonthsISO(dateStr,n){
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr||""));
+  if(!m)return String(dateStr||"");
+  const total=Number(m[1])*12+(Number(m[2])-1)+(Number(n)||0);
+  const y=Math.floor(total/12),mo=total-y*12+1;
+  const day=Math.min(Number(m[3]),daysInCalMonth(y,mo));
+  return`${String(y).padStart(4,"0")}-${String(mo).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+}
+
+function roundTo(n,decimals){
+  const f=Math.pow(10,Number(decimals)||0);
+  return Math.round((Number(n)||0)*f)/f;
+}
+
+/* Propose an equal monthly split. The unavoidable rounding remainder goes into
+   the FINAL payment (computed as total − the others, not as another rounded
+   share), so the schedule sums to the original amount exactly rather than
+   landing a cent or two off and blocking Save. Monthly only this release. */
+function generateInstallmentSchedule({firstDueDate,count,total,decimals=2}){
+  const n=Math.max(0,Math.floor(Number(count)||0));
+  if(n===0)return[];
+  const amt=Number(total)||0;
+  const per=roundTo(amt/n,decimals);
+  const rows=[];
+  for(let i=0;i<n;i++){
+    rows.push({sequence:i+1,
+      dueDate:addMonthsISO(firstDueDate,i),
+      scheduledAmount:i===n-1?roundTo(amt-per*(n-1),decimals):per});
+  }
+  return rows;
+}
+
+function scheduleTotal(rows){
+  return(rows||[]).reduce((s,r)=>s+(Number(r&&r.scheduledAmount)||0),0);
+}
+/* Live validation for the schedule editor. `ok` is the Save gate — never an
+   equality test, because a user typing exact provider amounts must be able to
+   save a total that differs from the sum by float noise but not by money. */
+function scheduleDiff(total,rows){
+  const scheduledTotal=roundTo(scheduleTotal(rows),2);
+  const originalAmount=roundTo(Number(total)||0,2);
+  const difference=roundTo(scheduledTotal-originalAmount,2);
+  return{originalAmount,scheduledTotal,difference,ok:Math.abs(difference)<=INSTALLMENT_ROUND_TOL};
+}
+
+/* An installment belongs to exactly ONE real person. "household" is a view
+   across the app, never a third owner, and it is not an installment owner at
+   all — a combined list would have no editable meaning and would let a plan,
+   its budget row and its expense drift to different owners. */
+function installmentsForOwner(insts,owner){
+  if(owner!=="me"&&owner!=="wife")return[];
+  return(insts||[]).filter(x=>x&&!x.deletedAt&&(x.owner||"me")===owner);
+}
+function installmentPaymentsFor(payments,installmentId){
+  return(payments||[])
+    .filter(p=>p&&!p.deletedAt&&p.installmentId===installmentId)
+    .sort((a,b)=>(Number(a.sequence)||0)-(Number(b.sequence)||0));
+}
+
+/* Derived, never stored. "upcoming" past its due date reads as "overdue"
+   WITHOUT touching the record — the schedule underneath stays exactly as the
+   provider set it, so a late device or a paused app can't rewrite history. */
+function installmentPaymentDerivedStatus(p,todayStr){
+  if(!p)return"upcoming";
+  if(p.status==="paid")return"paid";
+  if(p.status==="cancelled")return"cancelled";
+  const today=todayStr||todayISO();
+  return(p.dueDate&&String(p.dueDate)<today)?"overdue":"upcoming";
+}
+const installmentPaymentIsOpen=p=>!!p&&p.status!=="paid"&&p.status!=="cancelled";
+
+function installmentRemainingBalance(inst,pays){
+  return(pays||[]).filter(installmentPaymentIsOpen)
+    .reduce((s,p)=>s+(Number(p.scheduledAmount)||0),0);
+}
+function installmentPaidTotal(pays){
+  return(pays||[]).filter(p=>p&&p.status==="paid")
+    .reduce((s,p)=>s+(p.actualAmount!=null?Number(p.actualAmount)||0:Number(p.scheduledAmount)||0),0);
+}
+/* Progress is payment state, not elapsed calendar months — a plan three months
+   old with nothing paid is 0%, and paying two at once moves it two steps.
+   Cancelled rows leave the denominator (they were part of the deal) but are
+   counted as closed so an early payoff reads as complete rather than stuck. */
+function installmentProgress(pays){
+  const live=(pays||[]).filter(p=>p&&!p.deletedAt);
+  const total=live.length;
+  const paid=live.filter(p=>p.status==="paid").length;
+  const closed=live.filter(p=>!installmentPaymentIsOpen(p)).length;
+  return{paid,total,closed,pct:total>0?Math.min(100,(closed/total)*100):0};
+}
+function installmentNextPayment(pays,todayStr){
+  const open=(pays||[]).filter(installmentPaymentIsOpen);
+  if(!open.length)return null;
+  return open.slice().sort((a,b)=>{
+    const d=String(a.dueDate||"").localeCompare(String(b.dueDate||""));
+    if(d!==0)return d;
+    return(Number(a.sequence)||0)-(Number(b.sequence)||0);
+  })[0];
+}
+/* When the plan finishes if nothing changes — the last still-open due date,
+   or the last date overall once everything is closed. */
+function installmentExpectedCompletion(pays){
+  const live=(pays||[]).filter(p=>p&&!p.deletedAt&&p.status!=="cancelled");
+  if(!live.length)return null;
+  const open=live.filter(installmentPaymentIsOpen);
+  const pool=open.length?open:live;
+  return pool.reduce((mx,p)=>(!mx||String(p.dueDate||"")>mx)?String(p.dueDate||""):mx,"")||null;
+}
+/* Stored status wins for the two states only a user action can produce;
+   otherwise "completed" the moment nothing is open. Kept derived so a plan
+   whose last payment is recorded reads as finished without a second write. */
+function installmentDerivedStatus(inst,pays){
+  if(!inst)return"active";
+  if(inst.status==="cancelled")return"cancelled";
+  if(inst.status==="paidOffEarly")return"paidOffEarly";
+  const live=(pays||[]).filter(p=>p&&!p.deletedAt);
+  if(live.length&&!live.some(installmentPaymentIsOpen))return"completed";
+  return"active";
+}
+
+/* Whether a scheduled payment should appear in the derived Budget group.
+   Cancelled rows (plan cancelled, or closed by an early payoff) drop out, which
+   is exactly what makes future allocations disappear while paid history stays.
+   Bucketing goes through bucketKeyFor, so a pay-period owner's "this month"
+   is their real period — never the calendar month — and periods stay
+   un-pro-rated. */
+function installmentPaymentInBucket(p,payPeriods,owner,bucketKey){
+  if(!p||!p.dueDate)return false;
+  return bucketKeyFor(p.dueDate,payPeriods,owner)===bucketKey;
+}
+function derivedInstallmentRowsFor(insts,pays,owner,bucketKey,payPeriods){
+  const owned=installmentsForOwner(insts,owner)
+    .filter(x=>x.includeInBudget!==false&&x.status!=="cancelled");
+  const byId=new Map(owned.map(x=>[x.id,x]));
+  return(pays||[])
+    .filter(p=>p&&!p.deletedAt&&p.status!=="cancelled"&&(p.owner||"me")===owner
+      &&byId.has(p.installmentId)&&installmentPaymentInBucket(p,payPeriods,owner,bucketKey))
+    .map(p=>{
+      const inst=byId.get(p.installmentId);
+      return{id:installmentRowId(p.id),paymentId:p.id,installmentId:inst.id,
+        name:inst.name||"Installment",provider:inst.provider,
+        providerLabel:installmentProviderLabel(inst),
+        color:installmentProvider(inst.provider).color,
+        sequence:p.sequence,dueDate:p.dueDate,
+        /* the PLANNED figure is always the scheduled amount — a payment that
+           came out a riyal different is an actuals fact and must not rewrite
+           what was planned (that's what the ledger is for) */
+        amount:Number(p.scheduledAmount)||0,
+        actualAmount:p.status==="paid"&&p.actualAmount!=null?Number(p.actualAmount):null,
+        status:p.status};
+    })
+    .sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate))
+      ||String(a.name).localeCompare(String(b.name)));
+}
+
+/* One rollup for the Installments tab's summary card. `dueThisPeriod` uses the
+   owner's own bucket, so it answers "what lands before my next payday". */
+function installmentSummary(insts,pays,owner,{bucketKey,payPeriods,todayStr}={}){
+  const owned=installmentsForOwner(insts,owner);
+  const ownedIds=new Set(owned.map(x=>x.id));
+  const mine=(pays||[]).filter(p=>p&&!p.deletedAt&&ownedIds.has(p.installmentId));
+  const active=owned.filter(x=>installmentDerivedStatus(x,installmentPaymentsFor(mine,x.id))==="active");
+  const dueThisPeriod=bucketKey
+    ?mine.filter(p=>installmentPaymentIsOpen(p)&&installmentPaymentInBucket(p,payPeriods,owner,bucketKey))
+      .reduce((s,p)=>s+(Number(p.scheduledAmount)||0),0)
+    :0;
+  const remaining=active.reduce((s,x)=>s+installmentRemainingBalance(x,installmentPaymentsFor(mine,x.id)),0);
+  const next=installmentNextPayment(mine.filter(p=>ownedIds.has(p.installmentId)),todayStr);
+  const nextInst=next?owned.find(x=>x.id===next.installmentId)||null:null;
+  return{dueThisPeriod,remaining,activeCount:active.length,next,nextInstallment:nextInst,
+    overdueCount:mine.filter(p=>installmentPaymentDerivedStatus(p,todayStr)==="overdue").length};
+}
+
+/* ── Installment state transactions ────────────────────────────────────────
+   Every installment mutation is a pure (data, args) => data function here, and
+   the App-level mutator is one line: setData(d=>applyX(d,args)) plus
+   pushImportant(). Two reasons, both load-bearing:
+
+   1. A plan and its payments, or a payment and its ledger row, MUST land in
+      one setData. Two writes can be interleaved by the persistence debounce and
+      uploaded half-done, so a partial plan could be synced. Doing the whole
+      thing as one pure transform makes that impossible by construction rather
+      than by remembering.
+   2. It makes the coupling testable. installmenttest.cjs slices these and runs
+      them on plain objects, so "deleting a linked expense reopens its payment"
+      is asserted against the shipped code, not a copy of it.
+
+   Ids and `now` are always passed IN, never generated here, so the functions
+   stay deterministic under test. ──────────────────────────────────────────── */
+
+function applyInstallmentCreate(d,{plan,rows,now,ids}){
+  const inst={...plan,status:plan.status||"active",createdAt:now,updatedAt:now};
+  const pays=(rows||[]).map((r,i)=>({id:(ids||[])[i],installmentId:inst.id,owner:inst.owner,
+    sequence:r.sequence!=null?r.sequence:i+1,dueDate:r.dueDate,
+    scheduledAmount:Number(r.scheduledAmount)||0,status:"upcoming",
+    createdAt:now,updatedAt:now}));
+  return{...d,installments:[...(d.installments||[]),inst],
+    installmentPayments:[...(d.installmentPayments||[]),...pays]};
+}
+
+/* Edit. `rows` is optional — omit it to patch only the plan's details. When
+   given, a row carrying an `id` updates that payment, a row without one is new,
+   and an existing OPEN row missing from the list is tombstoned. Paid rows are
+   never touched: a recorded payment is history, and rewriting its scheduled
+   amount would make a past period's plan disagree with its own ledger. */
+function applyInstallmentUpdate(d,{installmentId,patch,rows,ids,now}){
+  const insts=(d.installments||[]).map(x=>x.id===installmentId
+    ?{...x,...(patch||{}),id:x.id,createdAt:x.createdAt,updatedAt:now}:x);
+  if(!rows)return{...d,installments:insts};
+  const inst=insts.find(x=>x.id===installmentId);
+  const owner=(inst&&inst.owner)||"me";
+  let k=0;
+  const existing=(d.installmentPayments||[]).map(p=>{
+    if(p.installmentId!==installmentId||p.deletedAt||p.status==="paid")return p;
+    const r=rows.find(x=>x.id===p.id);
+    if(!r)return{...p,deletedAt:now,updatedAt:now};
+    return{...p,dueDate:r.dueDate,scheduledAmount:Number(r.scheduledAmount)||0,
+      sequence:r.sequence!=null?r.sequence:p.sequence,owner,updatedAt:now};
+  });
+  const added=rows.filter(r=>!r.id).map((r,i)=>({id:(ids||[])[k++],installmentId,owner,
+    sequence:r.sequence!=null?r.sequence:i+1,dueDate:r.dueDate,
+    scheduledAmount:Number(r.scheduledAmount)||0,status:"upcoming",createdAt:now,updatedAt:now}));
+  return{...d,installments:insts,installmentPayments:[...existing,...added]};
+}
+
+/* One real payment ⇒ exactly ONE ledger row. Recording against a payment that
+   already has one updates that row rather than adding a second, which is what
+   keeps "record payment" idempotent if it's tapped twice or replayed after a
+   merge. The row is an ordinary isTransfer expense — the same shape a goal
+   contribution uses (catId = the thing it funds), so the unaccounted sheet
+   classifies it as Transfers out with no arithmetic change. */
+function applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,now,expenseId}){
+  const p=(d.installmentPayments||[]).find(x=>x.id===paymentId&&!x.deletedAt);
+  if(!p)return d;
+  const inst=(d.installments||[]).find(x=>x.id===p.installmentId&&!x.deletedAt);
+  if(!inst)return d;
+  const amt=Number(actualAmount!=null?actualAmount:p.scheduledAmount)||0;
+  const date=paidDate||todayISO();
+  const owner=p.owner||inst.owner||"me";
+  const prior=p.expenseId?(d.expenses||[]).find(e=>e.id===p.expenseId):null;
+  const exId=prior?prior.id:expenseId;
+  const expenses=prior
+    ?(d.expenses||[]).map(e=>e.id===exId
+      ?{...e,amount:amt,date,name:name||e.name,note:note!=null?note:e.note,deletedAt:null,updatedAt:now}:e)
+    :[...(d.expenses||[]),{id:exId,catId:inst.id,
+        name:name||`${inst.name||"Installment"} #${p.sequence}`,note:note||"",
+        amount:amt,date,owner,isTransfer:true,isExtraFunds:false,
+        installmentId:inst.id,installmentPaymentId:p.id,createdAt:now,updatedAt:now}];
+  const payments=(d.installmentPayments||[]).map(x=>x.id===paymentId
+    ?{...x,status:"paid",actualAmount:amt,paidDate:date,expenseId:exId,owner,updatedAt:now}:x);
+  return{...d,expenses,installmentPayments:payments};
+}
+
+/* Editing the ledger row is the SAME edit as editing the payment — amount
+   becomes actualAmount, date becomes paidDate. Owner and the two link fields
+   are deliberately not patchable here; moving one half of a linked chain to
+   another person is the corruption this module exists to prevent. */
+function applyInstallmentExpenseEdit(d,{expenseId,amount,date,name,note,now}){
+  const e=(d.expenses||[]).find(x=>x.id===expenseId);
+  if(!e)return d;
+  const next={...e,createdAt:e.createdAt,updatedAt:now};
+  if(amount!==undefined)next.amount=Number(amount)||0;
+  if(date!==undefined)next.date=date;
+  if(name!==undefined)next.name=name;
+  if(note!==undefined)next.note=note;
+  if(date!==undefined&&date!==e.date)delete next.ord;   // same rule as updateExpenseTx
+  const expenses=(d.expenses||[]).map(x=>x.id===expenseId?next:x);
+  if(!e.installmentPaymentId)return{...d,expenses};
+  const payments=(d.installmentPayments||[]).map(p=>p.id===e.installmentPaymentId
+    ?{...p,actualAmount:next.amount,paidDate:next.date,updatedAt:now}:p);
+  return{...d,expenses,installmentPayments:payments};
+}
+
+/* Deleting the ledger row means the money didn't move, so the schedule row
+   reopens. Tombstone-aware on both sides: nothing is spliced, and the link
+   fields survive on the deleted expense so a restore can re-settle exactly the
+   same payment even after a sync merge round-trips it. */
+function applyInstallmentExpenseDelete(d,{expenseId,now}){
+  const e=(d.expenses||[]).find(x=>x.id===expenseId);
+  const expenses=(d.expenses||[]).map(x=>x.id===expenseId?{...x,deletedAt:now,updatedAt:now}:x);
+  if(!e)return{...d,expenses};
+  if(e.installmentPaymentId){
+    const payments=(d.installmentPayments||[]).map(p=>{
+      if(p.id!==e.installmentPaymentId)return p;
+      const n={...p,status:"upcoming",updatedAt:now};
+      delete n.actualAmount;delete n.paidDate;delete n.expenseId;
+      return n;
+    });
+    return{...d,expenses,installmentPayments:payments};
+  }
+  if(e.installmentPayoff){
+    /* undoing a payoff reopens exactly the rows that payoff closed —
+       payoffExpenseId is kept on them so a later restore can re-close the
+       same set rather than guessing from status */
+    const payments=(d.installmentPayments||[]).map(p=>{
+      if(p.payoffExpenseId!==e.id||p.status==="paid")return p;
+      const n={...p,status:"upcoming",updatedAt:now};
+      delete n.cancelledBy;delete n.cancelledAt;
+      return n;
+    });
+    const insts=(d.installments||[]).map(x=>{
+      if(x.payoffExpenseId!==e.id)return x;
+      const n={...x,status:"active",updatedAt:now};
+      delete n.closedAt;
+      return n;
+    });
+    return{...d,expenses,installments:insts,installmentPayments:payments};
+  }
+  return{...d,expenses};
+}
+
+function applyInstallmentExpenseRestore(d,{expenseId,now}){
+  const e=(d.expenses||[]).find(x=>x.id===expenseId);
+  const expenses=(d.expenses||[]).map(x=>x.id===expenseId?{...x,deletedAt:null,updatedAt:now}:x);
+  if(!e)return{...d,expenses};
+  if(e.installmentPaymentId){
+    const payments=(d.installmentPayments||[]).map(p=>p.id===e.installmentPaymentId
+      ?{...p,status:"paid",actualAmount:Number(e.amount)||0,paidDate:e.date,expenseId:e.id,updatedAt:now}:p);
+    return{...d,expenses,installmentPayments:payments};
+  }
+  if(e.installmentPayoff){
+    const payments=(d.installmentPayments||[]).map(p=>
+      (p.payoffExpenseId===e.id&&p.status!=="paid")
+        ?{...p,status:"cancelled",cancelledBy:"payoff",cancelledAt:now,updatedAt:now}:p);
+    const insts=(d.installments||[]).map(x=>x.payoffExpenseId===e.id
+      ?{...x,status:"paidOffEarly",closedAt:e.date,updatedAt:now}:x);
+    return{...d,expenses,installments:insts,installmentPayments:payments};
+  }
+  return{...d,expenses};
+}
+
+/* Early payoff: ONE ledger row for the whole thing, never one per cancelled
+   payment. The closed rows keep their original dueDate and scheduledAmount so
+   what was planned stays readable; they simply stop being planned, which is
+   what makes future derived Budget rows disappear while paid history stands. */
+function applyInstallmentPayoff(d,{installmentId,payoffDate,amount,name,note,now,expenseId}){
+  const inst=(d.installments||[]).find(x=>x.id===installmentId&&!x.deletedAt);
+  if(!inst)return d;
+  const date=payoffDate||todayISO();
+  const owner=inst.owner||"me";
+  const expenses=[...(d.expenses||[]),{id:expenseId,catId:inst.id,
+    name:name||`${inst.name||"Installment"} — early payoff`,note:note||"",
+    amount:Number(amount)||0,date,owner,isTransfer:true,isExtraFunds:false,
+    installmentId,installmentPayoff:true,createdAt:now,updatedAt:now}];
+  const payments=(d.installmentPayments||[]).map(p=>
+    (p.installmentId===installmentId&&!p.deletedAt&&installmentPaymentIsOpen(p))
+      ?{...p,status:"cancelled",cancelledBy:"payoff",payoffExpenseId:expenseId,
+        cancelledAt:now,updatedAt:now}
+      :p);
+  const insts=(d.installments||[]).map(x=>x.id===installmentId
+    ?{...x,status:"paidOffEarly",closedAt:date,payoffExpenseId:expenseId,updatedAt:now}:x);
+  return{...d,expenses,installments:insts,installmentPayments:payments};
+}
+
+/* Cancelling the arrangement itself. No ledger row — no money moved. Paid
+   history stays exactly as it is; only unpaid rows close. */
+function applyInstallmentCancel(d,{installmentId,now}){
+  const payments=(d.installmentPayments||[]).map(p=>
+    (p.installmentId===installmentId&&!p.deletedAt&&installmentPaymentIsOpen(p))
+      ?{...p,status:"cancelled",cancelledBy:"plan",cancelledAt:now,updatedAt:now}:p);
+  const insts=(d.installments||[]).map(x=>x.id===installmentId
+    ?{...x,status:"cancelled",closedAt:String(now).slice(0,10),updatedAt:now}:x);
+  return{...d,installments:insts,installmentPayments:payments};
+}
+
+/* Administrative removal. Soft-delete only, never a splice — a hard delete
+   reads to an un-synced device as "you haven't seen this yet" and comes back.
+   Unpaid payments are tombstoned WITH the plan (stamped `deletedWith` so the
+   restore puts back exactly this batch and not rows deleted separately).
+   PAID payments and their expense rows are deliberately left alone: real
+   financial history is never removed as a side effect of tidying up. */
+function applyInstallmentDelete(d,{installmentId,now}){
+  const insts=(d.installments||[]).map(x=>x.id===installmentId
+    ?{...x,deletedAt:now,updatedAt:now}:x);
+  const payments=(d.installmentPayments||[]).map(p=>
+    (p.installmentId===installmentId&&!p.deletedAt&&p.status!=="paid")
+      ?{...p,deletedAt:now,deletedWith:installmentId,updatedAt:now}:p);
+  return{...d,installments:insts,installmentPayments:payments};
+}
+function applyInstallmentRestore(d,{installmentId,now}){
+  const insts=(d.installments||[]).map(x=>x.id===installmentId
+    ?{...x,deletedAt:null,updatedAt:now}:x);
+  const payments=(d.installmentPayments||[]).map(p=>{
+    if(p.deletedWith!==installmentId)return p;
+    const n={...p,deletedAt:null,updatedAt:now};
+    delete n.deletedWith;
+    return n;
+  });
+  return{...d,installments:insts,installmentPayments:payments};
+}
+
+/* The explicit escape hatch: keep the transaction, drop the link. Behind a
+   warning in the UI because the payment reopens and the row stops being an
+   installment payment for good — there is no re-link flow. */
+function applyInstallmentUnlink(d,{expenseId,now}){
+  const e=(d.expenses||[]).find(x=>x.id===expenseId);
+  if(!e)return d;
+  const expenses=(d.expenses||[]).map(x=>{
+    if(x.id!==expenseId)return x;
+    const n={...x,updatedAt:now};
+    delete n.installmentId;delete n.installmentPaymentId;delete n.installmentPayoff;
+    return n;
+  });
+  const payments=(d.installmentPayments||[]).map(p=>{
+    if(p.id!==e.installmentPaymentId)return p;
+    const n={...p,status:"upcoming",updatedAt:now};
+    delete n.actualAmount;delete n.paidDate;delete n.expenseId;
+    return n;
+  });
+  return{...d,expenses,installmentPayments:payments};
+}
+
 /* Tracked-spending rollup for one owner, for their CURRENT bucket (calendar
    month, or pay-period when that owner has pay-periods enabled).
 
@@ -1489,8 +1959,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.18.1";
-const BUILD_ID="2026.08.01.0003";
+const APP_VERSION="1.19.0";
+const BUILD_ID="2026.08.02.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -1994,6 +2464,13 @@ function defaultData(){
     bills:[],
     billAdjustments:[],
     billsSettings:{openingReserve:0},
+    // Short-term purchase installments (Tabby/Tamara/Amazon/card pay-in-N).
+    // Two flat id-keyed collections rather than payments nested inside the
+    // plan: both sides are edited independently on two devices and each
+    // payment links to its own expense row, so mergeArrayById is the right
+    // merger for each and a nested child merge would be the wrong shape.
+    installments:[],
+    installmentPayments:[],
   };
 }
 
@@ -2265,6 +2742,42 @@ function migrate(d){
   d.billAdjustments.forEach(a=>{if(!a.updatedAt)a.updatedAt="2000-01-01T00:00:00.000Z";});
   if(!d.billsSettings)d.billsSettings={openingReserve:0};
   if(d.billsSettings.openingReserve===undefined)d.billsSettings.openingReserve=0;
+
+  /* Installments. For a document written before this feature both arrays are
+     simply created empty — and fingerprint() omits them while empty, so an
+     existing user's document is byte-identical after the upgrade and doesn't
+     fire a cloud write just for opening the app. */
+  if(!Array.isArray(d.installments))d.installments=[];
+  d.installments.forEach(x=>{
+    if(!x.owner||(x.owner!=="me"&&x.owner!=="wife"))x.owner="me";   // never "household"
+    if(!x.status)x.status="active";
+    if(!x.provider)x.provider="other";
+    if(!x.currency)x.currency=d.currency||"SAR";
+    if(x.includeInBudget===undefined)x.includeInBudget=true;
+    if(x.name===undefined)x.name="";
+    if(x.notes===undefined)x.notes="";
+    if(!x.createdAt)x.createdAt=x.updatedAt||"2000-01-01T00:00:00.000Z";
+    if(!x.updatedAt)x.updatedAt="2000-01-01T00:00:00.000Z";
+  });
+  if(!Array.isArray(d.installmentPayments))d.installmentPayments=[];
+  /* `sequence` is backfilled by due date within a plan, but actualAmount and
+     paidDate are deliberately NOT defaulted — their absence means "not paid",
+     the same way an expense's absent `ord` means "unplaced". */
+  const instSeq={};
+  [...d.installmentPayments]
+    .sort((a,b)=>String(a.dueDate||"").localeCompare(String(b.dueDate||"")))
+    .forEach(p=>{
+      instSeq[p.installmentId]=(instSeq[p.installmentId]||0)+1;
+      if(p.sequence==null)p.sequence=instSeq[p.installmentId];
+    });
+  d.installmentPayments.forEach(p=>{
+    const owner=(d.installments||[]).find(x=>x.id===p.installmentId);
+    if(!p.owner||(p.owner!=="me"&&p.owner!=="wife"))p.owner=(owner&&owner.owner)||"me";
+    if(!p.status)p.status="upcoming";
+    if(p.scheduledAmount==null)p.scheduledAmount=0;
+    if(!p.createdAt)p.createdAt=p.updatedAt||"2000-01-01T00:00:00.000Z";
+    if(!p.updatedAt)p.updatedAt="2000-01-01T00:00:00.000Z";
+  });
   return d;
 }
 
@@ -2442,6 +2955,13 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
       plans:sortedById(rest.plans),
       bills:sortedById(rest.bills),
       billAdjustments:sortedById(rest.billAdjustments),
+      /* Emitted only when non-empty. migrate() creates these two arrays on
+         every existing document, and JSON.stringify drops an `undefined`
+         value — so a user who has never added an installment keeps a
+         byte-identical fingerprint and the upgrade doesn't look like a change
+         they made, which would otherwise cost one KV write per device. */
+      installments:(rest.installments||[]).length?sortedById(rest.installments):undefined,
+      installmentPayments:(rest.installmentPayments||[]).length?sortedById(rest.installmentPayments):undefined,
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
       history:sortedByKey(hist,h=>h.month||""),
@@ -2739,6 +3259,8 @@ function tryAutoMergeAll(local,remote){
       plans:mergeArrayById(local.plans,remote.plans),
       bills:mergeArrayById(local.bills,remote.bills),
       billAdjustments:mergeArrayById(local.billAdjustments,remote.billAdjustments),
+      installments:mergeArrayById(local.installments,remote.installments),
+      installmentPayments:mergeArrayById(local.installmentPayments,remote.installmentPayments),
       monthlyPlans:mergeKeyed(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
@@ -2784,7 +3306,16 @@ const CONFLICT_COLLECTIONS=[
   {key:"plans",label:"Plans",nameOf:p=>`${p.name||"Plan"}${p.month?` (${p.month})`:""}`},
   {key:"bills",label:"Bills",nameOf:b=>`${b.itemName||"Bill"}${b.monthKey?` (${b.monthKey})`:""}`},
   {key:"billAdjustments",label:"Bills Reserve adjustments",nameOf:a=>`${a.amount>=0?"+":""}${a.amount||0}${a.date?` (${a.date})`:""}`},
+  {key:"installments",label:"Installments",nameOf:i=>`${i.name||"Installment"}${i.provider?` — ${installmentProviderLabel(i)}`:""}${i.originalAmount!=null?` (${Number(i.originalAmount).toLocaleString()})`:""}`},
+  {key:"installmentPayments",label:"Installment payments",nameOf:p=>`#${p.sequence||"?"}${p.dueDate?` due ${p.dueDate}`:""}${p.scheduledAmount!=null?` — ${Number(p.scheduledAmount).toLocaleString()}`:""}`},
 ];
+/* Collections that belong in CONFLICT_COLLECTIONS (they merge, they're counted
+   as pending, and a conflict should describe them) but NOT in Recently
+   Deleted. An installment payment tombstone is a side effect of deleting the
+   plan it belongs to — restoring the plan brings its schedule back — so
+   listing a dozen of them per plan would bury the entries a person actually
+   deleted on purpose. */
+const HIDE_FROM_RECENTLY_DELETED=new Set(["installmentPayments"]);
 /* How many actual records differ between the local doc and the last state we
    know the cloud has. This is what the "Save to Cloud (n)" badge shows.
 
@@ -2871,6 +3402,7 @@ const TAB_META={
   investments:{label:"Investments",short:"Invest",icon:I.Trending},
   networth:{label:"Net Worth",short:"Net Worth",icon:I.Gem},
   goals:{label:"Goals",short:"Goals",icon:I.Target},
+  installments:{label:"Installments",short:"Instal",icon:I.Layers},
   bills:{label:"Bills",short:"Bills",icon:I.PiggyBank},
   household:{label:"Household",short:"Household",icon:I.Users},
   currency:{label:"Currency",short:"Currency",icon:I.Swap},
@@ -3014,6 +3546,16 @@ function App(){
   const restoreRecord=(collection,id,childKey,childId)=>{
     setData(d=>{
       const arr=d[collection]||[];
+      /* Two collections restore more than one record, because more than one
+         was tombstoned by the delete. Routed here rather than in the modal so
+         the undo toast and Recently Deleted can't drift apart. */
+      if(collection==="installments"&&!childKey)
+        return applyInstallmentRestore(d,{installmentId:id,now:new Date().toISOString()});
+      if(collection==="expenses"&&!childKey){
+        const e=(d.expenses||[]).find(x=>x.id===id);
+        if(e&&(e.installmentPaymentId||e.installmentPayoff))
+          return applyInstallmentExpenseRestore(d,{expenseId:id,now:new Date().toISOString()});
+      }
       if(childKey&&childId){
         return{...d,[collection]:arr.map(p=>p.id===id?{...p,[childKey]:(p[childKey]||[]).map(c=>c.id===childId?{...c,deletedAt:null}:c),updatedAt:new Date().toISOString()}:p)};
       }
@@ -3056,6 +3598,8 @@ function App(){
       targets:(d.targets||[]).filter(fresh),
       plans:(d.plans||[]).filter(fresh),
       mp2DividendRates:(d.mp2DividendRates||[]).filter(fresh),
+      installments:(d.installments||[]).filter(fresh),
+      installmentPayments:(d.installmentPayments||[]).filter(fresh),
       household:d.household?{...d.household,expenses:(d.household.expenses||[]).filter(fresh)}:d.household,
     };
   };
@@ -4285,7 +4829,14 @@ function App(){
   };
   const removeExpenseTx=id=>{
     const e=(data.expenses||[]).find(x=>x.id===id);
-    setData(d=>({...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)}));
+    /* A linked installment row carries its schedule with it: deleting it means
+       the money didn't move, so the payment reopens (or a payoff un-closes) in
+       the SAME setData. Both directions live in applyInstallmentExpense*, so
+       delete and restore can't get out of step. */
+    const linked=!!(e&&(e.installmentPaymentId||e.installmentPayoff));
+    setData(d=>linked
+      ?applyInstallmentExpenseDelete(d,{expenseId:id,now:new Date().toISOString()})
+      :{...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)});
     if(e)triggerUndo(`Deleted "${e.name||"transaction"}"`,{collection:"expenses",id});
     pushImportantRef.current();
   };
@@ -4304,6 +4855,59 @@ function App(){
   const addExtraFunds=(catId,catName,amount,date,note,owner=budgetOwner)=>{
     addExpenseTx(catId,catName,note||"Extra funds",amount,date,owner,false,true);
   };
+
+  /* ── Installments ──────────────────────────────────────────────────────
+     Every one of these is a one-liner over a pure transaction at module
+     scope. The rule is that a plan and its schedule, or a payment and its
+     ledger row, land in ONE setData — see the apply* banner for why. Nothing
+     here computes a balance; every figure the UI shows is derived on read. */
+  const installments=(data.installments||[]).filter(x=>!x.deletedAt);
+  const installmentPayments=(data.installmentPayments||[]).filter(x=>!x.deletedAt);
+  const nowStamp=()=>new Date().toISOString();
+  const addInstallment=(plan,rows)=>{
+    const id=uid();
+    setData(d=>applyInstallmentCreate(d,{plan:{...plan,id},rows,ids:rows.map(()=>uid()),now:nowStamp()}));
+    pushImportantRef.current();
+    return id;
+  };
+  const updateInstallment=(installmentId,patch,rows)=>{
+    setData(d=>applyInstallmentUpdate(d,{installmentId,patch,rows,
+      ids:(rows||[]).filter(r=>!r.id).map(()=>uid()),now:nowStamp()}));
+    pushImportantRef.current();
+  };
+  const recordInstallmentPayment=(paymentId,{actualAmount,paidDate,name,note}={})=>{
+    setData(d=>applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,
+      now:nowStamp(),expenseId:uid()}));
+    pushImportantRef.current();
+  };
+  const payOffInstallmentEarly=(installmentId,{payoffDate,amount,name,note}={})=>{
+    setData(d=>applyInstallmentPayoff(d,{installmentId,payoffDate,amount,name,note,
+      now:nowStamp(),expenseId:uid()}));
+    pushImportantRef.current();
+  };
+  const cancelInstallment=installmentId=>{
+    setData(d=>applyInstallmentCancel(d,{installmentId,now:nowStamp()}));
+    pushImportantRef.current();
+  };
+  const removeInstallment=installmentId=>{
+    const x=installments.find(i=>i.id===installmentId);
+    setData(d=>applyInstallmentDelete(d,{installmentId,now:nowStamp()}));
+    if(x)triggerUndo(`Deleted "${x.name||"installment"}"`,{collection:"installments",id:installmentId});
+    pushImportantRef.current();
+  };
+  const updateInstallmentExpense=(expenseId,patch)=>{
+    setData(d=>applyInstallmentExpenseEdit(d,{expenseId,...patch,now:nowStamp()}));
+    pushImportantRef.current();
+  };
+  const unlinkInstallmentExpense=expenseId=>{
+    setData(d=>applyInstallmentUnlink(d,{expenseId,now:nowStamp()}));
+    pushImportantRef.current();
+  };
+  /* One-shot hand-off from a derived Budget row to the Installments tab, the
+     same {id,nonce} shape Home uses to drive the Expenses filter — kept out of
+     `data` because it's "what am I looking at", not a synced setting. */
+  const[installmentFocus,setInstallmentFocus]=useState(null);
+  const openInstallment=id=>{setInstallmentFocus({id,nonce:Date.now()});setTab("installments");};
 
 
   /* FX */
@@ -4851,8 +5455,10 @@ function App(){
 
         <TabPane tab={tab}>
           {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,profile,setProfile:setProfileSynced,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
-          {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current()}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest}}/>}
+          {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current(),
+            installments,installmentPayments,onOpenInstallment:openInstallment}}/>}
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
+            installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,profile,setProfile:setProfileSynced,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
@@ -4864,6 +5470,11 @@ function App(){
           {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
+          {tab==="installments"&&<InstallmentsView {...{installments,installmentPayments,
+            addInstallment,updateInstallment,recordInstallmentPayment,payOffInstallmentEarly,
+            cancelInstallment,removeInstallment,
+            fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
+            payPeriods:data.payPeriods,focus:installmentFocus}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -4892,8 +5503,10 @@ function App(){
         onChoose={chooseDefaultProfile} onClose={()=>setShowProfilePicker(false)}/>}
       {/* Home renders its own mobile-only FAB (which opens the quick-add sheet
           instead of jumping straight to Expenses) and a desktop Quick Actions
-          bar, so the global FAB steps aside there to avoid two + buttons. */}
-      {tab!=="expenses"&&tab!=="home"&&
+          bar, so the global FAB steps aside there to avoid two + buttons.
+          Installments does the same — its + adds an installment plan, which is
+          a different thing from adding a transaction. */}
+      {tab!=="expenses"&&tab!=="home"&&tab!=="installments"&&
         <button aria-label="Quick add transaction" className="fab-btn" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
           style={{background:P.gr}}>
           <I.Plus size={24}/>
@@ -6161,7 +6774,7 @@ function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow}){
+function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow,installments,installmentPayments,onOpenInstallment}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -6303,9 +6916,29 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
     exitSelect();
   };
 
+  /* ── Derived Installments group ─────────────────────────────────────────
+     Read-only rows built from the installment SCHEDULE for the viewed period.
+     Nothing here is stored in the plan and nothing here goes through
+     editPlanForMonth: paging to a month must derive and render, never
+     materialise a copy-on-write plan. (A stored copy would be worse than
+     redundant — clonePlanForMonth remints category ids every month, so a plan
+     category could never be a stable link back to a payment.)
+
+     They are deliberately NOT in monthPlan.groups, which is what keeps them
+     invisible to the move-categories sheet, to renameGroup/removeGroup and to
+     investTarget.groupNames — no exclusion code needed anywhere. */
+  const installmentRows=useMemo(()=>derivedInstallmentRowsFor(
+    installments,installmentPayments,budgetOwner,viewMonth,payPeriods),
+    [installments,installmentPayments,budgetOwner,viewMonth,payPeriods]);
+  const installmentTotal=installmentRows.reduce((s,r)=>s+r.amount,0);
+
   /* month-scoped totals */
   const income=Number(monthPlan.income)||0;
-  const allocated=(monthPlan.categories||[]).reduce((s,c)=>s+effectiveAmt(c),0);
+  const manualAllocated=(monthPlan.categories||[]).reduce((s,c)=>s+effectiveAmt(c),0);
+  /* Installments due this period are money already committed, so they count
+     toward Allocated — otherwise "Left" would read as free money that is in
+     fact spoken for. */
+  const allocated=manualAllocated+installmentTotal;
   const remaining=income-allocated;
   const pct=n=>income>0?((Number(n)||0)/income)*100:0;
 
@@ -6456,11 +7089,16 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
              and cost a whole card of height, so it's a stacked bar now — same
              SEG colours, same shape as Net Worth's Composition bar. ── */}
       {(()=>{
-        const groupData=(monthPlan.groups||[]).map((g,i)=>({
-          name:g.name,
-          value:(monthPlan.categories||[]).filter(c=>c.groupId===g.id).reduce((s,c)=>s+effectiveAmt(c),0),
-          color:SEG[i%SEG.length],
-        })).filter(d=>d.value>0);
+        const groupData=[
+          ...(monthPlan.groups||[]).map((g,i)=>({
+            name:g.name,
+            value:(monthPlan.categories||[]).filter(c=>c.groupId===g.id).reduce((s,c)=>s+effectiveAmt(c),0),
+            color:SEG[i%SEG.length],
+          })),
+          // the derived group takes a segment too, or the bar would claim the
+          // income goes somewhere it doesn't
+          ...(installmentTotal>0?[{name:"Installments",value:installmentTotal,color:P.br}]:[]),
+        ].filter(d=>d.value>0);
         if(!groupData.length)return null;
         /* proportions of what's ALLOCATED, so the bar always fills — the
            income-vs-allocated gap is already stated in the card above. */
@@ -6722,6 +7360,61 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
           </section>
         );
       })}
+
+      {/* ── Derived Installments group ──
+          Visually separated from the manually managed groups (dashed edge,
+          "Derived" pill) because it behaves differently: the rows can't be
+          renamed, re-priced, moved between groups or deleted from here. The
+          installment schedule owns them; Budget only shows what falls due in
+          this period, never the outstanding balance. Tapping a row goes to the
+          plan that produced it. */}
+      {installmentRows.length>0&&(
+        <section style={{...neu(16),overflow:"clip",marginBottom:16,
+          border:`1px dashed ${P.line}`}}>
+          <div className="group-head" style={{display:"flex",alignItems:"center",
+            justifyContent:"space-between",padding:"10px 12px",gap:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+              <I.Layers size={14} style={{color:P.br,flexShrink:0}}/>
+              <span style={{fontSize:14,fontWeight:600,color:P.neuInk}}>Installments</span>
+              <span className="status-pill" style={{border:"none",background:P.brS,color:P.br,
+                fontSize:10,fontWeight:700,minHeight:0,padding:"1px 7px"}}>Derived</span>
+            </div>
+            <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(installmentTotal)}</span>
+          </div>
+          {installmentRows.map(r=>(
+            <button key={r.id} onClick={()=>onOpenInstallment&&onOpenInstallment(r.installmentId)}
+              aria-label={`Open ${r.name} installment`}
+              style={{display:"flex",alignItems:"center",gap:10,width:"100%",minHeight:48,
+                padding:"8px 12px",background:"transparent",border:"none",textAlign:"left",
+                borderBottom:"1px solid rgba(0,0,0,.06)"}}>
+              <span style={{width:10,height:10,borderRadius:999,flexShrink:0,
+                background:r.color}}/>
+              <span style={{flex:1,minWidth:0}}>
+                <span style={{display:"block",fontSize:14,color:P.neuInk,overflow:"hidden",
+                  textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {r.providerLabel} – {r.name}
+                </span>
+                <span style={{display:"block",fontSize:11,color:P.faint}}>
+                  Payment #{r.sequence} · due {instShortDate(r.dueDate)}
+                  {r.status==="paid"?" · paid":""}
+                </span>
+              </span>
+              <span className="tnum" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>
+                {pct(r.amount).toFixed(2)}%
+              </span>
+              <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
+              <span className="tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}>
+                {r.amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+              </span>
+              <I.Chevron size={13} style={{color:P.faint,transform:"rotate(-90deg)",flexShrink:0}}/>
+            </button>
+          ))}
+          <div style={{padding:"8px 12px",fontSize:11,color:P.faint}}>
+            From your installment schedules — edit them in the Installments tab.
+          </div>
+        </section>
+      )}
+
       {(
         <button onClick={addGroup} className="neu-btn" style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",fontSize:14,fontWeight:500,color:P.jade}}>
           <I.Plus size={14}/>Add group
@@ -6955,7 +7648,7 @@ function UnaccountedSheet({monthLabel,income,parts,total,fmt,onClose}){
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest}){
+function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -7097,7 +7790,17 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      are money coming IN (a spouse sending cash for a category), so they ADD.
      They used to subtract, which made incoming cash lower your unspent salary
      — the reason this figure never made sense. Classified off the raw rows,
-     not off totalSpent, which drops zero-budget categories at `envelopes`. */
+     not off totalSpent, which drops zero-budget categories at `envelopes`.
+
+     Installment payments and early payoffs are isTransfer with catId = the
+     installment id, so they land in `untrackedTransfers` — "Transfers out" —
+     and are never isExtraFunds. That's the intended classification: the money
+     genuinely leaves, and the planned side of it lives in Budget's derived
+     Installments group. When the plan-vs-actual annotation is built, the
+     planned figure for this line is derivedInstallmentRowsFor(...) summed for
+     the viewed bucket, added to the untracked-envelope allocation. This sheet
+     must keep counting the LEDGER and must never read payment status, or a
+     payment recorded here would be counted twice. */
   const totalIncome=Number(monthPlan.income)||0;
   const unaccountedParts=useMemo(()=>{
     let trackedSpend=0,untrackedTransfers=0,goalContribs=0,extraFunds=0;
@@ -7187,8 +7890,26 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   const closeForm=()=>{setShowAdd(false);setEditTx(null);};
   const addDlgRef=useDialogA11y(closeForm,showAdd);
 
+  /* The transaction being edited, and the installment it belongs to (if any).
+     A linked row is edited through applyInstallmentExpenseEdit so the payment's
+     actualAmount/paidDate follow in the SAME write — the ledger and the
+     schedule can never end up describing different money. */
+  const editingTxRec=editTx?expenses.find(e=>e.id===editTx):null;
+  const editLinkedInst=editingTxRec&&editingTxRec.installmentId
+    ?(installments||[]).find(x=>x.id===editingTxRec.installmentId):null;
+  const editLinkedPayment=editingTxRec&&editingTxRec.installmentPaymentId
+    ?(installmentPayments||[]).find(p=>p.id===editingTxRec.installmentPaymentId):null;
+  const[confirmUnlink,setConfirmUnlink]=useState(null);
+
   const submitTx=()=>{
     if(editTx){
+      if(editLinkedInst){
+        if(!form.name||!form.amount)return;
+        updateInstallmentExpense(editTx,{name:form.name,note:form.note,
+          amount:evalMathExpr(form.amount,Number(form.amount)||0),date:form.date});
+        closeForm();
+        return;
+      }
       if(!form.catId||!form.name||!form.amount)return;
       updateExpenseTx(editTx,{catId:form.catId,name:form.name,note:form.note,amount:evalMathExpr(form.amount,Number(form.amount)||0),date:form.date});
       closeForm();
@@ -7234,9 +7955,13 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   const renderTxRow=(tx,idx,total,moPlan,showDate=true)=>{
     if(!moPlan)moPlan=planForMonth(bucketKeyFor(tx.date,payPeriods,budgetOwner));
     const env=(moPlan.categories||[]).find(c=>c.id===tx.catId);
-    const goal=!env?(goals||[]).find(g=>g.id===tx.catId):null;
-    const dotColor=env?.color||(goal?GOALS_GROUP_COLOR:P.faint);
-    const subLabel=env?env.name:goal?goal.name:"";
+    /* An installment payment carries the same shape a goal contribution does —
+       catId is the thing it funds, isTransfer is set — so it resolves here the
+       same way rather than falling through to a colourless "unknown" row. */
+    const inst=!env&&tx.installmentId?(installments||[]).find(x=>x.id===tx.installmentId):null;
+    const goal=!env&&!inst?(goals||[]).find(g=>g.id===tx.catId):null;
+    const dotColor=env?.color||(inst?installmentProvider(inst.provider).color:goal?GOALS_GROUP_COLOR:P.faint);
+    const subLabel=env?env.name:inst?`${installmentProviderLabel(inst)} – ${inst.name}`:goal?goal.name:"";
     return(
       <div key={tx.id} className="tx-row"
         style={{borderBottom:idx<total-1?"1px solid rgba(0,0,0,.06)":"none"}}>
@@ -7247,6 +7972,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:6}}>
             {tx.name}
             {tx.isTransfer&&<span style={{fontSize:9,fontWeight:700,color:P.br,background:P.brS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>TRANSFER</span>}
+            {tx.installmentId&&<span style={{fontSize:9,fontWeight:700,color:P.jade,background:P.jadeS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>{tx.installmentPayoff?"PAYOFF":"INSTALLMENT"}</span>}
             {tx.isExtraFunds&&<span style={{fontSize:9,fontWeight:700,color:P.jade,background:P.jadeS,borderRadius:999,padding:"1px 6px",flexShrink:0}}>+EXTRA</span>}
           </div>
           {/* Under a day sub-header the date is repeated noise, and with it
@@ -7758,8 +8484,38 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
               </div>
             )}
 
-            {/* ── category / envelope / goal dropdown, dynamic by mode ── */}
-            {addMode==="goals"&&!editTx?(
+            {/* ── category / envelope / goal dropdown, dynamic by mode ──
+                A linked installment row shows its plan read-only instead: the
+                category, the owner and the link are all fixed, because moving
+                one half of a linked chain is exactly the corruption this
+                module is built to prevent. Unlinking is the one deliberate
+                way out, and it's warned. */}
+            {editLinkedInst?(
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Installment</div>
+                <div style={{borderRadius:10,padding:"10px",background:"rgba(0,0,0,.05)"}}>
+                  <div style={{fontSize:14,fontWeight:600,color:P.ink}}>
+                    {installmentProviderLabel(editLinkedInst)} – {editLinkedInst.name}
+                  </div>
+                  <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                    {editingTxRec&&editingTxRec.installmentPayoff
+                      ?"Early payoff"
+                      :editLinkedPayment
+                        ?`Payment #${editLinkedPayment.sequence} · scheduled ${fmt(editLinkedPayment.scheduledAmount)}`
+                        :"Linked payment"}
+                    {" · "}{owners[editingTxRec.owner||"me"]||editingTxRec.owner}
+                  </div>
+                  <button onClick={()=>setConfirmUnlink(editTx)}
+                    style={{marginTop:8,background:"transparent",border:"none",padding:"6px 0",
+                      minHeight:36,fontSize:12,fontWeight:600,color:P.wine}}>
+                    Unlink from installment
+                  </button>
+                </div>
+                <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+                  Changing the amount or date here updates the installment payment too.
+                </div>
+              </div>
+            ):addMode==="goals"&&!editTx?(
               <div style={{marginBottom:12}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Goal</div>
                 <select value={form.goalId} onChange={e=>setForm(f=>({...f,goalId:e.target.value}))}
@@ -7805,7 +8561,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                   modal scrolls, so an absolutely positioned popup would clip),
                   and onMouseDown-prevented so the tap lands before the input's
                   blur can tear the list down. */}
-              {addMode==="tracked"&&(()=>{
+              {addMode==="tracked"&&!editLinkedInst&&(()=>{
                 const sugg=rankNameSuggestions(nameCandidates,form.name);
                 const typed=(form.name||"").trim().toLowerCase();
                 if(!sugg.length)return null;
@@ -7894,6 +8650,13 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
         </div>
         </Portal>
       )}
+
+      <ConfirmDialog open={!!confirmUnlink}
+        title="Unlink from installment?"
+        message="The transaction stays in Expenses exactly as it is, but it stops counting as an installment payment and that payment reopens as unpaid. There is no way to link it back."
+        confirmLabel="Unlink"
+        onCancel={()=>setConfirmUnlink(null)}
+        onConfirm={()=>{unlinkInstallmentExpense(confirmUnlink);setConfirmUnlink(null);closeForm();}}/>
 
       {/* ── quick transfer sheet ── */}
       {transferModal&&<Portal><QuickTransferSheet
@@ -10486,6 +11249,742 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   INSTALLMENTS — short-term purchase plans (Tabby, Tamara, Amazon, card).
+
+   Visually a cousin of Goals, but not a copy: cards go through the shared
+   neu(16) rather than Goals' hand-rolled shadow (that drift is exactly what
+   the 2026-07-29 audit found), and progress is a bar because "3 of 4 paid" is
+   a countable sequence, not a proportion of a pot.
+
+   The tab reads and writes nothing derived: every figure on screen comes from
+   the module-scope installment* helpers, so a card, the Budget group and the
+   summary can't disagree. ════════════════════════════════════════════════ */
+
+/* Short human date for a due-date chip — "12 Aug" reads faster than an ISO
+   string in a list of eight of them. */
+function instShortDate(s){
+  if(!s)return"—";
+  const d=new Date(String(s)+"T00:00:00");
+  if(isNaN(d.getTime()))return String(s);
+  return d.toLocaleDateString("en-US",{day:"numeric",month:"short"});
+}
+function instLongDate(s){
+  if(!s)return"—";
+  const d=new Date(String(s)+"T00:00:00");
+  if(isNaN(d.getTime()))return String(s);
+  return d.toLocaleDateString("en-US",{day:"numeric",month:"short",year:"numeric"});
+}
+const INSTALLMENT_STATUS_META={
+  active:{label:"Active",color:()=>P.jade,bg:()=>P.jadeS},
+  completed:{label:"Paid off",color:()=>P.gr,bg:()=>P.sfA},
+  paidOffEarly:{label:"Paid off early",color:()=>P.gr,bg:()=>P.sfA},
+  cancelled:{label:"Cancelled",color:()=>P.neuSub,bg:()=>P.sfA},
+};
+const INSTALLMENT_SECTIONS=[
+  {key:"active",label:"Active"},
+  {key:"completed",label:"Paid Off"},
+  {key:"paidOffEarly",label:"Paid Off Early"},
+  {key:"cancelled",label:"Cancelled"},
+];
+
+/* ── Add / Edit sheet ──────────────────────────────────────────────────────
+   Top level (not nested in InstallmentsView) for the same reason GoalSquare
+   is: a component redefined on every parent render remounts its inputs and
+   they lose focus mid-typing.
+
+   The schedule is GENERATED but always EDITABLE, because providers don't
+   split evenly — 749.25 over 3 really is 249.75 / 249.75 / 249.75, but plenty
+   of plans are 250.00 / 250.00 / 249.25. Save is gated on the rows summing to
+   the original amount within INSTALLMENT_ROUND_TOL, so a typo can't create a
+   plan whose schedule quietly disagrees with what was bought. ─────────────── */
+function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose,onSave}){
+  const editing=!!initial;
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const[f,setF]=useState(()=>({
+    name:(initial&&initial.name)||"",
+    provider:(initial&&initial.provider)||"tabby",
+    customProviderName:(initial&&initial.customProviderName)||"",
+    purchaseDate:(initial&&initial.purchaseDate)||todayISO(),
+    originalAmount:initial?initial.originalAmount:"",
+    includeInBudget:initial?initial.includeInBudget!==false:true,
+    notes:(initial&&initial.notes)||"",
+  }));
+  const set=patch=>setF(x=>({...x,...patch}));
+  const[firstDue,setFirstDue]=useState(()=>
+    editing?((payments[0]&&payments[0].dueDate)||todayISO()):addMonthsISO(todayISO(),1));
+  const[count,setCount]=useState(()=>editing?payments.length:4);
+  const[rows,setRows]=useState(()=>editing
+    ?payments.map(p=>({id:p.id,sequence:p.sequence,dueDate:p.dueDate,
+        scheduledAmount:p.scheduledAmount,status:p.status}))
+    :[]);
+  /* Once a row is typed into, the generator stops overwriting it — otherwise
+     entering exact provider amounts and then correcting the total would throw
+     the hand-typed figures away. "Regenerate" is the explicit way back. */
+  const[handEdited,setHandEdited]=useState(editing);
+  useEffect(()=>{
+    if(handEdited)return;
+    const total=Number(f.originalAmount)||0;
+    const n=Number(count)||0;
+    if(!total||!n||!firstDue){setRows([]);return;}
+    setRows(generateInstallmentSchedule({firstDueDate:firstDue,count:n,total}));
+  },[f.originalAmount,count,firstDue,handEdited]);
+
+  const check=scheduleDiff(f.originalAmount,rows);
+  const canSave=!!String(f.name).trim()&&rows.length>0&&(Number(f.originalAmount)||0)>0&&check.ok;
+  const setRow=(i,patch)=>{setHandEdited(true);setRows(rs=>rs.map((r,j)=>j===i?{...r,...patch}:r));};
+  const removeRow=i=>{setHandEdited(true);setRows(rs=>rs.filter((_,j)=>j!==i).map((r,j)=>({...r,sequence:j+1})));};
+  const addRow=()=>{setHandEdited(true);setRows(rs=>{
+    const last=rs[rs.length-1];
+    return[...rs,{sequence:rs.length+1,
+      dueDate:last?addMonthsISO(last.dueDate,1):firstDue,scheduledAmount:0}];
+  });};
+  const regenerate=()=>{
+    const total=Number(f.originalAmount)||0,n=Number(count)||0;
+    if(!total||!n||!firstDue)return;
+    setHandEdited(false);
+    setRows(generateInstallmentSchedule({firstDueDate:firstDue,count:n,total}));
+  };
+  const submit=()=>{
+    if(!canSave)return;
+    const plan={owner,name:String(f.name).trim(),provider:f.provider,
+      customProviderName:f.provider==="other"?String(f.customProviderName||"").trim():"",
+      purchaseDate:f.purchaseDate,originalAmount:Number(f.originalAmount)||0,
+      currency:cur,includeInBudget:!!f.includeInBudget,notes:f.notes||""};
+    onSave({plan,rows:rows.map((r,i)=>({id:r.id,sequence:i+1,dueDate:r.dueDate,
+      scheduledAmount:Number(r.scheduledAmount)||0}))});
+  };
+  const lab={fontSize:12,color:P.sub,marginBottom:4};
+  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,
+    background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+        style={{maxWidth:460,maxHeight:"88dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>
+            {editing?"Edit installment":"New installment"}
+          </h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
+            style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+        </div>
+
+        {/* Owner is shown, not chosen: an installment belongs to whoever the
+            tab is showing, and a picker here would invite splitting a plan
+            from the budget row and ledger entry it must stay married to. */}
+        <div style={{fontSize:12,color:P.sub,marginBottom:14}}>
+          For <strong style={{color:P.ink}}>{ownerLabel}</strong> · amounts in {cur}
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <div style={lab}>What did you buy?</div>
+          <input value={f.name} onChange={e=>set({name:e.target.value})}
+            placeholder="e.g. Office chair" autoFocus style={box}/>
+        </div>
+
+        <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+          <div style={{flex:"1 1 150px",minWidth:0}}>
+            <div style={lab}>Provider</div>
+            <select value={f.provider} onChange={e=>set({provider:e.target.value})} style={box}>
+              {INSTALLMENT_PROVIDERS.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+          </div>
+          {f.provider==="other"&&(
+            <div style={{flex:"1 1 150px",minWidth:0}}>
+              <div style={lab}>Provider name</div>
+              <input value={f.customProviderName} onChange={e=>set({customProviderName:e.target.value})}
+                placeholder="e.g. Store plan" style={box}/>
+            </div>)}
+        </div>
+
+        <div style={{display:"flex",gap:10,marginBottom:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={lab}>Purchase date</div>
+            <input type="date" value={f.purchaseDate} onChange={e=>set({purchaseDate:e.target.value})} style={box}/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={lab}>Total amount</div>
+            <NumField value={f.originalAmount} onCommit={v=>set({originalAmount:v})}
+              allowEmpty min={0} live className="tnum" style={box}/>
+          </div>
+        </div>
+
+        {!editing&&(
+          <div style={{display:"flex",gap:10,marginBottom:12}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={lab}>First payment due</div>
+              <input type="date" value={firstDue} onChange={e=>{setHandEdited(false);setFirstDue(e.target.value);}} style={box}/>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={lab}>Number of payments</div>
+              <NumField value={count} onCommit={v=>{setHandEdited(false);setCount(v);}}
+                integer min={1} max={60} live className="tnum" style={box}/>
+            </div>
+          </div>)}
+
+        <label style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,
+          minHeight:40,fontSize:14,color:P.ink}}>
+          <input type="checkbox" checked={!!f.includeInBudget}
+            onChange={e=>set({includeInBudget:e.target.checked})}
+            style={{width:18,height:18,accentColor:P.jade}}/>
+          <span>Include in Budget
+            <span style={{display:"block",fontSize:11,color:P.faint}}>
+              Shows each payment in the period it falls due
+            </span>
+          </span>
+        </label>
+
+        <div style={{marginBottom:14}}>
+          <div style={lab}>Notes (optional)</div>
+          <input value={f.notes} onChange={e=>set({notes:e.target.value})}
+            placeholder="e.g. 4 payments, no fees" style={box}/>
+        </div>
+
+        {/* ── Schedule editor ── */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{fontSize:13,fontWeight:600,color:P.ink}}>Payment schedule</div>
+          <button onClick={regenerate} className="status-pill"
+            style={{border:`1px solid ${P.line}`,background:"transparent",color:P.sub,cursor:"pointer"}}>
+            Regenerate
+          </button>
+        </div>
+        <div style={{...neuInset(12),padding:"4px 0",marginBottom:10}}>
+          {rows.length===0
+            ?<div style={{padding:"14px 12px",fontSize:12,color:P.faint}}>
+               Enter a total amount and number of payments to build a schedule.
+             </div>
+            :rows.map((r,i)=>{
+              const paid=r.status==="paid";
+              const cancelled=r.status==="cancelled";
+              return(
+                <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:8,
+                  padding:"6px 10px",opacity:cancelled?.5:1}}>
+                  <span style={{fontSize:11,color:P.faint,width:20,flexShrink:0}} className="tnum">#{i+1}</span>
+                  <input type="date" value={r.dueDate||""} disabled={paid||cancelled}
+                    onChange={e=>setRow(i,{dueDate:e.target.value})}
+                    aria-label={`Due date for payment ${i+1}`}
+                    style={{...box,flex:"1 1 120px",minWidth:0,padding:"6px 8px",fontSize:13}}/>
+                  {paid||cancelled
+                    ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:13,
+                        fontWeight:600,color:P.neuSub}}>{fmt(Number(r.scheduledAmount)||0)}</span>
+                    :<NumField value={r.scheduledAmount} onCommit={v=>setRow(i,{scheduledAmount:v})}
+                       min={0} live className="tnum" aria-label={`Amount for payment ${i+1}`}
+                       style={{...box,width:88,flexShrink:0,padding:"6px 8px",fontSize:13,textAlign:"right"}}/>}
+                  {paid
+                    ?<span style={{fontSize:9,fontWeight:700,color:P.gr,background:P.sfA,
+                        borderRadius:999,padding:"2px 6px",flexShrink:0}}>PAID</span>
+                    :<IconButton icon={I.Trash} label={`Remove payment ${i+1}`}
+                       onClick={()=>removeRow(i)} size={13}
+                       style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32,flexShrink:0}}/>}
+                </div>
+              );
+            })}
+          {rows.length>0&&
+            <button onClick={addRow} style={{background:"transparent",border:"none",color:P.jade,
+              fontSize:12,fontWeight:600,padding:"8px 12px",minHeight:40}}>+ Add a payment</button>}
+        </div>
+
+        {/* Live reconciliation. Shown always (not only on error) so the person
+            can see the schedule agreeing with the receipt before saving. */}
+        <div style={{fontSize:12,marginBottom:14,display:"flex",flexDirection:"column",gap:2}}>
+          <div style={{display:"flex",justifyContent:"space-between",color:P.sub}}>
+            <span>Original amount</span><span className="tnum">{fmt(check.originalAmount)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",color:P.sub}}>
+            <span>Scheduled total</span><span className="tnum">{fmt(check.scheduledTotal)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",
+            color:check.ok?P.gr:P.wine,fontWeight:600}}>
+            <span>Difference</span>
+            <span className="tnum">{check.difference>0?"+":""}{fmt(check.difference)}</span></div>
+          {!check.ok&&<div style={{color:P.wine,fontSize:11,marginTop:2}}>
+            The schedule must add up to the total before you can save.</div>}
+        </div>
+
+        <button onClick={submit} disabled={!canSave}
+          style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
+            background:canSave?P.jade:P.sfA,color:canSave?"#fff":P.faint,border:"none"}}>
+          {editing?"Save changes":"Create installment"}
+        </button>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+/* ── Record a payment ──────────────────────────────────────────────────────
+   Scheduled vs actual are stored separately on purpose: the ledger row uses
+   what really left the account, while Budget keeps planning the scheduled
+   figure. A few halalas of difference never redistributes the rest of the
+   schedule — if a provider genuinely changes the remaining amounts, that's an
+   explicit schedule edit, not something inferred from one payment. ────────── */
+function InstallmentPaymentSheet({inst,payment,fmt,cur,onClose,onConfirm}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const[amount,setAmount]=useState(payment.scheduledAmount);
+  const[date,setDate]=useState(payment.paidDate||todayISO());
+  const diff=roundTo((Number(amount)||0)-(Number(payment.scheduledAmount)||0),2);
+  const lab={fontSize:12,color:P.sub,marginBottom:4};
+  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,
+    background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+        style={{maxWidth:400,maxHeight:"88dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Record payment</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
+            style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+        </div>
+        <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:14}}>
+          <div style={{fontSize:12,color:P.sub}}>{installmentProviderLabel(inst)}</div>
+          <div style={{fontSize:15,fontWeight:600,color:P.ink}}>{inst.name}</div>
+          <div style={{fontSize:12,color:P.faint,marginTop:2}}>
+            Payment #{payment.sequence} · due {instLongDate(payment.dueDate)} ·
+            scheduled <span className="tnum">{fmt(payment.scheduledAmount)}</span>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,marginBottom:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={lab}>Amount paid ({cur})</div>
+            <NumField value={amount} onCommit={setAmount} min={0} live className="tnum" style={box}/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={lab}>Payment date</div>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={box}/>
+          </div>
+        </div>
+        {Math.abs(diff)>INSTALLMENT_ROUND_TOL&&
+          <div style={{fontSize:12,color:P.sub,marginBottom:12}}>
+            {diff>0?"+":""}<span className="tnum">{fmt(diff)}</span> against the scheduled amount.
+            The remaining payments are left exactly as they are — edit the schedule if the
+            provider changed them.
+          </div>}
+        <div style={{fontSize:11,color:P.faint,marginBottom:14}}>
+          This creates one transfer in Expenses, linked to this payment.
+        </div>
+        {(()=>{
+          const ok=(Number(amount)||0)>0&&!!date;
+          return(
+            <button onClick={()=>{if(ok)onConfirm({actualAmount:Number(amount)||0,paidDate:date});}}
+              disabled={!ok}
+              style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
+                background:ok?P.jade:P.sfA,color:ok?"#fff":P.faint,border:"none"}}>
+              Record {fmt(Number(amount)||0)}
+            </button>
+          );
+        })()}
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+/* ── Pay off early ─────────────────────────────────────────────────────────
+   Shows the consequence before it happens (same convention as
+   UpdateBalanceSheet and the category-move sheet): what's still scheduled,
+   how many payments close, and which future periods lose their Budget rows.
+   ONE ledger row is created for the whole payoff — never one per cancelled
+   payment, which would triple-count the money that actually moved. ───────── */
+function InstallmentPayoffSheet({inst,pays,fmt,cur,payPeriods,onClose,onConfirm}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const open=pays.filter(installmentPaymentIsOpen);
+  const remaining=installmentRemainingBalance(inst,pays);
+  const[amount,setAmount]=useState(remaining);
+  const[date,setDate]=useState(todayISO());
+  const[note,setNote]=useState("");
+  const owner=inst.owner||"me";
+  const periods=[...new Set(open.map(p=>bucketKeyFor(p.dueDate,payPeriods,owner)))]
+    .sort().map(k=>bucketLabel(k,payPeriods,owner));
+  const lab={fontSize:12,color:P.sub,marginBottom:4};
+  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,
+    background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+        style={{maxWidth:400,maxHeight:"88dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Pay off early</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
+            style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+        </div>
+        <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:14}}>
+          <div style={{fontSize:15,fontWeight:600,color:P.ink}}>{inst.name}</div>
+          <div style={{fontSize:12,color:P.sub,marginTop:6}}>Remaining scheduled balance</div>
+          <div className="serif tnum" style={{fontSize:22,fontWeight:600,color:P.ink}}>{fmt(remaining)}</div>
+          <div style={{fontSize:12,color:P.faint,marginTop:6}}>
+            {open.length} future payment{open.length===1?"":"s"} will close.
+          </div>
+          {periods.length>0&&
+            <div style={{fontSize:11,color:P.faint,marginTop:4}}>
+              Budget rows disappear from: {periods.join(" · ")}
+            </div>}
+        </div>
+        <div style={{display:"flex",gap:10,marginBottom:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={lab}>Payoff amount ({cur})</div>
+            <NumField value={amount} onCommit={setAmount} min={0} live className="tnum" style={box}/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={lab}>Payoff date</div>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={box}/>
+          </div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={lab}>Note (optional)</div>
+          <input value={note} onChange={e=>setNote(e.target.value)}
+            placeholder="e.g. settled in the app" style={box}/>
+        </div>
+        <div style={{fontSize:11,color:P.faint,marginBottom:14}}>
+          Payments already recorded stay exactly as they are. One transfer is created for
+          the payoff itself.
+        </div>
+        <button onClick={()=>onConfirm({amount:Number(amount)||0,payoffDate:date,note})}
+          style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
+            background:P.jade,color:"#fff",border:"none"}}>
+          Pay off {fmt(Number(amount)||0)}
+        </button>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+/* ── Schedule sheet ── every row, its state, and what actually got paid ── */
+function InstallmentScheduleSheet({inst,pays,fmt,today,onClose,onRecord}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+        style={{maxWidth:420,maxHeight:"88dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Schedule</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
+            style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+        </div>
+        <div style={{fontSize:12,color:P.sub,marginBottom:14}}>
+          {inst.name} · {installmentProviderLabel(inst)}
+        </div>
+        <div style={{...neuInset(12),padding:"2px 0"}}>
+          {pays.map(p=>{
+            const st=installmentPaymentDerivedStatus(p,today);
+            const tone=st==="paid"?P.gr:st==="overdue"?P.wine:st==="cancelled"?P.faint:P.neuSub;
+            const differs=st==="paid"&&p.actualAmount!=null
+              &&Math.abs(Number(p.actualAmount)-Number(p.scheduledAmount))>INSTALLMENT_ROUND_TOL;
+            return(
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",
+                borderBottom:"1px solid rgba(0,0,0,.05)",opacity:st==="cancelled"?.55:1}}>
+                <span className="tnum" style={{fontSize:11,color:P.faint,width:20,flexShrink:0}}>#{p.sequence}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:P.neuInk}}>{instLongDate(p.dueDate)}</div>
+                  <div style={{fontSize:11,color:tone,textTransform:"capitalize"}}>
+                    {st}{st==="paid"&&p.paidDate?` · ${instShortDate(p.paidDate)}`:""}
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div className="tnum" style={{fontSize:14,fontWeight:600,color:P.neuInk}}>
+                    {fmt(differs?Number(p.actualAmount):Number(p.scheduledAmount)||0)}
+                  </div>
+                  {differs&&<div className="tnum" style={{fontSize:10,color:P.faint}}>
+                    scheduled {fmt(Number(p.scheduledAmount)||0)}</div>}
+                </div>
+                {st!=="paid"&&st!=="cancelled"&&
+                  <button onClick={()=>onRecord(p)} className="status-pill"
+                    style={{flexShrink:0,border:"none",background:P.jadeS,color:P.jade,cursor:"pointer"}}>
+                    Pay
+                  </button>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+/* ── One installment card ── */
+function InstallmentCard({inst,pays,fmt,today,highlight,onRecord,onPayoff,onSchedule,onEdit,onCancel,onDelete}){
+  const[menu,setMenu]=useState(false);
+  const status=installmentDerivedStatus(inst,pays);
+  const meta=INSTALLMENT_STATUS_META[status]||INSTALLMENT_STATUS_META.active;
+  const prov=installmentProvider(inst.provider);
+  const Icon=I[prov.iconKey]||I.Receipt;
+  const prog=installmentProgress(pays);
+  const remaining=installmentRemainingBalance(inst,pays);
+  const next=installmentNextPayment(pays,today);
+  const overdue=pays.some(p=>installmentPaymentDerivedStatus(p,today)==="overdue");
+  const done=installmentExpectedCompletion(pays);
+  const open=status==="active";
+  const badgeColor=overdue&&open?P.wine:meta.color();
+  const badgeBg=overdue&&open?P.redS:meta.bg();
+  const act={display:"flex",alignItems:"center",gap:6,minHeight:40,padding:"6px 10px",
+    borderRadius:10,fontSize:12,fontWeight:600,border:`1px solid ${P.line}`,
+    background:"transparent",color:P.neuSub,cursor:"pointer"};
+  return(
+    <section style={{...neu(16),padding:14,marginBottom:12,
+      outline:highlight?`2px solid ${P.jade}`:"none"}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+        <div style={{width:36,height:36,borderRadius:10,flexShrink:0,display:"flex",
+          alignItems:"center",justifyContent:"center",background:prov.color+"22",color:prov.color}}>
+          <Icon size={18}/>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:15,fontWeight:600,color:P.neuInk,overflow:"hidden",
+            textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{inst.name||"Installment"}</div>
+          <div style={{fontSize:12,color:P.neuSub}}>{installmentProviderLabel(inst)}</div>
+        </div>
+        <span className="status-pill" style={{flexShrink:0,color:badgeColor,background:badgeBg,
+          border:"none",fontWeight:700}}>
+          {overdue&&open?"Overdue":meta.label}
+        </span>
+      </div>
+
+      <div style={{...neuInset(999),height:8,margin:"12px 0 6px",overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${prog.pct}%`,borderRadius:999,
+          background:liquidFillBg(overdue&&open?P.wine:prov.color),transition:"width .4s"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:P.neuSub}}>
+        <span>{prog.paid} of {prog.total} payments paid</span>
+        <span className="tnum">{fmt(remaining)} left</span>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"space-between",gap:10,
+        fontSize:12,color:P.faint,marginTop:6,flexWrap:"wrap"}}>
+        {next
+          ?<span>Next <span className="tnum" style={{color:P.neuSub,fontWeight:600}}>{fmt(next.scheduledAmount)}</span> on {instShortDate(next.dueDate)}</span>
+          :<span>No payments outstanding</span>}
+        {done&&open&&<span>Ends {instShortDate(done)}</span>}
+      </div>
+
+      <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+        {open&&next&&
+          <button onClick={()=>onRecord(next)} style={{...act,border:"none",background:P.jade,color:"#fff"}}>
+            <I.Check size={13}/> Record payment
+          </button>}
+        {open&&next&&
+          <button onClick={onPayoff} style={act}><I.Send size={13}/> Pay off early</button>}
+        <button onClick={onSchedule} style={act}><I.Calendar size={13}/> Schedule</button>
+        <button onClick={onEdit} style={act}><I.Edit size={13}/> Edit</button>
+        <button onClick={()=>setMenu(m=>!m)} aria-expanded={menu} style={act}>
+          <I.MoreHorizontal size={13}/> More
+        </button>
+      </div>
+      {menu&&
+        <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+          {open&&
+            <button onClick={()=>{setMenu(false);onCancel();}}
+              style={{...act,color:P.wine}}><I.X size={13}/> Cancel plan</button>}
+          <button onClick={()=>{setMenu(false);onDelete();}}
+            style={{...act,color:P.wine}}><I.Trash size={13}/> Delete record</button>
+        </div>}
+    </section>
+  );
+}
+
+function InstallmentsView({installments,installmentPayments,addInstallment,updateInstallment,
+  recordInstallmentPayment,payOffInstallmentEarly,cancelInstallment,removeInstallment,
+  fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,focus}){
+  const today=todayISO();
+  const bucket=bucketNow(payPeriods,budgetOwner);
+  const mine=useMemo(()=>installmentsForOwner(installments,budgetOwner),[installments,budgetOwner]);
+  const paysOf=useMemo(()=>{
+    const m={};
+    mine.forEach(x=>{m[x.id]=installmentPaymentsFor(installmentPayments,x.id);});
+    return m;
+  },[mine,installmentPayments]);
+  const summary=useMemo(()=>installmentSummary(installments,installmentPayments,budgetOwner,
+    {bucketKey:bucket,payPeriods,todayStr:today}),[installments,installmentPayments,budgetOwner,bucket,payPeriods,today]);
+
+  const grouped=useMemo(()=>{
+    const out={active:[],completed:[],paidOffEarly:[],cancelled:[]};
+    mine.forEach(x=>{(out[installmentDerivedStatus(x,paysOf[x.id]||[])]||out.active).push(x);});
+    out.active.sort((a,b)=>{
+      const na=installmentNextPayment(paysOf[a.id]||[],today),nb=installmentNextPayment(paysOf[b.id]||[],today);
+      return String((na&&na.dueDate)||"9999").localeCompare(String((nb&&nb.dueDate)||"9999"));
+    });
+    ["completed","paidOffEarly","cancelled"].forEach(k=>out[k].sort((a,b)=>
+      String(b.closedAt||b.updatedAt||"").localeCompare(String(a.closedAt||a.updatedAt||""))));
+    return out;
+  },[mine,paysOf,today]);
+
+  /* Active is expanded and the closed groups are not — history stays one tap
+     away without competing with what still needs paying. */
+  const[openSections,setOpenSections]=useState({active:true,completed:false,paidOffEarly:false,cancelled:false});
+  const[sheet,setSheet]=useState(null);          // {mode:"add"|"edit", id?}
+  const[paySheet,setPaySheet]=useState(null);    // {installmentId,paymentId}
+  const[payoffId,setPayoffId]=useState(null);
+  const[scheduleId,setScheduleId]=useState(null);
+  const[confirm,setConfirm]=useState(null);      // {type:"cancel"|"delete", id, name}
+  const[highlight,setHighlight]=useState(null);
+  const cardRefs=useRef({});
+
+  /* Arriving from a derived Budget row: open the right section, mark the card
+     and scroll to it. One-shot on `nonce` so tapping the same row twice works. */
+  useEffect(()=>{
+    if(!focus||!focus.id)return;
+    const inst=mine.find(x=>x.id===focus.id);
+    if(!inst)return;
+    const st=installmentDerivedStatus(inst,paysOf[inst.id]||[]);
+    setOpenSections(s=>({...s,[st]:true}));
+    setHighlight(focus.id);
+    const t=setTimeout(()=>{
+      const el=cardRefs.current[focus.id];
+      if(el&&el.scrollIntoView)el.scrollIntoView({block:"center",behavior:"smooth"});
+    },80);
+    const clear=setTimeout(()=>setHighlight(null),2400);
+    return()=>{clearTimeout(t);clearTimeout(clear);};
+  },[focus&&focus.nonce]);
+
+  const editing=sheet&&sheet.mode==="edit"?mine.find(x=>x.id===sheet.id):null;
+  const payInst=paySheet?mine.find(x=>x.id===paySheet.installmentId):null;
+  const payRow=paySheet?(paysOf[paySheet.installmentId]||[]).find(p=>p.id===paySheet.paymentId):null;
+  const payoffInst=payoffId?mine.find(x=>x.id===payoffId):null;
+  const schedInst=scheduleId?mine.find(x=>x.id===scheduleId):null;
+
+  return(
+    <div>
+      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+
+      {/* ── Summary ── */}
+      <section style={{...neu(16),padding:14,marginBottom:16}}>
+        <div style={{fontSize:12,color:P.neuSub}}>Due this period</div>
+        <div className="serif tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
+          {fmt(summary.dueThisPeriod)}
+        </div>
+        <div style={{fontSize:11,color:P.faint,marginBottom:12}}>
+          {bucketLabel(bucket,payPeriods,budgetOwner)}
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:P.neuSub}}>
+          <div style={{...neuInset(12),padding:"8px 10px",flex:"1 1 120px"}}>
+            <div style={{fontSize:11,color:P.faint}}>Remaining balance</div>
+            <div className="tnum" style={{fontSize:15,fontWeight:600,color:P.neuInk}}>{fmt(summary.remaining)}</div>
+          </div>
+          <div style={{...neuInset(12),padding:"8px 10px",flex:"1 1 90px"}}>
+            <div style={{fontSize:11,color:P.faint}}>Active</div>
+            <div className="tnum" style={{fontSize:15,fontWeight:600,color:P.neuInk}}>{summary.activeCount}</div>
+          </div>
+          <div style={{...neuInset(12),padding:"8px 10px",flex:"1 1 140px"}}>
+            <div style={{fontSize:11,color:P.faint}}>Next payment</div>
+            <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>
+              {summary.next
+                ?<span className="tnum">{fmt(summary.next.scheduledAmount)} · {instShortDate(summary.next.dueDate)}</span>
+                :"—"}
+            </div>
+          </div>
+        </div>
+        {summary.overdueCount>0&&
+          <div style={{marginTop:10,fontSize:12,color:P.wine,fontWeight:600}}>
+            {summary.overdueCount} payment{summary.overdueCount===1?"":"s"} past due.
+          </div>}
+      </section>
+
+      {mine.length===0&&
+        <div style={{...neu(16),padding:"24px 16px",textAlign:"center",color:P.neuSub}}>
+          <div style={{fontSize:14,fontWeight:600,color:P.neuInk,marginBottom:4}}>No installments yet</div>
+          <div style={{fontSize:12}}>Add a Tabby, Tamara, Amazon or card plan and each payment
+            will show up in the Budget period it falls due.</div>
+        </div>}
+
+      {INSTALLMENT_SECTIONS.map(({key,label})=>{
+        const items=grouped[key]||[];
+        if(!items.length)return null;
+        const isOpen=!!openSections[key];
+        return(
+          <div key={key} style={{marginBottom:16}}>
+            <button onClick={()=>setOpenSections(s=>({...s,[key]:!s[key]}))}
+              aria-expanded={isOpen}
+              style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:40,
+                background:"transparent",border:"none",padding:"4px 2px",marginBottom:6,
+                color:key==="active"?P.neuInk:P.neuSub,
+                fontSize:key==="active"?15:13,fontWeight:key==="active"?700:600}}>
+              <I.Chevron size={13} style={{transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+              {label}
+              <span style={{fontSize:11,color:P.faint,fontWeight:600}}>{items.length}</span>
+            </button>
+            {isOpen&&items.map(x=>(
+              <div key={x.id} ref={el=>{cardRefs.current[x.id]=el;}}>
+                <InstallmentCard inst={x} pays={paysOf[x.id]||[]} fmt={fmt} today={today}
+                  highlight={highlight===x.id}
+                  onRecord={p=>setPaySheet({installmentId:x.id,paymentId:p.id})}
+                  onPayoff={()=>setPayoffId(x.id)}
+                  onSchedule={()=>setScheduleId(x.id)}
+                  onEdit={()=>setSheet({mode:"edit",id:x.id})}
+                  onCancel={()=>setConfirm({type:"cancel",id:x.id,name:x.name||"this installment"})}
+                  onDelete={()=>setConfirm({type:"delete",id:x.id,name:x.name||"this installment"})}/>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+
+      {/* Installments' own FAB: the global one adds a transaction, which is a
+          different action from adding a plan.
+          Portalled for the same reason every sheet is — TabPane's tab-enter
+          animation is fill-mode:both, so its final transform makes it the
+          containing block for position:fixed children and an un-portalled
+          .fab-btn parks itself inside the tab pane instead of the viewport. */}
+      <Portal>
+        <button aria-label="Add installment" className="fab-btn"
+          onClick={()=>setSheet({mode:"add"})} style={{background:P.gr}}>
+          <I.Plus size={24}/>
+        </button>
+      </Portal>
+
+      {sheet&&
+        <InstallmentEditSheet
+          key={sheet.mode==="edit"?sheet.id:"add"}
+          initial={editing||null}
+          payments={editing?(paysOf[editing.id]||[]):[]}
+          owner={budgetOwner} ownerLabel={owners[budgetOwner]||budgetOwner}
+          cur={cur} fmt={fmt}
+          onClose={()=>setSheet(null)}
+          onSave={({plan,rows})=>{
+            if(editing)updateInstallment(editing.id,plan,rows);
+            else addInstallment(plan,rows);
+            setSheet(null);
+          }}/>}
+
+      {payInst&&payRow&&
+        <InstallmentPaymentSheet inst={payInst} payment={payRow} fmt={fmt} cur={cur}
+          onClose={()=>setPaySheet(null)}
+          onConfirm={({actualAmount,paidDate})=>{
+            recordInstallmentPayment(payRow.id,{actualAmount,paidDate});
+            setPaySheet(null);
+          }}/>}
+
+      {payoffInst&&
+        <InstallmentPayoffSheet inst={payoffInst} pays={paysOf[payoffInst.id]||[]}
+          fmt={fmt} cur={cur} payPeriods={payPeriods}
+          onClose={()=>setPayoffId(null)}
+          onConfirm={args=>{payOffInstallmentEarly(payoffInst.id,args);setPayoffId(null);}}/>}
+
+      {schedInst&&
+        <InstallmentScheduleSheet inst={schedInst} pays={paysOf[schedInst.id]||[]}
+          fmt={fmt} today={today} onClose={()=>setScheduleId(null)}
+          onRecord={p=>{setScheduleId(null);setPaySheet({installmentId:schedInst.id,paymentId:p.id});}}/>}
+
+      <ConfirmDialog open={!!confirm}
+        title={confirm&&confirm.type==="cancel"?"Cancel this installment?":"Delete this installment?"}
+        message={confirm&&confirm.type==="cancel"
+          ?`Unpaid payments for "${confirm.name}" will be closed and disappear from future Budget periods. Payments you have already recorded stay in Expenses exactly as they are.`
+          :confirm?`"${confirm.name}" and its unpaid schedule move to Recently Deleted, and its future Budget rows disappear. Transactions for payments you already recorded are NOT deleted — remove those separately in Expenses if you want them gone.`:""}
+        confirmLabel={confirm&&confirm.type==="cancel"?"Cancel plan":"Delete"}
+        onCancel={()=>setConfirm(null)}
+        onConfirm={()=>{
+          if(confirm.type==="cancel")cancelInstallment(confirm.id);
+          else removeInstallment(confirm.id);
+          setConfirm(null);
+        }}/>
+    </div>
+  );
+}
+
 /* ── OVERVIEW VIEW ── */
 /* ── TARGETS / FORECAST VIEW ──────────────────────────────────────────────
    Trend-based capital forecasting. Unlike Goals (manual-contribution pots),
@@ -10853,7 +12352,7 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
 function RecentlyDeletedModal({data,restoreRecord,retentionDays,onClose}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
-  const groups=useMemo(()=>CONFLICT_COLLECTIONS.map(({key,label,nameOf})=>({
+  const groups=useMemo(()=>CONFLICT_COLLECTIONS.filter(c=>!HIDE_FROM_RECENTLY_DELETED.has(c.key)).map(({key,label,nameOf})=>({
     key,label,
     items:((data||{})[key]||[]).filter(x=>x.deletedAt).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt)).map(x=>({id:x.id,label:nameOf(x),deletedAt:x.deletedAt})),
   })).filter(g=>g.items.length),[data]);
