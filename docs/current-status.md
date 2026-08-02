@@ -2,6 +2,13 @@
 
 _Last updated: 2026-08-02 (Installments module)_
 
+**Live build:** `2026.08.02.0001` / v1.19.0, pushed to `main` (GitHub Pages
+serves `index.html` from there). Working tree clean.
+**Pick up next:** the UnaccountedSheet plan-vs-actual reconciliation at the top
+of `roadmap.md` — still scoped, still not built. Installments now feeds it; see
+the "Installment payments are Transfers out" section of `decisions.md` for how
+the planned side must be counted without double counting.
+
 ## Installments module (2026-08-02)
 
 Build `2026.08.02.0001` / v1.19.0. A new tab for short-term purchase
