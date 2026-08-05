@@ -1,8 +1,36 @@
 # Current Status
 
-_Last updated: 2026-08-05 (two-phone protocol passed; device-name fix, v1.22.1)_
+_Last updated: 2026-08-05 (sync-failure detail in Settings, v1.22.2)_
 
-**Live build:** `2026.08.05.0006` / v1.22.1, deployed and serving.
+**Live build:** `2026.08.05.0007` / v1.22.2.
+
+## Sync failures now say why (2026-08-05, v1.22.2)
+
+Build `2026.08.05.0007` / v1.22.2. Display only — no behaviour, no data shape.
+
+The reason a sync failed lived **only** in a `title` tooltip on the cloud
+button, which no phone renders, so a failure on the affected device was
+undiagnosable. That is why the v1.22.1 device-name bug — `fetch` throwing before
+a byte was sent — cost a whole session and was ultimately spotted by the user
+rather than reported by the app.
+
+The Settings status row now prints `lastSyncError` plus `HTTP <status>` when
+there is one, in monospace, under "Sync failed". A thrown `TypeError` and an
+`HTTP 500` need completely different responses and were previously identical on
+screen. Nothing shown is secret: it is an exception message or a status code,
+and the passphrase is in neither. The 401 "Passphrase rejected" row is
+unchanged — it already had its own wording because its fix is different again.
+
+**Verified** by pointing a sandbox copy's `PROXY_URL` at an unreachable host and
+seeding a dummy passphrase: the row rendered `Failed to fetch`, with no HTTP
+suffix (correct — no response came back), version read 1.22.2, no console
+errors. **Reuse that recipe** — it is the only way to reach the thrown-fetch
+branch without breaking the real Worker. `parsecheck.cjs` OK, fourteen runners
+green.
+
+## Two-phone protocol passed; device-name fix (v1.22.1)
+
+**Previous build:** `2026.08.05.0006` / v1.22.1, deployed and serving.
 **Live Worker version:** `a3cb3ce0-32dc-449f-97c1-35c19ac046f8` (Durable Object).
 **Pick up next:** Build 4 — faster transaction entry. (Build 3 is complete:
 3B server atomicity, 3C-1 merge fixes, 3C-2 per-category merge. The one piece

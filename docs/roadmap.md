@@ -68,15 +68,15 @@ Two things learned worth reusing:
   now an exception path only. Don't schedule work to "test" it; if it appears,
   `tryAutoMergeAll` threw.
 
-### Follow-up opened by the v1.22.1 device-name bug — DO THIS BEFORE MORE SYNC WORK
-- **A sync failure is undiagnosable from a phone.** `lastSyncError` and
-  `KVSync.lastStatus` are captured but rendered **only** in a `title` tooltip
-  (`index.html:5775`), which no phone displays; the Settings row shows a generic
-  "Sync failed". A device-name bug that made `fetch` throw before sending a byte
-  therefore took a full debugging session and was ultimately spotted by the user,
-  not by the app. Render both in the Settings status row — a thrown `TypeError`
-  and an `HTTP 500` need completely different responses and currently look
-  identical. Small, display-only, no data-model impact.
+### Follow-up opened by the v1.22.1 device-name bug
+- ~~**A sync failure is undiagnosable from a phone.**~~ **DONE 2026-08-05**,
+  build `2026.08.05.0007` / v1.22.2 — the Settings status row now shows
+  `lastSyncError` and `KVSync.lastStatus` under "Sync failed", in monospace.
+  Nothing there is secret (an exception message or an HTTP status; the
+  passphrase is in neither). Verified by pointing a sandbox copy's `PROXY_URL`
+  at an unreachable host, which rendered `Failed to fetch` — reuse that recipe,
+  it is the only way to reach the thrown-fetch branch without breaking the real
+  Worker.
 - **Nothing else that reaches a header or URL is sanitized.** `headerSafe()`
   fixes `X-Device-Id`. Audit for any future header/query value built from user
   text before it ships, rather than after.

@@ -2025,8 +2025,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.22.1";
-const BUILD_ID="2026.08.05.0006";
+const APP_VERSION="1.22.2";
+const BUILD_ID="2026.08.05.0007";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -13415,9 +13415,25 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 </div>
               );
               const s=statusMap[syncStatus]||statusMap.idle;
+              /* The reason a sync failed used to live ONLY in a title tooltip on
+                 the cloud button, which no phone renders — so a failure on the
+                 device that had it was undiagnosable, and the v1.22.1
+                 device-name bug (fetch throwing before a byte was sent) took a
+                 whole session to find instead of being readable off the screen.
+                 Show it here. "TypeError: ..." and "HTTP 500" need completely
+                 different responses and otherwise look identical.
+                 Nothing here is secret: lastSyncError is an exception message or
+                 an HTTP status, and the passphrase is never in either. */
+              const failDetail=syncStatus==="failed"&&(lastSyncError||KVSync.lastStatus)
+                ?`${lastSyncError||"unknown error"}${KVSync.lastStatus?` · HTTP ${KVSync.lastStatus}`:""}`
+                :"";
               return(
                 <div style={{fontSize:12,color:s.color,marginBottom:8,padding:"8px 10px",background:s.bg,borderRadius:10,lineHeight:1.6}}>
                   <span style={{display:"inline-flex",alignItems:"center",gap:6}}><s.icon size={13}/>{s.label}</span>
+                  {failDetail&&
+                    <div style={{fontSize:11,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",color:P.sub,marginTop:5,padding:"5px 7px",background:P.sf,borderRadius:6,wordBreak:"break-word"}}>
+                      {failDetail}
+                    </div>}
                   <div style={{fontSize:11,color:P.faint,marginTop:4}}>
                     Last saved to cloud: {lastCloudSavedAt?lastCloudSavedAt.toLocaleString():"never"}<br/>
                     Last pulled from cloud: {lastCloudPulledAt?lastCloudPulledAt.toLocaleString():"never"}
