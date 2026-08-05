@@ -17,9 +17,12 @@
 
   "name": "alloc-kv",
   "main": "worker.js",
-  // Must be >= 2024-04-03 for Durable Object RPC methods (room.read() etc.
-  // rather than a fetch() handler inside the object).
-  "compatibility_date": "2026-08-01",
+  // Deliberately the SAME date the Worker is already running (verified with
+  // `wrangler versions view`), so this deploy changes the sync backend and
+  // nothing else. Raising it would quietly opt into unrelated runtime changes
+  // in the same release. It only needs to be >= 2024-04-03 for Durable Object
+  // RPC methods, which this comfortably is.
+  "compatibility_date": "2026-06-27",
 
   // Declarative class lifecycle (replaced the imperative `migrations` array in
   // June 2026). `exports` and `migrations` are mutually exclusive — this Worker
@@ -39,12 +42,17 @@
     ]
   },
 
-  // ⚠ REPLACE the placeholder id below with the real namespace id before the
-  // first deploy — `npx wrangler kv namespace list` prints it. Deploying with
-  // a wrong id points the Worker at an empty namespace.
+  // Verified 2026-08-05 against the deployed Worker
+  // (`wrangler versions view` showed env.ALLOC_KV → 2bd680…), NOT guessed from
+  // the namespace title. The account also has a SYNC_KV namespace holding
+  // `user:data:<uuid>` keys from an older version of the app — it is not bound
+  // here and must not be: this Worker has never read it.
   "kv_namespaces": [
-    { "binding": "ALLOC_KV", "id": "PASTE_ALLOC_KV_NAMESPACE_ID" }
-  ],
+    { "binding": "ALLOC_KV", "id": "2bd680dbc44a480293246ce4c75d541e" }
+  ]
 
-  "observability": { "enabled": true }
+  // Observability/logs deliberately NOT enabled here: the deployed Worker
+  // doesn't have it, and this release should change the sync backend and
+  // nothing else. Worth turning on separately if the cutover ever needs
+  // diagnosing.
 }
