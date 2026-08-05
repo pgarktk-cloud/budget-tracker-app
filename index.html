@@ -1959,8 +1959,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.20.0";
-const BUILD_ID="2026.08.05.0002";
+const APP_VERSION="1.20.1";
+const BUILD_ID="2026.08.05.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3000,7 +3000,42 @@ let _syncedSnapObj=undefined;
 const cacheSyncedSnapshot=d=>{try{localStorage.setItem(LAST_SYNCED_DATA_KEY,JSON.stringify(d));_syncedSnapObj=d;}catch(e){}};
 const loadSyncedSnapshot=()=>{try{const raw=localStorage.getItem(LAST_SYNCED_DATA_KEY);if(raw)return JSON.parse(raw);}catch(e){}return null;};
 const syncedSnapshotObj=()=>{if(_syncedSnapObj===undefined)_syncedSnapObj=loadSyncedSnapshot();return _syncedSnapObj;};
+/* ── Local safety copies ────────────────────────────────────────────────────
+   Two rotating slots, newest first, written before anything that replaces the
+   whole document (import, "Use Cloud", a merge on pull). Two rather than one
+   because the single slot had a sharp edge: a second replacement destroyed the
+   copy you were about to go back to, which is exactly the moment people repeat
+   an action hoping for a different result.
+
+   Storage reality check — this device already holds the live document
+   (STORAGE_KEY) and the last-synced baseline (LAST_SYNCED_DATA_KEY). Two slots
+   makes FOUR copies in a ~5MB localStorage, so writePreCloudSlots degrades on
+   quota instead of failing: it drops the older slot and retries, and only
+   reports failure if even a single slot won't fit. Keeping the newest copy is
+   worth more than keeping both. */
 const PRE_CLOUD_BACKUP_KEY="salaryPlanner:v3:preCloudRestore";
+const PRE_CLOUD_SLOT_LIMIT=2;
+function readPreCloudSlots(){
+  try{
+    const raw=localStorage.getItem(PRE_CLOUD_BACKUP_KEY);
+    if(!raw)return[];
+    const parsed=JSON.parse(raw);
+    if(Array.isArray(parsed))return parsed.filter(s=>s&&s.at&&s.data);
+    // pre-2026-08-05 single-object shape — adopt it as slot 0 rather than
+    // throwing away the one copy an upgrading device might need right now.
+    if(parsed&&parsed.at&&parsed.data)return[{at:parsed.at,label:null,data:parsed.data}];
+  }catch(e){}
+  return[];
+}
+function writePreCloudSlots(slots){
+  for(let keep=Math.min(slots.length,PRE_CLOUD_SLOT_LIMIT);keep>=1;keep--){
+    try{
+      localStorage.setItem(PRE_CLOUD_BACKUP_KEY,JSON.stringify(slots.slice(0,keep)));
+      return slots.slice(0,keep);
+    }catch(e){/* quota — try again with fewer slots */}
+  }
+  return null;
+}
 const PROFILE_KEY="allocation:preferredProfile";
 /* which profile the asset tabs are being VIEWED as — me | wife | household.
    Separate from PROFILE_KEY, which is the remembered default *person*. */
@@ -3636,10 +3671,11 @@ function App(){
   const[lastSyncError,setLastSyncError]=useState(null);
   const localRevRef=useRef(0);
   useEffect(()=>{localRevRef.current=localRev;},[localRev]);
-  const[preCloudBackupAt,setPreCloudBackupAt]=useState(()=>{
-    try{const raw=localStorage.getItem(PRE_CLOUD_BACKUP_KEY);if(raw)return JSON.parse(raw).at;}catch(e){}
-    return null;
-  });
+  /* Two rotating safety copies, newest first. The stored shape is an ARRAY;
+     the pre-2026-08-05 shape was a bare {at,data} object, so readPreCloudSlots
+     normalises that rather than discarding the one copy an upgrading device may
+     be relying on at that exact moment. */
+  const[preCloudSlots,setPreCloudSlots]=useState(()=>readPreCloudSlots().map(s=>({at:s.at,label:s.label||null})));
   /* ── Import hold ────────────────────────────────────────────────────────
      An imported backup replaces everything, and every automatic upload path
      would otherwise push it to the cloud within ~8 seconds — replacing the
@@ -3796,23 +3832,25 @@ function App(){
   };
   const openProfilePicker=()=>{setProfilePickerDismissable(true);setShowProfilePicker(true);};
 
-  /* Returns whether the backup actually landed. The conflict paths ignore the
+  /* Returns whether the copy actually landed. The conflict paths ignore the
      result (they have their own recovery), but import MUST NOT proceed on a
      failed stash — a full localStorage quota would otherwise leave the user
      with no way back to the data the import replaced. */
-  const stashPreCloudBackup=d=>{
+  const stashPreCloudBackup=(d,label)=>{
     try{
       const at=new Date().toISOString();
-      localStorage.setItem(PRE_CLOUD_BACKUP_KEY,JSON.stringify({at,data:d}));
-      setPreCloudBackupAt(at);
+      const next=[{at,label:label||null,data:d},...readPreCloudSlots()];
+      const written=writePreCloudSlots(next);
+      if(!written)return false;
+      setPreCloudSlots(written.map(s=>({at:s.at,label:s.label||null})));
       return true;
     }catch(e){return false;}
   };
-  const restorePreCloudBackup=()=>{
+  const restorePreCloudBackup=(index=0)=>{
     try{
-      const raw=localStorage.getItem(PRE_CLOUD_BACKUP_KEY);
-      if(!raw)return;
-      const backup=JSON.parse(raw);
+      const slots=readPreCloudSlots();
+      const backup=slots[index];
+      if(!backup)return;
       const restored=migrate(backup.data);
       skipSave.current=true;
       setData(restored);
@@ -3837,7 +3875,7 @@ function App(){
     let migrated;
     try{migrated=migrate(JSON.parse(JSON.stringify(raw)));}
     catch(e){return "That backup couldn't be read.";}
-    if(!stashPreCloudBackup(dataRef.current))
+    if(!stashPreCloudBackup(dataRef.current,"before importing a backup"))
       return "Couldn't save a copy of your current data first, so the import was cancelled. Free up some space on this device and try again.";
     /* Only hold when there is something to hold back. On a device with no
        passphrase nothing uploads anyway, and a flag left set here would
@@ -4375,7 +4413,7 @@ function App(){
           if(merged){
             const mergedFP=fingerprint(merged);
             const stillDirty=mergedFP!==remoteFP;
-            stashPreCloudBackup(dataRef.current);
+            stashPreCloudBackup(dataRef.current,"before merging cloud changes");
             skipSave.current=true;
             setData(merged);
             try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
@@ -4498,7 +4536,7 @@ function App(){
   };
   const resolveUseCloud=()=>{
     if(!conflict)return;
-    stashPreCloudBackup(dataRef.current);
+    stashPreCloudBackup(dataRef.current,"before replacing with the cloud copy");
     const remoteMigrated=conflict.remote;
     skipSave.current=true;
     setData(remoteMigrated);
@@ -5655,7 +5693,7 @@ function App(){
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
-        preCloudBackupAt,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
+        preCloudSlots,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
@@ -12665,7 +12703,7 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
               <br/><br/>
               It stays on this device until you tap <b>Save to Cloud</b>, so {partnerName||"your partner"} won't see it before you've had a look.
               <br/><br/>
-              Your current data is kept as <b>one</b> "previous local copy" you can restore from Settings. Importing again replaces that copy too.
+              Your current data is kept as a restorable copy in Settings. The last <b>two</b> are kept, so importing twice by mistake still leaves you a way back.
             </div>}
 
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -12715,7 +12753,7 @@ function SyncDiagnostics({localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,h
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudSlots,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
   const[confirm,setConfirm]=useState(false);
@@ -13163,7 +13201,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               <div style={{fontSize:12,color:P.sub,marginBottom:8,padding:"10px 12px",background:P.amberS,borderRadius:10,lineHeight:1.6}}>
                 <b style={{color:P.amber}}>Imported data is on this device only.</b>
                 <div style={{marginTop:4}}>
-                  Nothing has been uploaded — {owners.wife||"your partner"} is still on the old copy. Tap <b>Save to Cloud</b> to share it, or <b>Restore previous local copy</b> to undo the import. Pulling is paused until you choose.
+                  Nothing has been uploaded — {owners.wife||"your partner"} is still on the old copy. Tap <b>Save to Cloud</b> to share it, or restore one of the saved copies below to undo the import. Pulling is paused until you choose.
                 </div>
               </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
@@ -13177,10 +13215,17 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 <I.Refresh size={14}/>{syncOp==="pull"?"Pulling…":"Pull from Cloud"}
               </button>
             </div>
-            {preCloudBackupAt&&
-              <button onClick={restorePreCloudBackup} style={{...btn,width:"100%",marginBottom:8}}>
-                <I.Reset size={14}/>{importPending?"Undo import — restore previous local copy":"Restore previous local copy"}
-              </button>}
+            {(preCloudSlots||[]).map((slot,i)=>(
+              <button key={slot.at} onClick={()=>restorePreCloudBackup(i)}
+                style={{...btn,width:"100%",marginBottom:8,flexDirection:"column",alignItems:"stretch",gap:2,padding:"9px 12px"}}>
+                <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                  <I.Reset size={14}/>{importPending&&i===0?"Undo import — restore this copy":"Restore this local copy"}
+                </span>
+                <span style={{fontSize:11,color:P.faint,fontWeight:400,textAlign:"center"}}>
+                  {new Date(slot.at).toLocaleString()}{slot.label?` · ${slot.label}`:""}
+                </span>
+              </button>
+            ))}
             <button onClick={()=>setForgetConfirm(true)} style={{...btn,width:"100%",marginBottom:8}}>
               <I.EyeOff size={14}/>Forget passphrase on this device
             </button>

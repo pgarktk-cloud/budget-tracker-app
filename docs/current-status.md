@@ -1,8 +1,44 @@
 # Current Status
 
-_Last updated: 2026-08-05 (backup import hardening)_
+_Last updated: 2026-08-05 (two rotating safety copies)_
 
-**Live build:** `2026.08.05.0002` / v1.20.0.
+**Live build:** `2026.08.05.0003` / v1.20.1.
+
+## Two rotating local safety copies (2026-08-05)
+
+Build `2026.08.05.0003` / v1.20.1. Requested directly after v1.20.0 shipped with
+a single slot. The single slot had a sharp edge: a second replacement destroyed
+the copy you were about to go back to — which is exactly the moment people repeat
+an action hoping for a different result.
+
+- `PRE_CLOUD_BACKUP_KEY` now stores an **array**, newest first, capped at
+  `PRE_CLOUD_SLOT_LIMIT = 2`. `readPreCloudSlots()`/`writePreCloudSlots()` are
+  module-scope and unit-tested.
+- **The pre-2026-08-05 single-object shape is adopted, not discarded** — an
+  upgrading device may be relying on that one copy at that exact moment.
+- Each copy is **labelled with what caused it** ("before importing a backup",
+  "before merging cloud changes", "before replacing with the cloud copy") and
+  shown with its timestamp, so the Settings list is choosable rather than a
+  guess. `restorePreCloudBackup(index)` takes which one.
+- **Quota degradation is the load-bearing part.** This device already holds the
+  live document and the last-synced baseline, so two slots makes *four* copies of
+  a financial document in a ~5 MB localStorage. `writePreCloudSlots` retries with
+  fewer slots on quota and only reports failure when not even one fits — keeping
+  the newest copy is worth more than keeping both. It returns what was actually
+  persisted, so the UI can never offer a restore button for a copy that isn't on
+  disk.
+
+### Verified
+`node parsecheck.cjs` OK. Twelve runners green, including new
+**`backupslottest.cjs` (14/14, committed)** — rotation, eviction order, the
+legacy-shape upgrade, garbage handling, and the quota path driven against a
+fake localStorage with a real byte ceiling.
+
+Driven end-to-end in a sandbox: seeded a legacy single-object copy, imported
+twice in a row, and confirmed the slots read `[IMPORT-ONE, Me]` with the original
+data still reachable — then restored the **older** slot and got the real
+pre-import data back, with the upload hold cleared. Both slots render with
+timestamp and reason. No console errors.
 **Pick up next:** Build 3 of the agreed six-build programme — safer two-device
 sync. **It starts with Checkpoint 3A, which is the user's action, not a code
 change:** confirm Durable Objects are free on their Cloudflare plan and decide

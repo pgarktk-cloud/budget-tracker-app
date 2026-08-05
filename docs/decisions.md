@@ -34,11 +34,31 @@ passphrase costs nothing today and silently blocks syncing months later, the day
 a passphrase is finally entered. State that exists to gate a subsystem should not
 outlive the subsystem being absent.
 
-**One safety slot, said out loud.** The pre-import copy reuses the existing
-"Restore previous local copy" mechanism rather than inventing a second one, which
-means a second import overwrites the first one's copy. That is a real limitation,
-so the sheet says it in the sentence where it matters rather than in a doc nobody
-reads. And a stash that *fails* now aborts the import: proceeding would leave the
+**~~One safety slot~~ two, and the second one earns its keep (revised 2026-08-05).**
+The pre-import copy reuses the existing "Restore previous local copy" mechanism
+rather than inventing a second one. It shipped as a single slot with the
+limitation stated in the sheet; the user asked for two the same day, and they
+were right — the failure mode is specific and likely. A person who imports the
+wrong file often imports *again* looking for the right one, and a one-slot design
+destroys the real data on exactly that second attempt.
+
+Two consequences worth recording:
+
+- **A copy has to say what it is.** With one slot, "Restore previous local copy"
+  was unambiguous. With two, an unlabelled pair of timestamps is a guess, so each
+  slot stores *why* it was taken ("before importing a backup", "before merging
+  cloud changes", "before replacing with the cloud copy").
+- **Two slots is four copies of the document on the device**, alongside the live
+  one and the last-synced baseline, in a ~5 MB localStorage. So the writer
+  degrades rather than fails: it retries with fewer slots on quota and only
+  reports failure when not even one fits. Keeping the newest copy is worth more
+  than keeping both, and a safety mechanism that fails *closed* when storage is
+  tight would block the import entirely. It also returns what was actually
+  persisted, not what it was asked to persist — otherwise the UI offers a restore
+  button for a copy that isn't on disk, which is a worse lie than having no
+  button.
+
+A stash that fails outright still aborts the import: proceeding would leave the
 user with no way back, which is worse than not importing at all.
 
 ## Documentation that describes a policy the code abandoned (2026-08-05)

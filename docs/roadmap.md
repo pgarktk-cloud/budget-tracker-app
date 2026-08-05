@@ -22,9 +22,9 @@ its own; none are combined.
    `UnaccountedSheet` (supersedes the "Next up" section below).
 
 ### Follow-ups opened by build 2
-- **The import hold has no second slot.** A second import overwrites the first
-  one's "previous local copy". Stated in the sheet; add a second slot only if it
-  is ever actually wanted.
+- ~~**The import hold has no second slot.**~~ **DONE 2026-08-05**, build
+  `2026.08.05.0003` / v1.20.1 — two rotating labelled slots with quota
+  degradation. `backupslottest.cjs` (14/14).
 - **Nothing re-validates a document arriving from the cloud.** `validateBackup`
   guards the file picker, but a pull still trusts `Array.isArray(remote.plans)`,
   the same one-line check import used to have. Worth folding into build 3, where
