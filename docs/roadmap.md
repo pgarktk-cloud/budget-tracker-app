@@ -88,9 +88,15 @@ Two things learned worth reusing:
 - **The DO handler has no automated test.** It needs `wrangler dev` plus a test
   harness this repo doesn't have. Covered by cutover verification only — do not
   let that be mistaken for coverage.
-- **`SYNC_KV` namespace is unexplained.** Holds two `user:data:<uuid>` keys from
-  an older version of the app. Not bound, not read. Worth looking at once, then
-  deleting or documenting.
+- ~~**`SYNC_KV` namespace is unexplained.**~~ **LOOKED AT 2026-08-05.** Confirmed
+  it still holds exactly the two `user:data:<uuid>` keys and is genuinely dead:
+  `SYNC_KV` appears nowhere in `worker.js` or `index.html`, and the Worker reads
+  only `ALLOC_KV`, `SYNC_ROOM`, `SYNC_TOKEN`, `FINNHUB_KEY`. **Left in place** —
+  deleting is the account owner's call and is irreversible. The keys predate
+  2026-08-01, so they fall under "assume it may already be public" below rather
+  than being a fresh exposure. Delete when convenient; nothing depends on them.
+  (Trap: Wrangler 4 defaults `kv key list` to *local* state — without `--remote`
+  both namespaces read as empty, which looks like the mirror never ran.)
 - **The Worker is no longer dashboard-managed.** Editing it in the dashboard
   editor would be overwritten by the next `npx wrangler deploy`. Deploy from the
   repo.
@@ -99,18 +105,30 @@ Two things learned worth reusing:
 - ~~**The import hold has no second slot.**~~ **DONE 2026-08-05**, build
   `2026.08.05.0003` / v1.20.1 — two rotating labelled slots with quota
   degradation. `backupslottest.cjs` (14/14).
-- **Nothing re-validates a document arriving from the cloud.** `validateBackup`
-  guards the file picker, but a pull still trusts `Array.isArray(remote.plans)`,
-  the same one-line check import used to have. Worth folding into build 3, where
-  the sync protocol is open anyway.
+- ~~**Nothing re-validates a document arriving from the cloud.**~~ **DONE
+  2026-08-05**, build `2026.08.05.0008` / v1.23.0 — `cloudDocProblem()` gates all
+  three pull paths, reusing `validateBackup` minus its warnings.
+  `cloudguardtest.cjs` (19/19). See `current-status.md`.
 
 ### Follow-up opened by build 1
-- **The conflict modal has three buttons and two outcomes.**
-  `resolveKeepLocal` (`index.html:4311-4323`) and `resolveSaveLocalToCloud`
-  (`4347-4357`) both adopt the remote rev and push local — identical results, one
-  awaited and one fire-and-forget. Build 1 was copy-only so it only *admits* this
-  in the button text. Consolidate to two buttons in build 3, which reworks that
-  modal for device naming anyway.
+- ~~**The conflict modal has three buttons and two outcomes.**~~ **DONE
+  2026-08-05**, build `2026.08.05.0008` / v1.23.0 — `resolveKeepLocal` deleted,
+  two buttons left (Use Cloud / Save Local to Cloud). The modal is still
+  unreachable in normal use, so this changed no observed behaviour.
+
+### Follow-ups opened by the cloud-validation build (v1.23.0)
+- **A corrupt cloud document cannot be repaired from the app.** Pushing is
+  blocked while the cloud copy is unreadable, on purpose: a compare-and-swap
+  against a document we can't parse isn't a phone decision. But that means the
+  only repair is at the Worker/KV level. A "replace the cloud copy with this
+  device's data" escape hatch would need to force the rev, which is a genuinely
+  dangerous button — design it deliberately or not at all. Not reachable today
+  by anything short of real corruption.
+- **`cloudDocProblem` is only as good as `validateBackup`.** Both now sit on the
+  critical path for *every* pull, not just imports, so tightening one rule there
+  can lock two honest devices out of each other. The forward-compatibility case
+  (a newer build's unknown collections must pass) is asserted in
+  `cloudguardtest.cjs` — keep it green.
 
 ## Next up — reconcile plan vs actual in the Expenses unaccounted sheet (scoped 2026-08-01, NOT built)
 

@@ -366,6 +366,17 @@ idle autosave — a Cloudflare KV write per app open, for data nobody touched.
 Any new background-derived data should be stamped `auto:true` and added to
 `stripAutoRows`' reach, not left to dirty the document.
 
+**Every document arriving from the cloud goes through `cloudDocProblem(raw)`**
+before `migrate()` sees it — startup reconcile, the inline copy a rev-rejected
+save hands back, and manual Pull. It delegates to `validateBackup` but ignores
+its *warnings*: a warning means "this device hasn't used that feature yet",
+which is normal, and refusing on one would lock two honest devices out of each
+other. A rejected document is treated as a **failed read**, never as a conflict
+(the conflict modal asks you to pick between two documents; a corrupt blob isn't
+one of them), and pushing stops until a readable document arrives. Any new pull
+path must call it — a second `Array.isArray(remote.plans)` check is the exact
+bug this replaced.
+
 ## Testing this app
 
 - No test suite, no build step. "Testing" means opening it in a browser.
@@ -389,8 +400,14 @@ Any new background-derived data should be stamped `auto:true` and added to
   `synctest.cjs` (per-setting merge resolution), `installmenttest.cjs`
   (installment schedule maths, derived Budget rows, payment/payoff/cancel/delete
   coupling, migration byte-equivalence).
+  `cloudguardtest.cjs` (the gate on documents arriving from the cloud).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
+- **`sandboxworker.cjs`** serves a sandbox copy *and* impersonates the Worker's
+  `/sync` endpoints, switching between a good and a deliberately corrupt
+  document on the fly. It is how the cloud-validation branches (and the
+  new-device and self-heal paths) get exercised without touching live data —
+  usage is in its header comment.
   - Three traps: `assert.deepStrictEqual` compares prototypes and therefore
     fails on anything built inside the vm — use `deepEqual`. Slice markers
     are plain `indexOf` on source text, so they break silently when the code

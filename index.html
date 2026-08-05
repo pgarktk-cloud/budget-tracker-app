@@ -2025,8 +2025,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.22.2";
-const BUILD_ID="2026.08.05.0007";
+const APP_VERSION="1.23.0";
+const BUILD_ID="2026.08.05.0008";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2969,6 +2969,37 @@ function validateBackup(obj){
       +dead(obj.assets)+dead(obj.plans)+dead(obj.installments),
   };
   return{ok:true,errors,warnings,summary};
+}
+
+/* ── Gate for a document arriving from the CLOUD ──────────────────────────────
+   A torn, truncated or half-written document is the same corruption whichever
+   way it reaches us, but until now only the *file picker* checked: every pull
+   path trusted `Array.isArray(remote.plans)` and handed the rest straight to
+   migrate(). That is the one-line check the import path itself outgrew.
+
+   Reuses validateBackup rather than growing a second set of rules, with one
+   deliberate difference: **warnings are dropped.** They read "No installments —
+   an older backup. It'll start empty", which is normal and uninteresting for a
+   phone that simply hasn't used a feature yet. Only `errors` mean "do not adopt
+   this document".
+
+   Returns null when the document is usable, otherwise a short reason string fit
+   to show on a phone. That wording matters: v1.22.1 cost a whole session
+   because a sync failure said only "Sync failed" (see current-status.md), so a
+   rejection here names the first real problem and how many others there were.
+
+   A nullish document is NOT a problem — "the account is legitimately empty" is
+   a state the callers already handle separately from "the account is broken". */
+function cloudDocProblem(raw){
+  if(raw===null||raw===undefined)return null;
+  if(typeof raw!=="object"||Array.isArray(raw))return "Cloud copy rejected: not a data object";
+  let report;
+  try{report=validateBackup(raw);}
+  catch(e){return "Cloud copy rejected: could not be read";}
+  if(report.ok)return null;
+  const n=report.errors.length;
+  const first=report.errors[0]||"unrecognised shape";
+  return `Cloud copy rejected (${n} problem${n===1?"":"s"}): ${first}`;
 }
 
 /* Bills Reserve = opening baseline + every month's (allocated-paid) +
@@ -4094,7 +4125,16 @@ function App(){
      completes (whether it found data or confirmed there's legitimately
      none yet), moot when kvReady is false since there's nothing to protect. */
   const cloudConfirmedRef=useRef(false);
+  /* Why cloudConfirmedRef is false, when the reason is "we read the cloud and
+     refused it" rather than "we never got an answer". Kept as its own ref so
+     the blocked-push message can name the real cause instead of sniffing the
+     text of lastSyncError. Cleared the moment a readable document arrives. */
+  const cloudUnreadableRef=useRef(null);
   const [cloudWaiting,setCloudWaiting]=useState(false);
+  /* Non-null when the waiting screen is up because the cloud copy was READ and
+     refused, not because it never answered. The two look identical from the
+     outside and have completely different fixes, so the screen has to say. */
+  const [cloudWaitReason,setCloudWaitReason]=useState(null);
   const [cloudReconnecting,setCloudReconnecting]=useState(false);
 
   /* load — local-first startup policy:
@@ -4113,6 +4153,10 @@ function App(){
   useEffect(()=>{
     let cancelled=false;
     let retryHandle=null;
+    /* Reason string when a cloud document was read but refused (see
+       cloudDocProblem). Set by reconcile, read by finish — both close over it,
+       so the status finish writes can't quietly paper over a rejection. */
+    let rejected=null;
 
     const withTimeout=(p,ms)=>new Promise(res=>{
       let settled=false;
@@ -4124,7 +4168,14 @@ function App(){
     const reconcile=(remoteEnvelope,localResolved,meta)=>{
       let resolved=localResolved;
       const remoteRaw=remoteEnvelope&&remoteEnvelope.data;
-      if(remoteRaw&&Array.isArray(remoteRaw.plans)){
+      /* An unusable cloud document is treated exactly like a failed read: adopt
+         nothing, merge nothing, advance no rev, record no cloud snapshot. It is
+         NOT treated as a conflict — the conflict modal asks the user to choose
+         between two documents, and one of these two isn't a document. */
+      const problem=cloudDocProblem(remoteRaw);
+      if(problem){rejected=problem;cloudUnreadableRef.current=problem;return localResolved;}
+      cloudUnreadableRef.current=null;
+      if(remoteRaw){
         const remoteMigrated=migrate(remoteRaw);
         const remoteFP=fingerprint(remoteMigrated);
         const remoteRev=Number.isFinite(remoteEnvelope.rev)?remoteEnvelope.rev:meta.localRev||0;
@@ -4192,7 +4243,11 @@ function App(){
       setCloudRev(meta.localRev||0);
       if(meta.lastCloudSavedAt)setLastCloudSavedAt(new Date(meta.lastCloudSavedAt));
       if(meta.lastCloudPulledAt)setLastCloudPulledAt(new Date(meta.lastCloudPulledAt));
-      setSyncStatus(meta.hasUnsyncedChanges?"pending":"synced");
+      /* A refused cloud document outranks the normal pending/synced answer:
+         this device's data is intact, but it is NOT in sync and saying "synced"
+         would be a lie the person can't see through. */
+      if(rejected){setSyncStatus("failed");setLastSyncError(rejected);}
+      else setSyncStatus(meta.hasUnsyncedChanges?"pending":"synced");
     };
 
     const revealApp=()=>{
@@ -4216,12 +4271,21 @@ function App(){
         if(cancelled)return;
         if(remoteRaw!==null||KVSync.lastPulledAt){
           // got an actual answer (data, or a confirmed-empty account)
+          rejected=null;
           cloudConfirmedRef.current=true;
           setCloudReconnecting(false);
           const meta=loadSyncMeta();
-          const resolved=reconcile(remoteRaw,dataRef.current||localResolved,meta);
+          const have=dataRef.current||localResolved;
+          const resolved=reconcile(remoteRaw,have,meta);
+          /* Refused: we do NOT have a usable read of the cloud, so pushing is
+             off again (saveToCloud gates on this ref) and we keep retrying —
+             a torn read heals itself on the next attempt. */
+          if(rejected)cloudConfirmedRef.current=false;
+          if(rejected&&!have){setCloudWaitReason(rejected);setCloudWaiting(true);backgroundRetry(localResolved,attempt+1);return;}
+          if(!rejected)setCloudWaitReason(null);
           finish(resolved,meta);
           revealApp();
+          if(rejected)backgroundRetry(localResolved,attempt+1);
         }else{
           backgroundRetry(localResolved,attempt+1);
         }
@@ -4253,6 +4317,25 @@ function App(){
         // real cloud state, so it's safe to proceed and to allow pushes.
         cloudConfirmedRef.current=true;
         const resolved=reconcile(remoteRaw,localResolved,meta);
+        if(rejected){
+          /* Same rule as the timeout below, for the same reason: we don't know
+             the cloud's real state, so nothing may be pushed. */
+          cloudConfirmedRef.current=false;
+          if(!localResolved){
+            /* Nothing local AND an unusable cloud copy. Do not open on an empty
+               app that looks safe to type into — that is exactly the trap the
+               timeout branch avoids, and here it is worse: the typing would sit
+               on top of a document we already know we can't reconcile with. */
+            setCloudWaitReason(rejected);
+            setCloudWaiting(true);
+            backgroundRetry(localResolved,1);
+            return;
+          }
+          finish(resolved,meta);
+          revealApp();
+          backgroundRetry(localResolved,1);
+          return;
+        }
         finish(resolved,meta);
         revealApp();
         return;
@@ -4379,7 +4462,17 @@ function App(){
        decision to share the imported file with the other device. */
     if(importPendingRef.current&&reason!=="manual"&&reason!=="gesture")return;
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
-    if(!cloudConfirmedRef.current){setSyncMsg("Still connecting to the cloud — try again in a moment");setTimeout(()=>setSyncMsg(""),3000);return;}
+    if(!cloudConfirmedRef.current){
+      /* Two different reasons, and they need different answers: "we never got
+         through" is worth retrying in a moment, while "we got through and the
+         document is broken" never will be. Pushing is refused in both cases —
+         a compare-and-swap against a document we can't read is not something
+         this app decides on a phone. */
+      setSyncMsg(cloudUnreadableRef.current
+        ?`${cloudUnreadableRef.current} — saving is on hold until it can be read`
+        :"Still connecting to the cloud — try again in a moment");
+      setTimeout(()=>setSyncMsg(""),5000);return;
+    }
     if(!isOnline){setSyncStatus("offline");setSyncMsg("Offline — will sync when back online");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(savingRef.current)return;
     savingRef.current=true;
@@ -4393,7 +4486,21 @@ function App(){
         // Server handed back its current data+rev inline — no second
         // round trip needed to see what changed.
         const remoteRaw=result.data;
-        if(remoteRaw&&Array.isArray(remoteRaw.plans)){
+        const problem=cloudDocProblem(remoteRaw);
+        if(problem){
+          /* The server rejected our rev and handed back a document we can't
+             read. Never merge into it and never overwrite it — the local copy
+             stays dirty and the reason is shown, because a save that silently
+             does nothing is the failure mode v1.22.2 exists to end. */
+          cloudUnreadableRef.current=problem;
+          cloudConfirmedRef.current=false;
+          clearUploadPending();
+          setHasUnsyncedChanges(true);
+          setSyncStatus("failed");
+          setLastSyncError(problem);
+          setSyncMsg("Cloud copy is unreadable — nothing was changed");
+        }else if(remoteRaw){
+          cloudUnreadableRef.current=null;
           const remoteMigrated=migrate(remoteRaw);
           const merged=tryAutoMergeAll(payload,remoteMigrated);
           const retry=merged?await KVSync.save(merged,result.rev):null;
@@ -4594,7 +4701,19 @@ function App(){
     try{
       const remoteEnvelope=await KVSync.load();
       const remoteRaw=remoteEnvelope&&remoteEnvelope.data;
-      if(remoteRaw&&Array.isArray(remoteRaw.plans)){
+      const problem=cloudDocProblem(remoteRaw);
+      if(problem){
+        /* Keep local, adopt nothing, advance no rev. An explicit Pull that
+           refuses has to say why on screen — this is the one path the person
+           deliberately asked for and is standing there watching. Pushing goes
+           back on hold too: we now know the cloud can't be reconciled with. */
+        cloudUnreadableRef.current=problem;
+        cloudConfirmedRef.current=false;
+        setSyncStatus("failed");
+        setLastSyncError(problem);
+        setSyncMsg("Cloud copy is unreadable — kept this device's data");
+      }else if(remoteRaw){
+        cloudUnreadableRef.current=null;
         const remoteMigrated=migrate(remoteRaw);
         const remoteRev=Number.isFinite(remoteEnvelope.rev)?remoteEnvelope.rev:localRevRef.current;
         const localFP=fingerprint(dataRef.current);
@@ -4722,20 +4841,14 @@ function App(){
     return()=>{window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);};
   },[]);
 
-  /* ── conflict resolution actions ─────────────────────────────────────── */
-  const resolveKeepLocal=()=>{
-    // Keeping the local copy still leaves it built on a stale baseline —
-    // immediately push so the next save doesn't just conflict again.
-    // localRevRef is set synchronously (not just via setLocalRev) so the
-    // push below — which reads the ref, not React state — sees it in time.
-    if(conflict&&Number.isFinite(conflict.remoteRev)){
-      localRevRef.current=conflict.remoteRev;
-      setLocalRev(conflict.remoteRev);
-      setCloudRev(conflict.remoteRev);
-    }
-    setConflict(null);
-    setTimeout(()=>saveToCloudRef.current("auto"),0);
-  };
+  /* ── conflict resolution actions ──────────────────────────────────────────
+     Two actions, because there are two outcomes. There used to be three
+     buttons: "Keep Local" and "Save Local to Cloud" both adopted the remote rev
+     and pushed the local document — the same result by two routes, one
+     fire-and-forget and one awaited — and the modal admitted as much in its own
+     button text ("Same result as the green button below"). Offering the same
+     outcome twice, in a dialog that only appears when something has already
+     gone wrong, is a way to make a person choose wrongly. */
   const resolveUseCloud=()=>{
     if(!conflict)return;
     stashPreCloudBackup(dataRef.current,"before replacing with the cloud copy");
@@ -4760,8 +4873,10 @@ function App(){
     setTimeout(()=>setSyncMsg(""),3000);
   };
   const resolveSaveLocalToCloud=async()=>{
-    // "Keep local, push it" — same baseline bump as resolveKeepLocal, but
-    // explicit and awaited so the caller (button) can show a spinner.
+    /* Keep this device's data and push it. Adopting the remote rev first is
+       what stops the very next save from conflicting again on the same
+       baseline; localRevRef is set synchronously, not just through setLocalRev,
+       because saveToCloud reads the ref rather than React state. */
     if(conflict&&Number.isFinite(conflict.remoteRev)){
       localRevRef.current=conflict.remoteRev;
       setLocalRev(conflict.remoteRev);
@@ -5728,10 +5843,19 @@ function App(){
         <div style={{position:"fixed",inset:0,zIndex:1000,background:P.bg,display:"flex",
           flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24,textAlign:"center"}}>
           <div className="loader" style={{width:32,height:32}}/>
-          <div style={{fontSize:15,fontWeight:600,color:P.ink}}>Waiting to reach the cloud…</div>
-          <div style={{fontSize:13,color:P.neuSub,maxWidth:280,lineHeight:1.5}}>
-            This looks like a new device — we want to load your existing data first so nothing gets overwritten.
+          <div style={{fontSize:15,fontWeight:600,color:P.ink}}>
+            {cloudWaitReason?"Can't read the cloud copy":"Waiting to reach the cloud…"}
           </div>
+          <div style={{fontSize:13,color:P.neuSub,maxWidth:280,lineHeight:1.5}}>
+            {cloudWaitReason
+              ?"This looks like a new device, and the data already in the cloud can't be read. Starting fresh here could overwrite it, so we're still trying."
+              :"This looks like a new device — we want to load your existing data first so nothing gets overwritten."}
+          </div>
+          {cloudWaitReason&&(
+            <div style={{fontSize:11,color:P.faint,maxWidth:300,lineHeight:1.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",wordBreak:"break-word"}}>
+              {cloudWaitReason}
+            </div>
+          )}
           <button onClick={continueOffline} className="neu-btn"
             style={{marginTop:8,padding:"10px 20px",fontSize:13,fontWeight:600,color:P.neuSub,borderRadius:12}}>
             Continue offline for now
@@ -5902,7 +6026,7 @@ function App(){
         preCloudSlots,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
-      {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
+      {conflict&&<ConflictModal conflict={conflict} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
       {showPendingDiff&&<PendingChangesModal data={data} onClose={()=>setShowPendingDiff(false)}
         onSaveToCloud={()=>{setShowPendingDiff(false);saveToCloud();}}/>}
       {showRecentlyDeleted&&<RecentlyDeletedModal data={data} restoreRecord={restoreRecord}
@@ -12673,7 +12797,7 @@ function DiffCollectionsList({diff,buckets}){
   ));
 }
 
-function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
+function ConflictModal({conflict,onUseCloud,onSaveLocalToCloud}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(null); // no dismiss action — user must choose an option below
   const remoteWhen=conflict.remoteSavedAt?new Date(conflict.remoteSavedAt).toLocaleString():"an unknown time";
@@ -12717,9 +12841,6 @@ function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
           <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No record-level differences found — this is likely just a settings/timestamp mismatch.</p>
         )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <button onClick={onKeepLocal} style={choiceBtn}>
-            Keep Local<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Keep this device's data and upload it, replacing the cloud copy. (Same result as the green button below.)</div>
-          </button>
           <button onClick={onUseCloud} style={choiceBtn}>
             Use Cloud<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Replace this device's data with the cloud copy. A backup of your local data is kept.</div>
           </button>

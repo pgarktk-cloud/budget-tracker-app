@@ -1,5 +1,41 @@
 # Architectural & Technical Decisions
 
+## An unreadable document is a failed read, not a conflict (2026-08-05)
+
+Validating documents arriving from the cloud (v1.23.0) looked like it had an
+obvious home: the conflict modal already exists to say "these two copies
+disagree, pick one". Routing a rejected document there would have been one line.
+
+It is the wrong shape. **The conflict modal asks the user to choose between two
+documents; a corrupt blob is not one of the choices.** Rendering "Use Cloud" as
+an option against a document we have just proved unparseable offers a button
+that must never be pressed. So a rejected document takes the path a *failed
+read* takes — adopt nothing, merge nothing, advance no rev, record no snapshot —
+and reports itself as a sync failure, which is what it is.
+
+**Warnings had to be dropped, and that is the whole reason `cloudDocProblem`
+isn't just `validateBackup(x).ok`.** `validateBackup` warns about every absent
+optional collection, because for a *file* that means "an older backup". For a
+*device*, it means "hasn't used Installments yet" — the normal state of a
+perfectly healthy phone. Refusing on warnings would have made the gate reject
+honest devices, which is a worse bug than the one being fixed. The same instinct
+drives the forward-compatibility assertion in `cloudguardtest.cjs`: collections
+this build has never heard of must pass, because the other phone may be ahead.
+
+**Pushing stops rather than offering a force-overwrite.** The tempting escape
+hatch is a button that replaces the corrupt cloud copy with this device's data —
+sync is restored, corruption gone. It was rejected: it only works by forcing the
+rev past a compare-and-swap, and the case where the "corrupt" document is
+actually the other phone's real data costs someone their records. Blocking is
+recoverable; a wrong overwrite is not. The cost is stated plainly — repairing a
+corrupt cloud document is not an in-app operation — rather than papered over.
+
+**The new-device case reuses the "still connecting" screen on purpose.** Opening
+on `defaultData()` there is worse than the timeout it was built for: the typing
+would sit on top of a document we already know we can't reconcile with. Same
+screen, different copy, plus the reason in monospace — the v1.22.2 lesson that a
+failure nobody can read costs a session.
+
 ## Making records mergeable costs more than writing the merge (2026-08-05)
 
 The per-category plan merge was scoped as "swap `mergeArrayById` for

@@ -1,8 +1,146 @@
 # Current Status
 
-_Last updated: 2026-08-05 (sync-failure detail in Settings, v1.22.2)_
+_Last updated: 2026-08-05 (cloud-pull validation, v1.23.0)_
 
-**Live build:** `2026.08.05.0007` / v1.22.2.
+**Live build:** `2026.08.05.0008` / v1.23.0.
+**Pick up next:** Build 4 — faster transaction entry (see `roadmap.md`; the
+constraints are already written down there, don't re-derive them). Sync is now
+closed out apart from two deliberate holds: **3C-3** (`payPeriods.actualStarts`
+per-record merge) and the **Durable Object having no automated test**. Neither
+is a bug; both are their own build.
+
+**Not yet deployed.** v1.23.0 is committed and pushed but has only been run in
+the sandbox — no phone has it. `worker.js` is untouched by this build, so
+nothing needs a `wrangler deploy`; GitHub Pages serves the new `index.html` once
+the push lands, and all three BUILD_ID sites already match. The first real-device
+open is the only thing left to confirm, and the thing to look at is the Settings
+sync row: it should read normally, **not** "Cloud copy rejected". If it does
+read that, the live document genuinely fails `validateBackup` — capture the
+reason before doing anything else, because pushing is deliberately blocked in
+that state and the app is then telling you something true about the cloud.
+
+## Documents arriving from the cloud are now validated (2026-08-05, v1.23.0)
+
+Build `2026.08.05.0008` / v1.23.0. **Closes the last correctness gap in the sync
+programme.** No data-model change, no `migrate()` change, no `fingerprint()`
+change — so it costs no device a KV write and is rollback-able on its own.
+
+**The gap.** `validateBackup` guarded the file picker from v1.20.0 onward, but
+all three paths that adopt a document *from the cloud* still ran the single
+check import itself had outgrown:
+
+    if(remoteRaw && Array.isArray(remoteRaw.plans))
+
+— startup reconcile, the inline document handed back by a rev-rejected save,
+and manual Pull. Any object with a `plans` array was migrated and adopted. The
+sharpest case was a device with **no local copy**, which adopted the remote
+document wholesale, no merge, no questions.
+
+**`cloudDocProblem(raw)`** (module scope, beside `validateBackup`) is the one
+gate all three now go through. It delegates to `validateBackup` rather than
+growing a second set of rules, with two deliberate differences:
+
+- **Warnings are dropped.** They read *"No installments — an older backup. It'll
+  start empty"*, which is the normal state of a phone that hasn't used a
+  feature. Refusing on those would break sync between two honest devices. Only
+  `errors` mean "do not adopt this".
+- **A nullish document is not a problem.** "The account is legitimately empty"
+  is a state the callers already distinguish from "the read failed", and
+  collapsing the two would make a brand-new account unusable.
+
+**An unusable document is treated exactly like a failed read** — adopt nothing,
+merge nothing, advance no rev, record no cloud snapshot. It is deliberately
+**not** treated as a conflict: the conflict modal asks the user to choose
+between two documents, and here one of the two isn't a document.
+
+**Pushing stops while the cloud is unreadable.** `cloudUnreadableRef` holds the
+reason so the blocked-save message can name it instead of sniffing the text of
+`lastSyncError`. A compare-and-swap against a document we can't read is not a
+decision to make on a phone — which does mean **repairing a corrupt cloud
+document is not an in-app operation**; see the follow-up in `roadmap.md`.
+
+**A new device with nothing local does not open on an empty app.** It holds the
+existing "still connecting" screen with different copy (*"Can't read the cloud
+copy"*) plus the reason in monospace, and keeps retrying — a torn read heals
+itself. Reusing that screen matters: opening on `defaultData()` here is worse
+than the timeout case it was built for, because the typing would sit on top of a
+document we already know we can't reconcile with.
+
+### Verified
+`node parsecheck.cjs` OK. **Fifteen runners green**, including new
+**`cloudguardtest.cjs` (19/19, committed)**.
+
+`cloudDocProblem` is new, so running the file against `HEAD~` proves nothing on
+its own — there is no old function to fail. What the runner pins instead is the
+*behaviour that changed*: a `REGRESSION` case asserts six documents that pass
+`Array.isArray(remote.plans)` and must now be refused. That is the assertion
+that goes red if the gate is ever weakened back toward the old check.
+
+**Driven end-to-end in a sandbox against a fake Worker** — **`sandboxworker.cjs`,
+committed**, serves the app and stands in for `/sync`, switching between a good
+and a deliberately corrupt document via a `mode.txt` file it re-reads per
+request (usage in its header comment). It is the only way to reach these
+branches without corrupting the live document, and it is committed rather than
+left in a scratch directory for the reason `CLAUDE.md` records about
+`baltest.cjs`. The corrupt fixture
+is broken in exactly the way the old check couldn't see: `plans` is a valid
+array, but `banks` is a string and one transaction has a null amount. All four
+paths confirmed:
+
+- **startup, returning device** — app opened on its **local** data, header pill
+  read *Sync failed*, background retry running. localStorage still held exactly
+  one expense and an array-valued `banks`; nothing from the corrupt document
+  reached it.
+- **blocked push** — Save to Cloud refused with
+  *`Cloud copy rejected (1 problem): "banks" should be a list, but it isn't. —
+  saving is on hold until it can be read`*.
+- **Settings** — the diagnostics row rendered the same reason plus `HTTP 200`,
+  which is the useful pairing: the request succeeded and the *document* was the
+  problem.
+- **manual Pull** — refused and kept local data.
+- **new device, nothing local** — held the *"Can't read the cloud copy"* screen
+  with the reason in monospace and the existing "Continue offline for now"
+  opt-out, instead of opening empty.
+- **self-heal** — switching the fake Worker back to a good document mid-wait let
+  the background retry adopt it, reveal the app, and clear the failed state
+  (pill returned to *Save to Cloud*). The cloud's transaction and plan arrived
+  intact.
+
+No console errors beyond the known Babel size note. Version read 1.23.0 / build
+`2026.08.05.0008`.
+
+**One artefact of the fixture, not a defect:** on the self-heal the owner labels
+stayed at the local defaults rather than the cloud's. Neither side of the
+synthetic document carried a `fieldUpdatedAt` stamp, so `mergeSettingPaths` fell
+back to whole-document age and the just-created local document was newer. Real
+data always carries stamps.
+
+### The conflict modal lost its duplicate button
+`resolveKeepLocal` and `resolveSaveLocalToCloud` both adopted the remote rev and
+pushed the local document — the same outcome by two routes, one fire-and-forget
+and one awaited — and the modal said so in its own button text (*"Same result as
+the green button below"*). Three buttons, two outcomes, in a dialog that only
+appears when something has already gone wrong. Now two buttons: **Use Cloud** and
+**Save Local to Cloud**. The modal remains unreachable in normal use (see 3C-1
+below), so this is cleanup, and like everything else in that component its
+rendered form has never been seen.
+
+### SYNC_KV, resolved
+The unexplained namespace is real and still holds exactly the two documented
+`user:data:<uuid>` keys. Confirmed **unbound and unreferenced**: `SYNC_KV`
+appears nowhere in `worker.js` or `index.html` — only in a `wrangler.jsonc`
+comment — and the Worker reads `ALLOC_KV`, `SYNC_ROOM`, `SYNC_TOKEN`,
+`FINNHUB_KEY` and nothing else. `ALLOC_KV` meanwhile still holds live
+`data`/`rev`/`savedAt`, so the Durable Object's rollback mirror is working.
+
+Not deleted — that is the account owner's call, and it is irreversible. Note
+these keys predate 2026-08-01, i.e. the period when `SYNC_TOKEN` was readable in
+the served `index.html`, so they fall under the "assume it may already be public"
+item in `roadmap.md` rather than being a fresh exposure.
+
+**Trap for next time:** Wrangler 4 defaults `kv key list` to **local** state.
+Both namespaces read as `[]` until `--remote` is passed, which looks exactly
+like "the mirror never ran".
 
 ## Sync failures now say why (2026-08-05, v1.22.2)
 
