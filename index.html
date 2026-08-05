@@ -1959,8 +1959,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.19.0";
-const BUILD_ID="2026.08.02.0001";
+const APP_VERSION="1.19.1";
+const BUILD_ID="2026.08.05.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -12274,7 +12274,7 @@ function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
         )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onKeepLocal} style={choiceBtn}>
-            Keep Local<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Stay on this device's data. Cloud is left as-is.</div>
+            Keep Local<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Keep this device's data and upload it, replacing the cloud copy. (Same result as the green button below.)</div>
           </button>
           <button onClick={onUseCloud} style={choiceBtn}>
             Use Cloud<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Replace this device's data with the cloud copy. A backup of your local data is kept.</div>
@@ -12879,10 +12879,14 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               <I.EyeOff size={14}/>Forget passphrase on this device
             </button>
             <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginBottom:8}}>
-              Changes save automatically on this device. Cloud upload only happens when you tap Save to Cloud. Opening the app checks the cloud automatically — pull-to-sync on mobile saves pending changes first, or pulls the latest copy when this device is already clean.
+              <b style={{color:P.sub}}>Nothing here is manual.</b> Everything you type is saved on this device immediately, signal or not. It then uploads on its own — a few seconds after you stop editing, and again whenever you switch away from the app or close it.
+              <br/><br/>
+              <b style={{color:P.sub}}>Offline is fine.</b> Edits queue up on this device and go up by themselves the next time you're connected. Nothing is lost while you wait.
+              <br/><br/>
+              <b style={{color:P.sub}}>The two buttons are shortcuts, not requirements.</b> Save to Cloud uploads right now instead of waiting; Pull from Cloud fetches the latest copy from the other device. Opening the app already checks for you, and pull-to-sync on mobile does whichever of the two is needed.
             </div>
-            <div style={{fontSize:11,color:P.sub,padding:"8px 10px",background:P.sfA,borderRadius:10}}>
-              Pull before editing on another device. Save to Cloud when finished — you and {owners.wife||"your partner"} share this dataset.
+            <div style={{fontSize:11,color:P.sub,padding:"8px 10px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
+              You and {owners.wife||"your partner"} share one dataset. If you both change different things, they're combined automatically. If you both change the <i>same</i> thing, the app stops and asks you which to keep rather than picking one silently.
             </div>
             <SyncDiagnostics {...{localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,hasUnsyncedChanges,changesSinceSave,syncStatus,isOnline,lastSyncError}}/>
           </div>

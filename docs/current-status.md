@@ -1,13 +1,51 @@
 # Current Status
 
-_Last updated: 2026-08-02 (Installments module)_
+_Last updated: 2026-08-05 (sync wording correction)_
 
-**Live build:** `2026.08.02.0001` / v1.19.0, pushed to `main` (GitHub Pages
-serves `index.html` from there). Working tree clean.
-**Pick up next:** the UnaccountedSheet plan-vs-actual reconciliation at the top
-of `roadmap.md` — still scoped, still not built. Installments now feeds it; see
-the "Installment payments are Transfers out" section of `decisions.md` for how
-the planned side must be counted without double counting.
+**Live build:** `2026.08.05.0001` / v1.19.1.
+**Pick up next:** Build 2 of the agreed six-build programme — backup import
+hardening. The full programme (wording → import → two-device sync → faster
+transaction entry → category↔goal link → salary reconciliation) was planned on
+2026-08-05; each build ships and is verified on its own.
+
+## Sync wording corrected (2026-08-05)
+
+Build `2026.08.05.0001` / v1.19.1. **Copy only — no behaviour changed, no data
+shape changed.** Settings claimed *"Cloud upload only happens when you tap Save
+to Cloud"*, which six shipped code paths contradict: the 8s/45s idle autosave
+(`index.html:4078-4095`), `pushImportant()` after any completed action
+(`4061-4071`), `visibilitychange→hidden` (`4145`), the `pagehide` keepalive POST
+(`4126-4140`), the auto re-push after a merge on pull (`4221`), and
+`resolveKeepLocal` (`4311-4323`).
+
+Replaced with three short plain-language paragraphs — saves locally at once and
+uploads by itself; offline edits queue; the two buttons are shortcuts, not
+requirements — plus a re-worded shared-dataset note that distinguishes "you both
+changed different things" (combined automatically) from "you both changed the
+same thing" (you get asked).
+
+Also corrected `ConflictModal`'s **"Keep Local — Cloud is left as-is"**
+(`12277`), which was false: `resolveKeepLocal` bumps the baseline to the remote
+rev and pushes immediately.
+
+### Found while verifying, not fixed here
+`resolveKeepLocal` (`4311-4323`) and `resolveSaveLocalToCloud` (`4347-4357`) are
+the **same action** — both adopt the remote rev and push local. The conflict
+modal therefore offers three buttons but only two outcomes. The copy now admits
+it ("Same result as the green button below"); consolidating the buttons is a
+behaviour change and is deferred to the sync build, which reworks that modal
+anyway. Logged in `roadmap.md`.
+
+### Verified
+`node parsecheck.cjs` OK. All ten runners green (trend 14, bills 11/11, budget
+39/39, bank 25/25, period 24/24, txorder 17/17, owner 15/15, suggest 11/11, sync
+15/15, installment 31/31).
+
+**Not verified in a browser:** the rewritten block lives in the `kvReady` branch,
+so it only renders on a device that has the sync passphrase. A sandbox copy on a
+fresh localhost origin has no passphrase by design (2026-08-01 secrets work), and
+typing the real one into a test copy is exactly what CLAUDE.md says not to do. It
+needs a look on a real device — see the manual checklist in the session notes.
 
 ## Installments module (2026-08-02)
 

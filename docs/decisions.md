@@ -1,5 +1,31 @@
 # Architectural & Technical Decisions
 
+## Documentation that describes a policy the code abandoned (2026-08-05)
+
+The Settings text said cloud upload happens only on an explicit tap. That was
+true when it was written — the autosave, `pushImportant`, the visibility push and
+the pagehide beacon were all added afterwards, each one a good change, and none
+of them came back to the sentence that described the old rule.
+
+Two things worth keeping from this.
+
+**The lie was load-bearing, not cosmetic.** Two people share this dataset. A user
+who believes nothing uploads until they tap a button will edit freely on a phone
+they think is offline-only, and will not understand why the other phone changed.
+The same sentence is what makes the import flow dangerous (see the import build):
+"it hasn't uploaded yet" was a reasonable thing to believe.
+
+**Copy is not exempt from verification.** The fix here was found by reading the
+six push call sites, not by re-reading the sentence. A claim about behaviour
+should be checked against the call sites that implement it, exactly like a
+figure in a card is checked against the reduce that produces it.
+
+Deliberately **not** changed in this build: the redundant conflict buttons.
+`resolveKeepLocal` and `resolveSaveLocalToCloud` do the same thing, so the modal
+has three buttons and two outcomes. Merging them is a behaviour change, and a
+copy-only build that quietly removes a user-visible option is the same class of
+mistake as a behaviour change that quietly leaves its copy behind.
+
 ## Installments: three owners of three different things (2026-08-02)
 
 The ask was a module for short-term purchase installments — Tabby, Tamara,

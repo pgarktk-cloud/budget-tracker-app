@@ -1,5 +1,33 @@
 # Implementation Roadmap
 
+## Agreed programme (planned 2026-08-05) — six independent builds
+
+Planned in a grilling session. Each ships, is verified and is rollback-able on
+its own; none are combined.
+
+1. **Sync wording correction — DONE**, build `2026.08.05.0001` / v1.19.1.
+2. **Backup import hardening** — `validateBackup`, preview sheet, size gate,
+   pre-import backup, and the upload held until an explicit Save to Cloud.
+3. **Safer two-device sync** — a Cloudflare Durable Object (dual-read cutover,
+   KV mirror for rollback) *plus* per-record merge granularity for plan
+   categories/groups, `monthlyPlans`, `payPeriods.actualStarts`, and
+   `household.expenses` finally joining `CONFLICT_COLLECTIONS`.
+4. **Faster transaction entry** — autofocus + Repeat, richer suggestion chips,
+   rapid entry with undo-on-save, then a synced `txTemplates` collection.
+5a. **Category → goal link** — an optional `category.goalId`; a transfer against
+   a linked category credits the goal in one action, and the Goals tab's "Add
+   money" becomes a real transfer instead of a goal-only edit.
+5b. **Salary reconciliation** — planned figures beside the actuals in
+   `UnaccountedSheet` (supersedes the "Next up" section below).
+
+### Follow-up opened by build 1
+- **The conflict modal has three buttons and two outcomes.**
+  `resolveKeepLocal` (`index.html:4311-4323`) and `resolveSaveLocalToCloud`
+  (`4347-4357`) both adopt the remote rev and push local — identical results, one
+  awaited and one fire-and-forget. Build 1 was copy-only so it only *admits* this
+  in the button text. Consolidate to two buttons in build 3, which reworks that
+  modal for device naming anyway.
+
 ## Next up — reconcile plan vs actual in the Expenses unaccounted sheet (scoped 2026-08-01, NOT built)
 
 Surfaced by the user trying to check the unaccounted figure by hand after
