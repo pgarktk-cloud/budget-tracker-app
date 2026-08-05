@@ -1,12 +1,76 @@
 # Current Status
 
-_Last updated: 2026-08-05 (per-category plan merge, build 3C-2)_
+_Last updated: 2026-08-05 (device-name header fix, v1.22.1)_
 
-**Live build:** `2026.08.05.0005` / v1.22.0.
+**Live build:** `2026.08.05.0006` / v1.22.1.
 **Live Worker version:** `a3cb3ce0-32dc-449f-97c1-35c19ac046f8` (Durable Object).
 **Pick up next:** Build 4 — faster transaction entry. (Build 3 is complete:
 3B server atomicity, 3C-1 merge fixes, 3C-2 per-category merge. The one piece
 deliberately still open is `payPeriods.actualStarts` — see 3C-3 in roadmap.md.)
+
+## A device name broke sync outright (2026-08-05, v1.22.1)
+
+Build `2026.08.05.0006` / v1.22.1. **Found on a real phone within hours of
+v1.21.0 shipping device naming**, which is the only reason it was found at all —
+nothing in the test suite touched the header layer.
+
+Naming a phone **"Wife's iPhone"** stopped that device syncing completely.
+
+**The mechanism.** iOS (and Android) smart punctuation silently replaces a typed
+`'` with U+2019. `deviceTag()` interpolated the label straight into the
+`X-Device-Id` header. HTTP header values are **ByteStrings** — anything above
+U+00FF makes `fetch()` throw a `TypeError` *before a byte leaves the device*:
+
+    Cannot convert argument to a ByteString because the character at
+    index 4 has a value of 8217 which is greater than 255.
+
+The app catches that in the generic `catch` and reports **"Sync failed"**. Every
+symptom followed from that and every one of them pointed somewhere else:
+
+- Started "today" → device naming had shipped that morning.
+- Opening the Worker URL in the phone's browser returned `{"error":
+  "Unauthorized"}` normally → a top-level navigation sends no custom header.
+- The passphrase was accepted → connect ran *before* the label was set.
+- Only one device affected → only one device had been named.
+
+**The fix: sanitize where the value is USED, not where it's set.** `headerSafe()`
+folds smart punctuation to ASCII, folds accents (`José` → `Jose`, since Latin-1
+header bytes decode to mojibake), and drops anything else outside printable
+ASCII — emoji, CJK, and CR/LF (a newline in a header value is header injection).
+`deviceTag()` runs its output through it and falls back to the bare id if a label
+sanitizes away to nothing.
+
+Doing this at the read point is load-bearing: **a broken label is already in
+localStorage on the affected phone**, so a setter-only fix would have required
+the user to retype it while sync stayed dead. The stored label keeps its real
+punctuation — this is a wire encoding, not a rename, and Settings still shows
+what was typed.
+
+### The reason this took so long to find
+`lastSyncError` holds the actual message but is rendered **only in a `title`
+tooltip** (`index.html:5775`), which a phone cannot show. The Settings row shows
+the generic label. Diagnosis was guesswork until the user noticed the
+correlation with the name themselves. **Surfacing `lastSyncError` and
+`KVSync.lastStatus` in the Settings status row is logged in `roadmap.md`** and
+should land before the next sync work.
+
+### Verified
+`node parsecheck.cjs` OK. **Fourteen runners green**, including new
+**`devicetagtest.cjs` (21/21, committed)**. It asserts against Node's real
+`Headers` constructor — the same ByteString check the browser applies — rather
+than against an idea of the rule.
+
+**Reproduced against the pre-fix code**: sliced `deviceTag()` out of `HEAD`,
+fed it the smart-quote label, and `new Headers()` threw with the exact message
+above. A fix whose test passes before and after proves nothing.
+
+Browser (localhost:8799): app mounts, no console errors beyond the known Babel
+size note, and the previously-fatal label now yields
+`Wife's iPhone (ab12cd34)`, which `Headers` accepts.
+
+**Not verified:** the actual phone. Confirmation is her device syncing again
+after updating — or immediately, by retyping the name without an apostrophe,
+which works on the shipped build with no update at all.
 
 ## Per-category plan merge — the headline two-device fix (2026-08-05, build 3C-2)
 

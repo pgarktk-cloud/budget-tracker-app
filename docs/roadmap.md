@@ -35,6 +35,19 @@ its own; none are combined.
 5b. **Salary reconciliation** — planned figures beside the actuals in
    `UnaccountedSheet` (supersedes the "Next up" section below).
 
+### Follow-up opened by the v1.22.1 device-name bug — DO THIS BEFORE MORE SYNC WORK
+- **A sync failure is undiagnosable from a phone.** `lastSyncError` and
+  `KVSync.lastStatus` are captured but rendered **only** in a `title` tooltip
+  (`index.html:5775`), which no phone displays; the Settings row shows a generic
+  "Sync failed". A device-name bug that made `fetch` throw before sending a byte
+  therefore took a full debugging session and was ultimately spotted by the user,
+  not by the app. Render both in the Settings status row — a thrown `TypeError`
+  and an `HTTP 500` need completely different responses and currently look
+  identical. Small, display-only, no data-model impact.
+- **Nothing else that reaches a header or URL is sanitized.** `headerSafe()`
+  fixes `X-Device-Id`. Audit for any future header/query value built from user
+  text before it ships, rather than after.
+
 ### Follow-ups opened by build 3B
 - **Remove the KV mirror**, once there is no intention of rolling back. Until
   then the Worker writes every accepted save to KV as well as the Durable Object.

@@ -2025,8 +2025,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.22.0";
-const BUILD_ID="2026.08.05.0005";
+const APP_VERSION="1.22.1";
+const BUILD_ID="2026.08.05.0006";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3140,15 +3140,54 @@ function getDeviceLabel(){
 }
 function setDeviceLabel(v){
   try{
-    const t=String(v||"").trim().slice(0,40);
+    /* Control characters are stripped at the STORE point because they can
+       never be wanted in a label; everything else is kept as typed and
+       sanitized at the wire point below. */
+    const t=String(v||"").replace(/[\x00-\x1F\x7F]/g,"").trim().slice(0,40);
     if(t)localStorage.setItem(DEVICE_LABEL_KEY,t);else localStorage.removeItem(DEVICE_LABEL_KEY);
   }catch(e){}
 }
+/* HTTP header values are ByteStrings: any code point above U+00FF makes
+   fetch() throw *before a byte leaves the device*, and the app can only report
+   that as a generic "Sync failed". iOS and Android smart punctuation silently
+   turn a typed apostrophe into U+2019, so naming a phone "Wife's iPhone" broke
+   sync on that device outright — shipped in v1.21.0, found on a real phone
+   2026-08-05.
+
+   Sanitize where the value is USED, not only where it's set: labels typed
+   before this fix are already sitting in localStorage, and fixing the read
+   point heals them without anyone having to retype. The stored label keeps its
+   real punctuation — this is a wire encoding, not a rename, and Settings
+   should still show what the person typed.
+
+   Accents are folded rather than dropped (José → Jose) so a name survives
+   recognisably; U+00E9 wouldn't throw, but Latin-1 header bytes decode to
+   mojibake at the other end, which is worse than a plain ASCII fold. */
+/* Escaped rather than written literally on purpose: these characters are
+   invisible or near-identical to their ASCII twins in an editor, and a literal
+   combining mark in source is the kind of thing a copy/paste silently mangles. */
+const HEADER_PUNCT_MAP={
+  "\u2018":"'","\u2019":"'","\u201A":"'","\u201B":"'",   // single quotes
+  "\u201C":'"',"\u201D":'"',"\u201E":'"',              // double quotes
+  "\u2013":"-","\u2014":"-",                             // en / em dash
+  "\u2026":"...","\u00A0":" ",                          // ellipsis, non-breaking space
+};
+function headerSafe(s){
+  return String(s==null?"":s)
+    .normalize("NFD").replace(/[\u0300-\u036F]/g,"")                     // fold accents
+    .replace(/[\u2018\u2019\u201A\u201B\u201C\u201D\u201E\u2013\u2014\u2026\u00A0]/g,c=>HEADER_PUNCT_MAP[c])
+    .replace(/[^\x20-\x7E]/g,"")                                   // emoji, CJK, CR/LF, controls
+    .replace(/\s+/g," ")
+    .trim();
+}
 /* What the server should record as the writer: the friendly label if this
-   device has one, else the opaque id. Capped to match the Worker's own slice. */
+   device has one, else the opaque id. Capped to match the Worker's own slice.
+   A label that sanitizes away to nothing (all emoji, say) falls back to the
+   bare id rather than shipping an empty parenthetical. */
 function deviceTag(){
-  const l=getDeviceLabel();
-  return (l?`${l} (${getDeviceId()})`:getDeviceId()).slice(0,64);
+  const l=headerSafe(getDeviceLabel());
+  const id=getDeviceId();
+  return headerSafe(l?`${l} (${id})`:id).slice(0,64);
 }
 const PROFILE_KEY="allocation:preferredProfile";
 /* which profile the asset tabs are being VIEWED as — me | wife | household.
