@@ -29,6 +29,22 @@ its own; none are combined.
      represented" answer.
 4. **Faster transaction entry** — autofocus + Repeat, richer suggestion chips,
    rapid entry with undo-on-save, then a synced `txTemplates` collection.
+   **NEXT UP — starting fresh 2026-08-05.** Constraints already in the codebase,
+   so don't re-derive them:
+   - `rankNameSuggestions` (module scope) already does the ranking the chips
+     need — extend it, don't write a second matcher. `suggesttest.cjs` covers it.
+   - Chips fill the **name only** today, deliberately, even though `recentNames`
+     also carries the category. Changing that is a real decision, not a tidy-up.
+   - Every numeric field is a `NumField`; rapid entry needs `live` on anything
+     a submit button reacts to, since a disabled button eats the blur.
+   - An expense's `createdAt` is stamped once at insert and never re-stamped,
+     and an absent `ord` is meaningful (see `compareTxForDisplay`). Rapid entry
+     must not default `ord` to a number.
+   - `txTemplates` would be a new synced collection: it needs `defaultData`,
+     `migrate`, `fingerprint`, `tryAutoMergeAll`, `CONFLICT_COLLECTIONS`,
+     `countPendingChanges` and `purgeOldTombstones` — the same seven touch
+     points `installments` needed. Emit it from `fingerprint()` **only when
+     non-empty**, so adding it costs existing documents no KV write.
 5a. **Category → goal link** — an optional `category.goalId`; a transfer against
    a linked category credits the goal in one action, and the Goals tab's "Add
    money" becomes a real transfer instead of a goal-only edit.
