@@ -84,6 +84,23 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   at all (carry it over as a seeded sub). Currently only "Add sub-item" and
   delete change sub count, and "Add sub-item" knowingly still has the second
   trap — but any *new* such path must decide this explicitly.
+- **A plan's categories and groups are records, not array positions**
+  (2026-08-05). They carry `deletedAt` (tombstoned, never spliced — a hard
+  delete cannot survive a merge, because the other device's copy would
+  resurrect it), `updatedAt` (stamped **only when edited**, by
+  `stampPlanRecords` inside `editPlanForMonth` — never in `migrate()`, so an
+  untouched record stays "oldest"), and `ord` (display order, backfilled once by
+  `migrate()` from the old array order). `plans` merges through
+  `mergeArrayByIdWithChildren`, so two people editing different categories in
+  the same month both survive.
+  **Every read goes through `livePlanView(plan)`** — applied inside
+  `resolvePlanForMonth` and to the App-level active plan — which filters
+  tombstones and sorts by `ord`. It returns the **identical object** when
+  there's nothing to do, so render identity doesn't churn; don't "simplify" that
+  into always copying. Anything that reorders categories must renumber `ord`
+  (see `moveCat`), never rearrange the array: `mergeArrayById` sorts children by
+  id, so array order is erased by the first sync — the same rule transactions
+  follow.
   Sub-items are `{id,name,amount}` nested in the category, hard-deleted rather
   than tombstoned, and **nothing outside the `subs` array references a sub id**
   — expenses/targets/envelopes key on `catId`, several features key on

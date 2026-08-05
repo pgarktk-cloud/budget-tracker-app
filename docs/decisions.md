@@ -1,5 +1,46 @@
 # Architectural & Technical Decisions
 
+## Making records mergeable costs more than writing the merge (2026-08-05)
+
+The per-category plan merge was scoped as "swap `mergeArrayById` for
+`mergeArrayByIdWithChildren`". The merge call is genuinely one line. Everything
+else was the actual work, and neither part was optional:
+
+- **Deletion.** `removeCat` spliced. A union merge would resurrect a deleted
+  category — a silent lost edit traded for a silent resurrected delete.
+- **Order.** Category order was array position, and `mergeArrayById` sorts
+  children by id for determinism. Merging would have quietly reordered the
+  envelope list. Order had to become `ord`, a field.
+
+Both are the same underlying point: **array position and absence are not
+representable in a merge.** A record can only survive one if every meaningful
+fact about it is a field on it. This app already learned that for transactions —
+`compareTxForDisplay` exists because `mergeArrayById` erases array order — and
+categories were the same lesson in a place nobody had looked.
+
+**37 read sites is why `livePlanView` exists.** Tombstoning categories means
+every reader must filter, and auditing 37 call sites is exactly how a subtle
+one gets missed. Filtering inside `resolvePlanForMonth` — the single point every
+reader already resolves a plan through — makes them all correct without touching
+any of them. The one reader that bypasses it (the App-level active plan, feeding
+the header income field and `allocated`) had to be wrapped explicitly, and
+finding it required grepping rather than assuming.
+
+**The identical-object rule is load-bearing here, not a micro-optimisation.**
+`livePlanView` runs on every render for every plan lookup. Returning a fresh
+object each time would break `useMemo([plan])` identity across the app. It
+returns the same object whenever nothing is tombstoned and nothing is out of
+order — which is the overwhelmingly common case — mirroring the bills
+reconciler's "return the identical object when nothing changed".
+
+**One deliberate one-time cost.** Backfilling `ord` changes `fingerprint()` for
+every existing document, so each device does one KV write on first open. That was
+worth stating rather than hiding: it is a one-off, unlike the per-app-open write
+the `userFingerprint` split was introduced to stop, and it is deterministic, so
+two devices converge on the same result instead of fighting. `updatedAt` was
+deliberately **not** backfilled — absent must keep meaning "never edited
+anywhere", which is what lets a real edit on either device win.
+
 ## A merge test that passes before the fix is not a test (2026-08-05)
 
 Every assertion in `mergetest.cjs` was run against the *previous* `index.html`

@@ -18,16 +18,11 @@ its own; none are combined.
      `household.expenses` merging on its own timestamp and joining
      `CONFLICT_COLLECTIONS`, device identity + conflict naming.
      `mergetest.cjs` (22/22; 8 of them fail against the pre-fix code).
-   - **3C-2 Per-category plan merge — NEXT, and still the headline defect.**
-     `plans` merges whole-record newest-wins, so two people editing different
-     categories in the same budget month still silently lose one side.
-     Blocked on category/group **tombstones**: `removeCat` hard-deletes, so a
-     union would resurrect a deleted category. Planned shape — `deletedAt` +
-     `updatedAt` on categories/groups, stamped centrally in `editPlanForMonth`
-     (the existing choke point), filtered by a new `livePlanView()` at
-     `resolvePlanForMonth` **returning the identical object when nothing is
-     tombstoned**, then `mergeArrayByIdWithChildren` for plans. **No Cloudflare
-     work.**
+   - **3C-2 Per-category plan merge — DONE**, build `2026.08.05.0005` /
+     v1.22.0. Category/group `deletedAt` + `updatedAt` + `ord`, `livePlanView`
+     at the read points, `stampPlanRecords` in `editPlanForMonth`,
+     `mergeArrayByIdWithChildren` for plans. `mergetest.cjs` 40/40 (10 of them
+     fail against the pre-fix code). See `current-status.md` / `decisions.md`.
    - **3C-3 `payPeriods.actualStarts` — deferred with 3C-2**, same reason:
      clearing an override *deletes the key* by design, so a union merge would
      resurrect a cleared correction. Needs the same "how is a deletion

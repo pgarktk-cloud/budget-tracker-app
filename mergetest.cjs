@@ -41,9 +41,15 @@ const t=(name,fn)=>{n++;try{fn();console.log("  ok   "+name);}catch(e){fails++;c
 const ctx={};
 vm.createContext(ctx);
 // Same slice window synctest uses, extended to reach CONFLICT_COLLECTIONS and
-// the diff helpers that sit just past it.
+// the diff helpers that sit just past it. The plan-record helpers live much
+// earlier in the file (beside resolvePlanForMonth), so they are sliced
+// separately and prepended.
+const planSrc=slice("const PLAN_ORD_LAST=","function resolvePlanForMonth(");
 const src=slice("function mergeArrayById(","function buildConflictDiff(");
-vm.runInContext(src+`
+vm.runInContext(planSrc+src+`
+this.livePlanView=livePlanView;
+this.stampPlanRecords=stampPlanRecords;
+this.comparePlanRecords=comparePlanRecords;
 function installmentProviderLabel(i){return i.provider||"";}
 this.mergeArrayById=mergeArrayById;
 this.mergeKeyed=mergeKeyed;
@@ -55,7 +61,8 @@ this.CONFLICT_COLLECTIONS=CONFLICT_COLLECTIONS;
 this.HIDE_FROM_RECENTLY_DELETED=HIDE_FROM_RECENTLY_DELETED;
 this.countPendingChanges=countPendingChanges;`,ctx);
 const{mergeArrayById,mergeKeyed,mergeKeyedByTs,tryAutoMergeAll,diffCollection,
-  conflictArr,CONFLICT_COLLECTIONS,HIDE_FROM_RECENTLY_DELETED,countPendingChanges}=ctx;
+  conflictArr,CONFLICT_COLLECTIONS,HIDE_FROM_RECENTLY_DELETED,countPendingChanges,
+  livePlanView,stampPlanRecords,comparePlanRecords}=ctx;
 
 const EMPTY={expenses:[],goals:[],investments:[],banks:[],assets:[],targets:[],
   mp2DividendRates:[],plans:[],bills:[],billAdjustments:[],monthlyPlans:[],
@@ -226,6 +233,186 @@ t("every conflict collection is reachable on a real-shaped document",()=>{
 t("nameOf produces something readable for a household expense",()=>{
   const e=CONFLICT_COLLECTIONS.find(c=>c.key==="household.expenses");
   assert.ok(/Rent/.test(e.nameOf({name:"Rent",amount:5000})));
+});
+
+/* ── 4. per-category plan merge (build 3C-2) ────────────────────────────── */
+
+const cat=(id,name,amount,over={})=>({id,name,amount,groupId:"g1",subs:[],
+  trackExpenses:true,ord:over.ord!=null?over.ord:0,...over});
+const planWith=(cats,over={})=>({id:"p1",owner:"me",name:"Aug",month:"Aug 2026",
+  income:22000,groups:[{id:"g1",name:"Essentials",ord:0}],categories:cats,
+  updatedAt:"2026-08-05T10:00:00.000Z",...over});
+
+t("THE HEADLINE: two devices editing DIFFERENT categories both survive",()=>{
+  // phone edited Groceries at 12:00; laptop edited Transport at 12:30
+  const phone=doc({plans:[planWith([
+    cat("c1","Groceries",3500,{ord:0,updatedAt:"2026-08-05T12:00:00.000Z"}),
+    cat("c2","Transport",1000,{ord:1}),
+  ],{updatedAt:"2026-08-05T12:00:00.000Z"})]});
+  const laptop=doc({plans:[planWith([
+    cat("c1","Groceries",3000,{ord:0}),
+    cat("c2","Transport",1500,{ord:1,updatedAt:"2026-08-05T12:30:00.000Z"}),
+  ],{updatedAt:"2026-08-05T12:30:00.000Z"})]});
+  const m=tryAutoMergeAll(phone,laptop);
+  const by=id=>m.plans[0].categories.find(c=>c.id===id);
+  assert.strictEqual(by("c1").amount,3500,"the phone's Groceries edit was lost");
+  assert.strictEqual(by("c2").amount,1500,"the laptop's Transport edit was lost");
+});
+
+t("...and the result is the same whichever device merges",()=>{
+  const phone=doc({plans:[planWith([
+    cat("c1","Groceries",3500,{ord:0,updatedAt:"2026-08-05T12:00:00.000Z"}),
+    cat("c2","Transport",1000,{ord:1}),
+  ],{updatedAt:"2026-08-05T12:00:00.000Z"})]});
+  const laptop=doc({plans:[planWith([
+    cat("c1","Groceries",3000,{ord:0}),
+    cat("c2","Transport",1500,{ord:1,updatedAt:"2026-08-05T12:30:00.000Z"}),
+  ],{updatedAt:"2026-08-05T12:30:00.000Z"})]});
+  const a=tryAutoMergeAll(phone,laptop),b=tryAutoMergeAll(laptop,phone);
+  assert.deepEqual(a.plans[0].categories.map(c=>c.amount).sort(),
+                   b.plans[0].categories.map(c=>c.amount).sort(),
+                   "the two devices must converge, or they resync forever");
+});
+
+t("the newer edit still wins when both change the SAME category",()=>{
+  const a=doc({plans:[planWith([cat("c1","Groceries",3500,{updatedAt:"2026-08-05T12:00:00.000Z"})])]});
+  const b=doc({plans:[planWith([cat("c1","Groceries",4000,{updatedAt:"2026-08-05T14:00:00.000Z"})])]});
+  assert.strictEqual(tryAutoMergeAll(a,b).plans[0].categories[0].amount,4000);
+  assert.strictEqual(tryAutoMergeAll(b,a).plans[0].categories[0].amount,4000,"order must not matter");
+});
+
+t("a category added on one device arrives without displacing the other's",()=>{
+  const a=doc({plans:[planWith([cat("c1","Groceries",3000,{ord:0})])]});
+  const b=doc({plans:[planWith([cat("c1","Groceries",3000,{ord:0}),
+                                cat("c9","Gym",500,{ord:1,updatedAt:"2026-08-05T13:00:00.000Z"})])]});
+  const m=tryAutoMergeAll(a,b);
+  assert.strictEqual(m.plans[0].categories.length,2);
+  assert.ok(m.plans[0].categories.find(c=>c.id==="c9"),"the new category was dropped");
+});
+
+t("a DELETE is not resurrected by the other device's stale copy",()=>{
+  // this is exactly why categories had to be tombstoned before merging them
+  const stale=doc({plans:[planWith([cat("c1","Groceries",3000,{ord:0}),
+                                    cat("c2","Transport",1000,{ord:1})])]});
+  const deleted=doc({plans:[planWith([
+    cat("c1","Groceries",3000,{ord:0}),
+    cat("c2","Transport",1000,{ord:1,deletedAt:"2026-08-05T13:00:00.000Z",updatedAt:"2026-08-05T13:00:00.000Z"}),
+  ])]});
+  const m=tryAutoMergeAll(stale,deleted);
+  const c2=m.plans[0].categories.find(c=>c.id==="c2");
+  assert.ok(c2&&c2.deletedAt,"the tombstone must win over an un-deleted stale copy");
+  assert.strictEqual(livePlanView(m.plans[0]).categories.length,1,"and it must not be visible");
+});
+
+t("groups merge per record too",()=>{
+  const a=doc({plans:[planWith([cat("c1","G",1)],{groups:[
+    {id:"g1",name:"Essentials",ord:0,updatedAt:"2026-08-05T12:00:00.000Z"},{id:"g2",name:"Fun",ord:1}]})]});
+  const b=doc({plans:[planWith([cat("c1","G",1)],{groups:[
+    {id:"g1",name:"Essentials",ord:0},{id:"g2",name:"Leisure",ord:1,updatedAt:"2026-08-05T12:30:00.000Z"}]})]});
+  const m=tryAutoMergeAll(a,b);
+  const g=id=>m.plans[0].groups.find(x=>x.id===id);
+  assert.strictEqual(g("g1").name,"Essentials");
+  assert.strictEqual(g("g2").name,"Leisure","the rename was lost");
+});
+
+t("plan-level fields still resolve by the whole record",()=>{
+  const a=doc({plans:[planWith([cat("c1","G",1)],{income:22000,updatedAt:"2026-08-05T12:00:00.000Z"})]});
+  const b=doc({plans:[planWith([cat("c1","G",1)],{income:25000,updatedAt:"2026-08-05T14:00:00.000Z"})]});
+  assert.strictEqual(tryAutoMergeAll(a,b).plans[0].income,25000);
+});
+
+t("a whole plan present on only one device survives",()=>{
+  const a=doc({plans:[planWith([cat("c1","G",1)])]});
+  const b=doc({plans:[planWith([cat("c1","G",1)]),
+                      planWith([cat("c5","X",1)],{id:"p2",name:"Sep"})]});
+  assert.strictEqual(tryAutoMergeAll(a,b).plans.length,2);
+});
+
+/* ── ordering survives the merge ────────────────────────────────────────── */
+
+t("user-chosen category order survives a merge",()=>{
+  // ids deliberately chosen so id-sort would give the WRONG order:
+  // "zzz" must come first because its ord says so.
+  const cats=[cat("zzz","First",1,{ord:0}),cat("aaa","Second",2,{ord:1})];
+  const a=doc({plans:[planWith(cats)]});
+  const b=doc({plans:[planWith(cats)]});
+  const merged=livePlanView(tryAutoMergeAll(a,b).plans[0]);
+  assert.deepEqual(merged.categories.map(c=>c.name),["First","Second"],
+    "merging must not re-sort the envelope list by id");
+});
+
+t("livePlanView orders by ord, then id for stability",()=>{
+  const p=livePlanView(planWith([cat("b","B",1,{ord:2}),cat("a","A",1,{ord:1}),cat("c","C",1,{ord:1})]));
+  assert.deepEqual(p.categories.map(c=>c.id),["a","c","b"]);
+});
+
+t("a category with no ord sorts last, not first",()=>{
+  const p=livePlanView(planWith([cat("a","A",1,{ord:undefined}),cat("b","B",1,{ord:0})]));
+  assert.deepEqual(p.categories.map(c=>c.id),["b","a"]);
+});
+
+t("livePlanView returns the IDENTICAL object when there is nothing to do",()=>{
+  // otherwise every render allocates a new plan and memo identity churns
+  const p=planWith([cat("a","A",1,{ord:0}),cat("b","B",1,{ord:1})]);
+  assert.strictEqual(livePlanView(p),p);
+});
+
+t("livePlanView hides tombstoned categories and groups",()=>{
+  const p=livePlanView(planWith(
+    [cat("a","A",1,{ord:0}),cat("b","B",1,{ord:1,deletedAt:"2026-08-05T00:00:00.000Z"})],
+    {groups:[{id:"g1",name:"E",ord:0},{id:"g2",name:"Gone",ord:1,deletedAt:"2026-08-05T00:00:00.000Z"}]}));
+  assert.deepEqual(p.categories.map(c=>c.id),["a"]);
+  assert.deepEqual(p.groups.map(g=>g.id),["g1"]);
+});
+
+t("livePlanView tolerates a null plan and missing arrays",()=>{
+  assert.strictEqual(livePlanView(null),null);
+  // A plan can genuinely lack these arrays (clonePlanRecord notes migrate()
+  // doesn't guarantee them). livePlanView must NOT normalise them into empty
+  // arrays: that would allocate a fresh object on every render for such a
+  // plan, which is exactly the identity churn the identical-object rule
+  // exists to prevent. Every consumer already reads `plan.categories||[]`.
+  const bare={id:"p1"};
+  assert.strictEqual(livePlanView(bare),bare,"must hand back the same object");
+  assert.deepEqual((livePlanView(bare).categories)||[],[],"the ||[] idiom still holds");
+});
+
+/* ── stamping ───────────────────────────────────────────────────────────── */
+
+const NOW="2026-08-05T15:00:00.000Z";
+
+t("stampPlanRecords stamps only what actually changed",()=>{
+  const prev=planWith([cat("a","A",1,{ord:0}),cat("b","B",2,{ord:1})]);
+  const next=JSON.parse(JSON.stringify(prev));
+  next.categories[1].amount=99;
+  const out=stampPlanRecords(prev,next,NOW);
+  assert.ok(!out.categories[0].updatedAt,"untouched category must not be stamped");
+  assert.strictEqual(out.categories[1].updatedAt,NOW);
+});
+
+t("an identical mutate returns the object untouched",()=>{
+  const prev=planWith([cat("a","A",1,{ord:0})]);
+  const next=JSON.parse(JSON.stringify(prev));
+  assert.strictEqual(stampPlanRecords(prev,next,NOW),next);
+});
+
+t("a new category gets both a stamp and an ord after the existing ones",()=>{
+  const prev=planWith([cat("a","A",1,{ord:0}),cat("b","B",1,{ord:1})]);
+  const next=JSON.parse(JSON.stringify(prev));
+  next.categories.push({id:"c",name:"C",amount:5,groupId:"g1",subs:[]});
+  const out=stampPlanRecords(prev,next,NOW);
+  const c=out.categories.find(x=>x.id==="c");
+  assert.strictEqual(c.updatedAt,NOW);
+  assert.strictEqual(c.ord,2,"a new category must sort after the existing ones");
+});
+
+t("stampPlanRecords does not mutate the previous plan",()=>{
+  const prev=planWith([cat("a","A",1,{ord:0})]);
+  const before=JSON.stringify(prev);
+  const next=JSON.parse(JSON.stringify(prev));
+  next.categories[0].amount=42;
+  stampPlanRecords(prev,next,NOW);
+  assert.strictEqual(JSON.stringify(prev),before);
 });
 
 /* ── regression guard ───────────────────────────────────────────────────── */

@@ -1,14 +1,84 @@
 # Current Status
 
-_Last updated: 2026-08-05 (merge fixes, build 3C-1)_
+_Last updated: 2026-08-05 (per-category plan merge, build 3C-2)_
 
-**Live build:** `2026.08.05.0004` / v1.21.0.
+**Live build:** `2026.08.05.0005` / v1.22.0.
 **Live Worker version:** `a3cb3ce0-32dc-449f-97c1-35c19ac046f8` (Durable Object).
-**Pick up next:** **Build 3C-2 — per-category plan merge.** This is still the
-headline two-device defect and it is NOT yet fixed: `plans` merges whole-record,
-newest-wins, so two people editing different categories in the same budget month
-still lose one side silently. It needs category/group tombstones first — see the
-design note at the end of the 3C-1 section below.
+**Pick up next:** Build 4 — faster transaction entry. (Build 3 is complete:
+3B server atomicity, 3C-1 merge fixes, 3C-2 per-category merge. The one piece
+deliberately still open is `payPeriods.actualStarts` — see 3C-3 in roadmap.md.)
+
+## Per-category plan merge — the headline two-device fix (2026-08-05, build 3C-2)
+
+Build `2026.08.05.0005` / v1.22.0. **This is the defect the whole sync programme
+was for:** `plans` merged whole-record, newest `updatedAt` wins, so one person
+editing Groceries while the other edited Transport in the same month silently
+lost a side, with no conflict shown.
+
+Fixing it needed two things the old shape couldn't express — both discovered by
+reading the code, and both mandatory rather than optional scope:
+
+**1. Deletion.** `removeCat` hard-deleted. A union merge would resurrect a
+category the other person deleted — trading a silent lost edit for a silent
+resurrected delete. Categories and groups are now **tombstoned** (`deletedAt`),
+like every other collection in this app. `removeGroup` tombstones the group and
+its categories in one mutate.
+
+**2. Order.** Category order is user-controlled ("Reorder categories" moves them
+up and down) and lived in **array position** — but `mergeArrayById` sorts
+children by id, so the first sync would have scrambled the envelope list. Order
+had to become a field. New **`ord`**, backfilled once by `migrate()` from the
+existing array order, and `moveCat` now renumbers `ord` across the live
+categories instead of swapping array slots — the same lesson transactions
+learned (`compareTxForDisplay`).
+
+**`livePlanView(plan)`** is the canonical read shape: tombstones filtered, `ord`
+applied. Applied inside `resolvePlanForMonth` and to the App-level active plan,
+so **all 37 `.categories` read sites get it for free** rather than each
+remembering to filter. It returns the **identical object** when there is nothing
+to do — the bills-reconciler rule — so render identity doesn't churn on the
+overwhelmingly common path.
+
+**`stampPlanRecords(prev,next,now)`** stamps `updatedAt` on the categories and
+groups that actually changed and gives a new one an `ord`. Called from
+`editPlanForMonth`, the choke point every budget mutation already goes through,
+for the same reason the copy-on-write decision lives there.
+
+### One-time cost, accepted deliberately
+Backfilling `ord` changes `fingerprint()` for every existing document, so each
+device does **one** Cloudflare KV write on first open. That is a one-off, and a
+different thing from the per-app-open write the `userFingerprint` split exists to
+prevent. It is deterministic — every device derives the same ords from the same
+array — so two devices converge rather than conflict. `updatedAt` is deliberately
+**not** backfilled: absent means "never edited on any device", which is exactly
+what a merge should treat as oldest.
+
+### Verified
+`node parsecheck.cjs` OK. Thirteen runners green; `mergetest.cjs` now **40/40**.
+
+**Run against the pre-3C-2 code, 10 of the new assertions fail** — including
+*"THE HEADLINE: two devices editing DIFFERENT categories both survive"*, the
+delete-resurrection guard, and the ordering guard.
+
+`budgettest.cjs` dropped to 19/39 on the first run — **the documented slice-marker
+trap**, not a regression: its vm slice started at `resolvePlanForMonth`, so the
+new module-scope helpers above it were undefined and every test in two sections
+failed with a ReferenceError. Slice widened and the helpers handed to the
+context; back to 39/39.
+
+Driven in a sandbox against the real seeded dataset:
+- `migrate()` backfilled `ord` 0..n from array order; **no** `updatedAt` written
+- deleting "Long Term Savings" tombstoned it (14 rows stored, 13 live), removed
+  it from the Budget list, the reorder sheet and the group total (Invest & Grow
+  6,050 → 3,300; Allocated 22,000 → 19,250) and materialised a custom plan
+- the tombstoned row carries both `deletedAt` and `updatedAt`
+- reordering renumbered `ord` across the live categories, left the tombstone's
+  own `ord` alone, and **survived a reload**
+- no console errors
+
+**Not verified:** a genuine two-device merge against the live Worker. The merge
+logic is unit-tested from both directions including convergence, but the real
+two-phone matrix is still a manual test.
 
 ## Merge fixes that needed no data-model change (2026-08-05, build 3C-1)
 

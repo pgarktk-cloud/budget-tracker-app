@@ -50,13 +50,26 @@ const eff=c=>(c.subs||[]).length?c.subs.reduce((s,x)=>s+(Number(x.amount)||0),0)
    copy-on-write tests can build a context out of the same real sources. */
 const cloneRecSrc=slice("function clonePlanRecord(","/* Spend-status thresholds");
 const cloneSrc=slice("  const clonePlanForMonth=(mo,sourcePlanId","  /* ── Copy-on-write, silent");
-const resolveSrc=slice("function resolvePlanForMonth(","/* Deep-clone a plan record");
+/* Starts at the plan-record helpers (livePlanView / stampPlanRecords /
+   comparePlanRecords), not at resolvePlanForMonth: since 2026-08-05 resolve
+   returns livePlanView(plan) and editPlanForMonth calls stampPlanRecords, so
+   slicing from resolve alone leaves them undefined and every test in both
+   sections fails with a ReferenceError rather than a real assertion. */
+const resolveSrc=slice("const PLAN_ORD_LAST=","/* Deep-clone a plan record");
 
 /* ── resolvePlanForMonth — the carry-forward chain ────────────────────── */
 const rctx={};
 vm.createContext(rctx);
-vm.runInContext(resolveSrc+"\nthis.resolvePlanForMonth=resolvePlanForMonth;",rctx);
-const{resolvePlanForMonth}=rctx;
+// PLAN_ORD_LAST/planOrdOf are top-level consts and don't attach to the vm
+// context on their own — only function declarations do.
+vm.runInContext(resolveSrc+`
+this.resolvePlanForMonth=resolvePlanForMonth;
+this.livePlanView=livePlanView;
+this.stampPlanRecords=stampPlanRecords;
+this.comparePlanRecords=comparePlanRecords;
+this.planOrdOf=planOrdOf;
+this.PLAN_ORD_LAST=PLAN_ORD_LAST;`,rctx);
+const{resolvePlanForMonth,livePlanView,stampPlanRecords,comparePlanRecords,planOrdOf}=rctx;
 console.log("\nresolvePlanForMonth (carry-forward chain)");
 {
   const P=[{id:"pJan",owner:"me"},{id:"pMar",owner:"me"},{id:"pJun",owner:"me"},

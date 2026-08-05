@@ -1213,6 +1213,72 @@ function bucketProgress(bucketKey,payPeriods,owner){
      continues. Same reasoning as clonePlanForMonth's missing `||plans[0]`
      fallback: a plausible wrong budget is worse than none — but an older real
      mapping is better than either. ────────────────────────────────────────── */
+/* ── A plan's categories and groups are records, not array positions ────────
+   Two devices editing DIFFERENT categories in the same month used to lose one
+   side: `plans` merged whole-record, newest `updatedAt` wins. Merging them
+   per-record needs two things the old shape couldn't express.
+
+   1. DELETION. `removeCat` used to hard-delete, so a union merge would
+      resurrect a category the other person deleted — trading a lost edit for a
+      resurrected delete, which is no better. Categories and groups are now
+      tombstoned (`deletedAt`) like every other collection in this app.
+
+   2. ORDER. Category order is user-controlled ("Reorder categories" moves them
+      up and down) and it lived in array position — but `mergeArrayById` sorts
+      by id, so any merge would scramble it. Same lesson as transactions
+      (`compareTxForDisplay`): order has to live in a FIELD. Hence `ord`,
+      backfilled once by `migrate()`.
+
+   `livePlanView` is the canonical read shape: tombstones filtered, order
+   applied. Applied at `resolvePlanForMonth` so every reader gets it for free
+   rather than 37 call sites each remembering to filter. It returns the
+   IDENTICAL object when there's nothing to do — same rule as the bills
+   reconciler — so render identity doesn't churn on the common path.
+   Writers go through `editPlanForMonth`, which operates on the raw record and
+   therefore still sees tombstones. */
+const PLAN_ORD_LAST=1e9;
+const planOrdOf=x=>(x&&typeof x.ord==="number"&&isFinite(x.ord))?x.ord:PLAN_ORD_LAST;
+function comparePlanRecords(a,b){
+  const oa=planOrdOf(a),ob=planOrdOf(b);
+  if(oa!==ob)return oa-ob;
+  return String(a&&a.id||"").localeCompare(String(b&&b.id||""));
+}
+function livePlanView(plan){
+  if(!plan)return plan;
+  const cats=plan.categories||[],grps=plan.groups||[];
+  const liveCats=cats.filter(c=>!c.deletedAt),liveGrps=grps.filter(g=>!g.deletedAt);
+  const sortedCats=[...liveCats].sort(comparePlanRecords);
+  const sortedGrps=[...liveGrps].sort(comparePlanRecords);
+  const same=(a,b)=>a.length===b.length&&a.every((x,i)=>x===b[i]);
+  if(same(sortedCats,cats)&&same(sortedGrps,grps))return plan;
+  return{...plan,categories:sortedCats,groups:sortedGrps};
+}
+/* Stamps `updatedAt` on the categories/groups that actually changed, and gives
+   any new one an `ord`. Called from editPlanForMonth — the one choke point
+   every budget mutation already goes through — rather than from each mutator,
+   for the same reason the copy-on-write decision lives there. */
+function stampPlanRecords(prev,next,now){
+  if(!next)return next;
+  const stampArr=(prevArr,nextArr)=>{
+    const before=new Map((prevArr||[]).map(x=>[x.id,x]));
+    let maxOrd=-1;
+    (nextArr||[]).forEach(x=>{const o=planOrdOf(x);if(o!==PLAN_ORD_LAST&&o>maxOrd)maxOrd=o;});
+    let touched=false;
+    const out=(nextArr||[]).map(x=>{
+      const b=before.get(x.id);
+      if(b&&JSON.stringify(b)===JSON.stringify(x))return x;
+      touched=true;
+      const withOrd=planOrdOf(x)===PLAN_ORD_LAST?{...x,ord:++maxOrd}:{...x};
+      return{...withOrd,updatedAt:now};
+    });
+    return touched?out:nextArr;
+  };
+  const categories=stampArr(prev&&prev.categories,next.categories);
+  const groups=stampArr(prev&&prev.groups,next.groups);
+  if(categories===next.categories&&groups===next.groups)return next;
+  return{...next,categories,groups};
+}
+
 function resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans){
   const live=(plans||[]).filter(p=>!p.deletedAt);
   const byId=id=>live.find(p=>p.id===id)||null;
@@ -1221,12 +1287,12 @@ function resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans){
     .sort((a,b)=>String(b.month).localeCompare(String(a.month)));   // newest first
   for(const m of preceding){
     const p=byId(m.planId);
-    if(p)return{plan:p,fromMonth:m.month,exact:String(m.month)===String(mo),source:"chain"};
+    if(p)return{plan:livePlanView(p),fromMonth:m.month,exact:String(m.month)===String(mo),source:"chain"};
   }
   const base=byId((activePlanId||{})[owner])
           ||live.find(p=>p.owner===owner)
           ||live[0]||null;
-  return{plan:base,fromMonth:null,exact:false,source:"base"};
+  return{plan:livePlanView(base),fromMonth:null,exact:false,source:"base"};
 }
 
 /* Deep-clone a plan record for a new month. Pure: takes an id factory, returns
@@ -1959,8 +2025,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.21.0";
-const BUILD_ID="2026.08.05.0004";
+const APP_VERSION="1.22.0";
+const BUILD_ID="2026.08.05.0005";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2743,6 +2809,23 @@ function migrate(d){
   if(!d.billsSettings)d.billsSettings={openingReserve:0};
   if(d.billsSettings.openingReserve===undefined)d.billsSettings.openingReserve=0;
 
+  /* Category/group display order becomes a FIELD (2026-08-05). It used to be
+     array position, which `mergeArrayById` erases by sorting on id — the same
+     lesson transactions learned. Backfilled from the current array order, so
+     what everyone is looking at right now is preserved exactly.
+
+     This DOES change fingerprint() for every existing document, costing one
+     Cloudflare KV write per device on first open. That is a deliberate one-off,
+     and a different thing from the per-app-open write the userFingerprint split
+     exists to prevent. It is also deterministic — every device derives the same
+     ords from the same array — so two devices converge instead of conflicting.
+     `updatedAt` is deliberately NOT backfilled: absent means "never edited on
+     any device", which is exactly what a merge should treat as oldest. */
+  (d.plans||[]).forEach(p=>{
+    (p.categories||[]).forEach((c,i)=>{if(c&&c.ord==null)c.ord=i;});
+    (p.groups||[]).forEach((g,i)=>{if(g&&g.ord==null)g.ord=i;});
+  });
+
   /* Installments. For a document written before this feature both arrays are
      simply created empty — and fingerprint() omits them while empty, so an
      existing user's document is byte-identical after the upgrade and doesn't
@@ -3450,7 +3533,16 @@ function tryAutoMergeAll(local,remote){
       assets:mergeArrayById(local.assets,remote.assets),
       targets:mergeArrayById(local.targets,remote.targets),
       mp2DividendRates:mergeArrayById(local.mp2DividendRates,remote.mp2DividendRates),
-      plans:mergeArrayById(local.plans,remote.plans),
+      /* The whole point of build 3C-2. This was mergeArrayById — whole plan
+         record, newest updatedAt wins — so one person editing Groceries and
+         the other editing Transport in the same month silently lost a side.
+         Categories and groups now merge per record, which is only sound
+         because they are tombstoned (a delete survives) and ordered by `ord`
+         (array order, which this sort would erase, no longer carries meaning). */
+      plans:mergeArrayByIdWithChildren(local.plans,remote.plans,[
+        {key:"categories",tsOf:c=>c.updatedAt||""},
+        {key:"groups",tsOf:g=>g.updatedAt||""},
+      ]),
       bills:mergeArrayById(local.bills,remote.bills),
       billAdjustments:mergeArrayById(local.billAdjustments,remote.billAdjustments),
       installments:mergeArrayById(local.installments,remote.installments),
@@ -4726,9 +4818,12 @@ function App(){
      reintroduce an assumption that editing today writes here. */
   const plans=(data.plans||[]).filter(p=>!p.deletedAt);
   const activePlanId=data.activePlanId||{me:plans[0]?.id,wife:null};
-  const plan=plans.find(p=>p.id===activePlanId[budgetOwner])||
+  /* livePlanView here too: this is the one plan that does NOT come through
+     resolvePlanForMonth, and it feeds the header income field and `allocated`.
+     Without it those would count tombstoned categories. */
+  const plan=livePlanView(plans.find(p=>p.id===activePlanId[budgetOwner])||
              plans.find(p=>p.owner===budgetOwner)||
-             plans[0];
+             plans[0]);
   const cur=data.currency;
 
   /* plan mutators — always operate on current budgetOwner's plan */
@@ -4847,7 +4942,8 @@ function App(){
           const m=mutate(p);
           if(!m||JSON.stringify(m)===JSON.stringify(p))return p;
           changed=true;
-          return{...m,updatedAt:now};
+          // Per-record stamps go on here, once, rather than in each mutator.
+          return{...stampPlanRecords(p,m,now),updatedAt:now};
         });
         return changed?{...d,plans:next}:d;
       }
@@ -4864,7 +4960,7 @@ function App(){
       // and every no-op would materialise a plan.
       if(!edited||JSON.stringify(edited)===JSON.stringify(cloned))return d;
       return{...d,
-        plans:[...d.plans,{...edited,updatedAt:now}],
+        plans:[...d.plans,{...stampPlanRecords(cloned,edited,now),updatedAt:now}],
         monthlyPlans:[...maps.filter(m=>!(m.month===mo&&m.owner===owner)),
                       {month:mo,owner,planId:cloned.id,updatedAt:now}]};
     });
@@ -7128,7 +7224,10 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
 
   const updateCat=(id,patch)=>editCats(cats=>cats.map(c=>c.id===id?{...c,...patch}:c));
   const addCat=gid=>editCats(cats=>[...cats,{id:uid(),name:"New category",amount:0,groupId:gid,color:SEG[cats.length%SEG.length],subs:[],trackExpenses:true}]);
-  const removeCat=id=>editCats(cats=>cats.filter(c=>c.id!==id));
+  /* Tombstone, never splice. A hard delete cannot survive a merge: the other
+     device's copy still has the record and a union merge would resurrect it.
+     livePlanView filters these out of every read. */
+  const removeCat=id=>editCats(cats=>cats.map(c=>c.id===id?{...c,deletedAt:new Date().toISOString()}:c));
   const updateSub=(catId,subId,patch)=>editCats(cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).map(s=>s.id===subId?{...s,...patch}:s)}):c));
   const removeSub=(catId,subId)=>editCats(cats=>cats.map(c=>c.id===catId?syncAmt({...c,subs:(c.subs||[]).filter(s=>s.id!==subId)}):c));
   const addGroup=()=>editGrps(gs=>[...gs,{id:uid(),name:"New group"}]);
@@ -7136,9 +7235,12 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
   /* One mutate, not two chained calls: deleting a group and orphaning its
      categories is a single decision about this month's budget, so it must be
      one clone decision and one undo step. */
-  const removeGroup=id=>editMonth(p=>({...p,
-    categories:(p.categories||[]).filter(c=>c.groupId!==id),
-    groups:(p.groups||[]).filter(g=>g.id!==id)}));
+  const removeGroup=id=>editMonth(p=>{
+    const at=new Date().toISOString();
+    return{...p,
+      categories:(p.categories||[]).map(c=>c.groupId===id&&!c.deletedAt?{...c,deletedAt:at}:c),
+      groups:(p.groups||[]).map(g=>g.id===id?{...g,deletedAt:at}:g)};
+  });
   const setIncome=v=>editMonth(p=>({...p,income:Number(v)||0}));
 
   const handleAddSub=catId=>{
@@ -8002,13 +8104,21 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      browsing a carried-forward month would otherwise rewrite the plan every
      other month inherits. An out-of-range move returns the plan untouched and
      the no-op guard keeps it from materialising a copy. */
+  /* Renumbers `ord` across the live categories rather than swapping array
+     positions — array order is erased by any merge (mergeArrayById sorts by
+     id), exactly as it is for transactions. Renumbering all of them, like
+     setExpenseDayOrder does, keeps the sequence consistent even if some
+     category never had an ord. Tombstoned rows keep whatever they had. */
   const moveCat=(catId,dir)=>editPlanForMonth(viewMonth,budgetOwner,fmtMonth(viewMonth),p=>{
-    const arr=[...(p.categories||[])];
-    const i=arr.findIndex(c=>c.id===catId);
+    const live=(p.categories||[]).filter(c=>!c.deletedAt).sort(comparePlanRecords);
+    const i=live.findIndex(c=>c.id===catId);
     const j=i+dir;
-    if(i<0||j<0||j>=arr.length)return p;
-    [arr[i],arr[j]]=[arr[j],arr[i]];
-    return{...p,categories:arr};
+    if(i<0||j<0||j>=live.length)return p;
+    const reordered=[...live];
+    [reordered[i],reordered[j]]=[reordered[j],reordered[i]];
+    const ordById=new Map(reordered.map((c,k)=>[c.id,k]));
+    return{...p,categories:(p.categories||[]).map(c=>
+      ordById.has(c.id)?{...c,ord:ordById.get(c.id)}:c)};
   });
 
   /* envelopes from the MONTH'S plan (not necessarily the active plan) —
