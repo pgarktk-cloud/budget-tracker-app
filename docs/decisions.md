@@ -1,5 +1,46 @@
 # Architectural & Technical Decisions
 
+## The cutover that needed no cutover (2026-08-05)
+
+Moving sync from KV to a Durable Object sounded like the risky build of the
+programme: a shared financial document, two people, a storage engine swap. It
+turned out to need no downtime, no coordination and no data migration, because
+of three choices made deliberately.
+
+**Keep the wire format identical.** Same URLs, same request bodies, same
+response shapes, same auth header. The phones were running v1.20.1 throughout
+and never knew the backend changed. Nothing had to be updated in lockstep, which
+is what removes the "both devices must upgrade first" problem entirely.
+
+**Let the new thing adopt the old thing.** `SyncRoom` seeds itself from the
+existing KV keys the first time it is used. There was no export/import step and
+no moment where the document lived nowhere.
+
+**Keep writing the old store for one release.** Every accepted write is mirrored
+back to the three KV keys. That is what makes rollback *real* rather than
+theoretical: revert the Worker and the old code resumes against current data,
+even after several saves. A rollback path you cannot use after the first write is
+not a rollback path.
+
+**Verify with a write, not a read.** The plan was to read `/sync/meta` and check
+the revision. What actually proved seeding worked was the *save*: the phone was
+at 701 and its save was accepted as 702. A stale or empty DO would have rejected
+that as a conflict. An operation that can only succeed if the invariant holds is
+better evidence than reading the invariant.
+
+**What made this safe to do with only one device backed up.** Not optimism — a
+guard already in the client. All three places that could adopt a cloud document
+require `Array.isArray(remoteRaw.plans)`, so an empty cloud is a no-op on every
+device rather than a wipe. Worth knowing before the next risky server change:
+*the client already refuses to be emptied.*
+
+**Two things checked rather than assumed**, both of which would have been silent
+failures. The KV namespace binding was read off the deployed Worker instead of
+matched by name — the account has a second namespace whose contents belong to an
+older version of the app. And the compatibility date was pinned to the one
+already deployed rather than raised to today's, so a storage-engine change
+didn't also quietly opt into unrelated runtime changes.
+
 ## An import is a decision, and a decision needs a window (2026-08-05)
 
 Import replaced everything and then uploaded it within eight seconds. The

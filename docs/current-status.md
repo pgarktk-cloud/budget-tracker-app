@@ -1,8 +1,73 @@
 # Current Status
 
-_Last updated: 2026-08-05 (two rotating safety copies)_
+_Last updated: 2026-08-05 (sync moved to a Durable Object)_
 
 **Live build:** `2026.08.05.0003` / v1.20.1.
+**Live Worker version:** `a3cb3ce0-32dc-449f-97c1-35c19ac046f8` (Durable Object).
+**Pick up next:** Build 3C — client-side merge granularity. That is where the
+data loss people would actually notice lives (two devices editing different
+categories in the same budget month). It needs **no** Cloudflare work.
+
+## Sync moved from KV to a Durable Object (2026-08-05)
+
+Worker only — `index.html` is untouched, so no app version bump (the bump rule
+covers `index.html`/`APP_SHELL`, and `worker.js` is in neither).
+
+**The two defects this fixes.** `POST /sync` read `rev` from KV, compared it,
+then did three separate `put`s. KV has no compare-and-swap, so two devices could
+both read rev 700 and both be accepted, the second silently overwriting the
+first. And a failure between the three puts left `data` written against a stale
+`rev`, after which every client's revision check passed wrongly.
+
+**`SyncRoom`** (module scope in `worker.js`) owns the document. Durable Objects
+deliver events to an instance one at a time and hold new ones while a storage
+operation is in flight, so the read-compare-write cannot interleave. The whole
+document commits under **one** key, so a write is all-or-nothing.
+
+- **Seeds from the existing KV keys on first use** — no manual migration, no
+  downtime, no coordinated switchover.
+- **Mirrors every accepted write back to the three legacy KV keys** for this
+  release, so a rollback resumes exactly where the DO left off. Written after the
+  commit, best-effort; the DO is the authority either way.
+- Request/response shapes unchanged, so v1.20.1 phones talked to it without
+  noticing. Nothing had to be updated in lockstep.
+- Optional `X-Device-Id` header echoed as `lastWriter`, ready for 3C's "whose
+  phone saved last" conflict copy. Never used for auth.
+
+### Deployment facts worth keeping
+- Deployed with **`npx wrangler deploy`**, not the dashboard. A DO class can only
+  be created at deploy time; there is no dashboard path. This Worker is therefore
+  **no longer dashboard-managed** — edit `worker.js` here and redeploy.
+- `wrangler.jsonc` must declare **every** binding, because a deploy replaces
+  them. The namespace id was verified with `wrangler versions view` against the
+  *deployed* Worker, not inferred from the namespace title — the account also has
+  a `SYNC_KV` namespace holding `user:data:<uuid>` keys from an older version of
+  the app, which this Worker has never read.
+- Compatibility date pinned to the already-deployed **2026-06-27** rather than
+  raised, so the release changed the sync backend and nothing else.
+- Secrets are not in the config and were not touched.
+- **Document size: 126 KB** against a 2 MB per-value ceiling. If it ever
+  approaches that it needs chunking *inside* one write — never a second key.
+
+### Verified at cutover
+Pre-deploy baseline `rev` 701 / `savedAt` 08:39:52.991Z, matching the phone.
+After deploy: KV unchanged at 701; Worker live; 401 on both no-token and
+wrong-token (proving the secrets survived — a missing `SYNC_TOKEN` returns 500).
+Then the phone showed local rev 701 and **a save was accepted, taking it to
+702** — which only happens if the DO was holding 701, so that increment *is* the
+proof that seeding worked. KV mirror followed to 703 with a matching `savedAt`.
+Document re-read and structurally verified: 28 plans, 177 transactions, 3 goals,
+6 investments, 6 banks, 1 installment, 8 monthlyPlans, owners intact.
+
+**Rollback (still available):** `npx wrangler rollback` to
+`63d5fc31-f0d2-4b28-9719-f7377dd8ad37`. KV is current because of the mirror, so
+the old KV Worker resumes correctly even after further saves. **Remove the mirror
+only when there is no intention of going back.**
+
+### Not covered by this
+The DO handler has **no automated test** — that needs `wrangler dev` and a test
+harness this repo doesn't have. It was verified by the cutover checks above, and
+that is the honest status rather than implied coverage.
 
 ## Two rotating local safety copies (2026-08-05)
 

@@ -15,12 +15,25 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   name), `APP_VERSION`/`BUILD_ID` in `index.html`, and `version.json` (the
   update-check endpoint). Bump all three together. (This replaced the older
   `CACHE_VERSION` constant — older doc entries below still say `CACHE_VERSION`.)
-- **`worker.js`** is a separate Cloudflare Worker — a thin KV store/retrieve
-  proxy behind the app's cloud sync. It's schema-agnostic (stores whatever
-  JSON blob the client sends) — changes to the data model inside `data`
-  (plans, investments, banks, etc.) do **not** require touching `worker.js`.
-  Only touch it if the sync *protocol* itself changes (new endpoints, auth,
+- **`worker.js`** is a separate Cloudflare Worker — the store/retrieve proxy
+  behind the app's cloud sync. It's schema-agnostic (stores whatever JSON blob
+  the client sends) — changes to the data model inside `data` (plans,
+  investments, banks, etc.) do **not** require touching `worker.js`. Only touch
+  it if the sync *protocol* itself changes (new endpoints, auth,
   request/response shape).
+  - Since 2026-08-05 sync lives in a **Durable Object** (`SyncRoom`), not plain
+    KV: KV had no compare-and-swap, so the rev check was a race, and the three
+    separate puts could tear. The whole document commits under **one** storage
+    key — if it ever outgrows the 2 MB per-value ceiling (it's ~126 KB) it needs
+    chunking *inside* one write, never a second key written separately.
+  - **It is deployed with `npx wrangler deploy`, not the dashboard** — a DO class
+    can only be created at deploy time. Editing it in the dashboard editor gets
+    overwritten by the next deploy. `wrangler.jsonc` must declare **every**
+    binding, because a deploy replaces them; a missing `ALLOC_KV` would silently
+    unbind KV. Secrets are not in the config and are not touched by a deploy.
+  - It still **mirrors every accepted write back to the three legacy KV keys**,
+    purely so a rollback resumes against current data. Remove that only when
+    rolling back is off the table.
 
 ## Data model conventions
 

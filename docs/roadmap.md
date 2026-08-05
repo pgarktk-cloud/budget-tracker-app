@@ -9,10 +9,14 @@ its own; none are combined.
 2. **Backup import hardening — DONE**, build `2026.08.05.0002` / v1.20.0.
    `validateBackup` + preview sheet + size gate + aborting pre-import backup +
    the upload held until an explicit Save to Cloud. `importtest.cjs` (34/34).
-3. **Safer two-device sync** — a Cloudflare Durable Object (dual-read cutover,
-   KV mirror for rollback) *plus* per-record merge granularity for plan
-   categories/groups, `monthlyPlans`, `payPeriods.actualStarts`, and
-   `household.expenses` finally joining `CONFLICT_COLLECTIONS`.
+3. **Safer two-device sync** — split in two:
+   - **3B Worker → Durable Object — DONE**, deployed 2026-08-05, Worker version
+     `a3cb3ce0`. Seeded from KV, mirrors back to it for rollback, wire format
+     unchanged. See `current-status.md`.
+   - **3C Client merge granularity — NEXT.** Per-record `updatedAt` on plan
+     categories/groups, `monthlyPlans`, `payPeriods.actualStarts`, and
+     `household.expenses` finally joining `CONFLICT_COLLECTIONS`. **No Cloudflare
+     work.** This is where the loss people would actually notice lives.
 4. **Faster transaction entry** — autofocus + Repeat, richer suggestion chips,
    rapid entry with undo-on-save, then a synced `txTemplates` collection.
 5a. **Category → goal link** — an optional `category.goalId`; a transfer against
@@ -20,6 +24,20 @@ its own; none are combined.
    money" becomes a real transfer instead of a goal-only edit.
 5b. **Salary reconciliation** — planned figures beside the actuals in
    `UnaccountedSheet` (supersedes the "Next up" section below).
+
+### Follow-ups opened by build 3B
+- **Remove the KV mirror**, once there is no intention of rolling back. Until
+  then the Worker writes every accepted save to KV as well as the Durable Object.
+  Cheap, but it is duplicated state and should not become permanent by accident.
+- **The DO handler has no automated test.** It needs `wrangler dev` plus a test
+  harness this repo doesn't have. Covered by cutover verification only — do not
+  let that be mistaken for coverage.
+- **`SYNC_KV` namespace is unexplained.** Holds two `user:data:<uuid>` keys from
+  an older version of the app. Not bound, not read. Worth looking at once, then
+  deleting or documenting.
+- **The Worker is no longer dashboard-managed.** Editing it in the dashboard
+  editor would be overwritten by the next `npx wrangler deploy`. Deploy from the
+  repo.
 
 ### Follow-ups opened by build 2
 - ~~**The import hold has no second slot.**~~ **DONE 2026-08-05**, build
