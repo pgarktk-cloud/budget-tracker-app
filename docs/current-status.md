@@ -1,12 +1,76 @@
 # Current Status
 
-_Last updated: 2026-08-05 (sync moved to a Durable Object)_
+_Last updated: 2026-08-05 (merge fixes, build 3C-1)_
 
-**Live build:** `2026.08.05.0003` / v1.20.1.
+**Live build:** `2026.08.05.0004` / v1.21.0.
 **Live Worker version:** `a3cb3ce0-32dc-449f-97c1-35c19ac046f8` (Durable Object).
-**Pick up next:** Build 3C — client-side merge granularity. That is where the
-data loss people would actually notice lives (two devices editing different
-categories in the same budget month). It needs **no** Cloudflare work.
+**Pick up next:** **Build 3C-2 — per-category plan merge.** This is still the
+headline two-device defect and it is NOT yet fixed: `plans` merges whole-record,
+newest-wins, so two people editing different categories in the same budget month
+still lose one side silently. It needs category/group tombstones first — see the
+design note at the end of the 3C-1 section below.
+
+## Merge fixes that needed no data-model change (2026-08-05, build 3C-1)
+
+Build `2026.08.05.0004` / v1.21.0. Three defects, each of which silently
+discarded a real edit. Deliberately scoped to what could be fixed *without*
+introducing tombstones, so the risky half could be its own build.
+
+**1. `monthlyPlans` resolved by whole-document age.** It merged through
+`mergeKeyed`, which has no per-record timestamp and falls back to whichever
+document is newer overall — so assigning a plan to September on one device was
+reverted as soon as the other logged an unrelated transaction. The records have
+carried `updatedAt` all along; **nothing ever read it**. New `mergeKeyedByTs`
+does, falling back to the old rule when neither side is stamped, so pre-existing
+data behaves exactly as before. (Closes the follow-up logged 2026-07-31.)
+
+**2. `household.expenses` merged with `tsOf=()=>""`.** `tsOf(rx)>tsOf(lx)` is
+`""> ""` — always false — so **local always won an id collision**. An edit made
+on the other device could never arrive, and a delete there was silently undone by
+a stale local copy. Now uses the default `updatedAt` comparison like every other
+collection.
+
+**3. `household.expenses` was not in `CONFLICT_COLLECTIONS`.** It is id-keyed and
+soft-deleted like everything else and was simply never added, so it was invisible
+in the conflict modal and in Recently Deleted while still counting toward the
+pending badge through a hand-written special case. It is now a normal entry —
+which required an optional **`get`** accessor on the collection spec, since it is
+the only nested one. `countPendingChanges`, `buildConflictDiff` and
+`RecentlyDeletedModal` all read through `conflictArr(c,d)`; `restoreRecord`
+handles the nested write. The special case is gone. (Closes the follow-up logged
+2026-07-30.)
+
+**4. Device identity.** New per-device `allocation:deviceId` +
+`allocation:deviceLabel` in localStorage — never in `data`, never synced, same
+rule as the view profile and the passphrase. Sent as `X-Device-Id`, echoed back
+by the Worker as `lastWriter`, and used by the conflict modal to say *"saved by
+Charlene's phone"* instead of "the cloud". Named in Settings → Name this device.
+The conflict modal also now distinguishes the additions-only case ("you each
+added different things") from a genuine same-record clash.
+
+### Verified
+`node parsecheck.cjs` OK. Thirteen runners green, including new
+**`mergetest.cjs` (22/22, committed)**.
+
+**The tests were checked against the OLD code and 8 of the 22 fail there** —
+including both household defects and the `monthlyPlans` reversion. A merge test
+that passes both before and after proves nothing, so this was run explicitly.
+
+Sandbox: device-name field renders and persists, no console errors, version
+reads 1.21.0. **Not visually verified: the conflict modal copy** — reproducing a
+genuine conflict needs two devices against the live Worker. Its writer-label
+derivation is pure string handling (strip the ` (id)` suffix when a label is
+present; show nothing when the writer is this device).
+
+### Why the plan-category merge is NOT in this build
+`plans` still merges whole-record. Fixing it means unioning categories by id —
+and **categories are hard-deleted** (`removeCat` filters them out), so a union
+would resurrect a category the other person deleted. That needs category and
+group tombstones, which touches **37 `.categories` read sites**. The safe shape
+is a `livePlanView()` filter applied at `resolvePlanForMonth` (and the App-level
+active plan), returning the *identical object* when nothing is tombstoned so
+render identity doesn't churn — the same rule the bills reconciler follows.
+That is build 3C-2, on its own, with its own testing.
 
 ## Sync moved from KV to a Durable Object (2026-08-05)
 

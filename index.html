@@ -1959,8 +1959,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.20.1";
-const BUILD_ID="2026.08.05.0003";
+const APP_VERSION="1.21.0";
+const BUILD_ID="2026.08.05.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2938,7 +2938,7 @@ const KVSync={
      passphrase is indistinguishable from an ordinary sync failure. */
   lastStatus:null,
   _ready(){return !PROXY_URL.startsWith("PASTE_")&&!!getSyncToken();},
-  _headers(){return{"Content-Type":"application/json","X-Sync-Token":getSyncToken()};},
+  _headers(){return{"Content-Type":"application/json","X-Sync-Token":getSyncToken(),"X-Device-Id":deviceTag()};},
   /* Full download. Returns {data, savedAt, rev} | null (null only on
      network/parse failure — a genuinely-empty account still resolves with
      data:null, rev:0, which callers distinguish from a failed fetch). */
@@ -3035,6 +3035,37 @@ function writePreCloudSlots(slots){
     }catch(e){/* quota — try again with fewer slots */}
   }
   return null;
+}
+/* ── Device identity ────────────────────────────────────────────────────────
+   Per-device, never in `data`, never synced — same rule as the view profile and
+   the passphrase. It exists only so a conflict can say WHOSE phone saved last
+   instead of "the cloud", which is the difference between a decision and a
+   guess. The label is editable; the id is what the server echoes back.
+   Deliberately not derived from a user agent string: two identical phones would
+   be indistinguishable, which is exactly the case that needs telling apart. */
+const DEVICE_ID_KEY="allocation:deviceId";
+const DEVICE_LABEL_KEY="allocation:deviceLabel";
+function getDeviceId(){
+  try{
+    let v=localStorage.getItem(DEVICE_ID_KEY);
+    if(!v){v=Math.random().toString(36).slice(2,10);localStorage.setItem(DEVICE_ID_KEY,v);}
+    return v;
+  }catch(e){return "";}
+}
+function getDeviceLabel(){
+  try{return localStorage.getItem(DEVICE_LABEL_KEY)||"";}catch(e){return "";}
+}
+function setDeviceLabel(v){
+  try{
+    const t=String(v||"").trim().slice(0,40);
+    if(t)localStorage.setItem(DEVICE_LABEL_KEY,t);else localStorage.removeItem(DEVICE_LABEL_KEY);
+  }catch(e){}
+}
+/* What the server should record as the writer: the friendly label if this
+   device has one, else the opaque id. Capped to match the Worker's own slice. */
+function deviceTag(){
+  const l=getDeviceLabel();
+  return (l?`${l} (${getDeviceId()})`:getDeviceId()).slice(0,64);
 }
 const PROFILE_KEY="allocation:preferredProfile";
 /* which profile the asset tabs are being VIEWED as — me | wife | household.
@@ -3207,6 +3238,27 @@ function mergeKeyed(localArr,remoteArr,keyOf,preferLocal){
   const map=new Map();
   (preferLocal?(remoteArr||[]):(localArr||[])).forEach(x=>map.set(keyOf(x),x));
   (preferLocal?(localArr||[]):(remoteArr||[])).forEach(x=>map.set(keyOf(x),x));
+  return Array.from(map.values()).sort((a,b)=>String(keyOf(a)).localeCompare(String(keyOf(b))));
+}
+/* Same as mergeKeyed, but for keyed records that DO carry their own
+   updatedAt — currently monthlyPlans, whose every writer stamps one and which
+   nothing ever read. Without this, assigning a plan to September on one phone
+   was resolved by which whole document happened to be newer, so an unrelated
+   transaction logged on the other phone could silently revert the assignment
+   back to carry-forward. Records with no stamp on either side fall back to the
+   old whole-document rule, so pre-stamp data behaves exactly as before.
+   Note this merges rather than deletes: an unassignment is itself an upsert
+   (planId:null + deletedAt), so a removal is a record and travels like one. */
+function mergeKeyedByTs(localArr,remoteArr,keyOf,preferLocal){
+  const map=new Map();
+  (localArr||[]).forEach(x=>map.set(keyOf(x),x));
+  (remoteArr||[]).forEach(rx=>{
+    const k=keyOf(rx),lx=map.get(k);
+    if(!lx){map.set(k,rx);return;}
+    const lt=lx.updatedAt||"",rt=rx.updatedAt||"";
+    if(lt||rt){map.set(k,rt>lt?rx:lx);return;}
+    map.set(k,preferLocal?lx:rx);
+  });
   return Array.from(map.values()).sort((a,b)=>String(keyOf(a)).localeCompare(String(keyOf(b))));
 }
 
@@ -3403,13 +3455,17 @@ function tryAutoMergeAll(local,remote){
       billAdjustments:mergeArrayById(local.billAdjustments,remote.billAdjustments),
       installments:mergeArrayById(local.installments,remote.installments),
       installmentPayments:mergeArrayById(local.installmentPayments,remote.installmentPayments),
-      monthlyPlans:mergeKeyed(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
+      monthlyPlans:mergeKeyedByTs(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
       snapshots:mergeKeyed(local.snapshots,remote.snapshots,s=>`${s.date}|${s.profile}`,preferLocal),
       household:{
         ...(base.household||{splitMine:50,expenses:[]}),
-        expenses:mergeArrayById((local.household||{}).expenses,(remote.household||{}).expenses,()=>""),
+        /* Was tsOf=()=>"", which made every id collision a local win — so a
+           household expense edited on the other device could never arrive, and
+           a delete there was silently undone by a stale local copy. These rows
+           carry updatedAt like every other collection; use it. */
+        expenses:mergeArrayById((local.household||{}).expenses,(remote.household||{}).expenses),
       },
     };
     // Settings resolve per field, AFTER the record merges above — household
@@ -3450,7 +3506,17 @@ const CONFLICT_COLLECTIONS=[
   {key:"billAdjustments",label:"Bills Reserve adjustments",nameOf:a=>`${a.amount>=0?"+":""}${a.amount||0}${a.date?` (${a.date})`:""}`},
   {key:"installments",label:"Installments",nameOf:i=>`${i.name||"Installment"}${i.provider?` — ${installmentProviderLabel(i)}`:""}${i.originalAmount!=null?` (${Number(i.originalAmount).toLocaleString()})`:""}`},
   {key:"installmentPayments",label:"Installment payments",nameOf:p=>`#${p.sequence||"?"}${p.dueDate?` due ${p.dueDate}`:""}${p.scheduledAmount!=null?` — ${Number(p.scheduledAmount).toLocaleString()}`:""}`},
+  /* household.expenses is NESTED, hence `get`. It is id-keyed and soft-deleted
+     exactly like every other collection here and was simply never added — so
+     it merged, and counted toward the pending badge via a hand-written special
+     case, while being invisible in the conflict modal and in Recently Deleted.
+     `get` exists only for this entry; everything else reads d[key]. */
+  {key:"household.expenses",label:"Household expenses",
+   get:d=>((d||{}).household||{}).expenses,
+   nameOf:e=>`${e.name||"Expense"}${e.amount!=null?` — ${Number(e.amount).toLocaleString()}`:""}`},
 ];
+/* Reads a conflict collection off a document, honouring a nested `get`. */
+const conflictArr=(c,d)=>(c.get?c.get(d):((d||{})[c.key]))||[];
 /* Collections that belong in CONFLICT_COLLECTIONS (they merge, they're counted
    as pending, and a conflict should describe them) but NOT in Recently
    Deleted. An installment payment tombstone is a side effect of deleting the
@@ -3477,13 +3543,10 @@ const HIDE_FROM_RECENTLY_DELETED=new Set(["installmentPayments"]);
 function countPendingChanges(local,base){
   if(!base)return{records:0,derived:0,known:false};
   let records=0;
-  CONFLICT_COLLECTIONS.forEach(({key})=>{
-    const{onlyLocal,onlyRemote,changed}=diffCollection((local||{})[key],(base||{})[key]);
+  CONFLICT_COLLECTIONS.forEach(c=>{
+    const{onlyLocal,onlyRemote,changed}=diffCollection(conflictArr(c,local),conflictArr(c,base));
     records+=onlyLocal.length+onlyRemote.length+changed.length;
   });
-  const hhL=((local||{}).household||{}).expenses,hhB=((base||{}).household||{}).expenses;
-  const hh=diffCollection(hhL,hhB);
-  records+=hh.onlyLocal.length+hh.onlyRemote.length+hh.changed.length;
   let derived=0;
   [["history",h=>h.month],["snapshots",s=>`${s.date}|${s.profile}`]].forEach(([key,keyOf])=>{
     const lm=new Map(((local||{})[key]||[]).map(x=>[keyOf(x),x]));
@@ -3493,8 +3556,9 @@ function countPendingChanges(local,base){
   return{records,derived,known:true};
 }
 function buildConflictDiff(local,remote){
-  return CONFLICT_COLLECTIONS.map(({key,label,nameOf})=>{
-    const{onlyLocal,onlyRemote,changed}=diffCollection((local||{})[key],(remote||{})[key]);
+  return CONFLICT_COLLECTIONS.map(c=>{
+    const{key,label,nameOf}=c;
+    const{onlyLocal,onlyRemote,changed}=diffCollection(conflictArr(c,local),conflictArr(c,remote));
     return{key,label,
       onlyLocal:onlyLocal.map(nameOf),
       onlyRemote:onlyRemote.map(nameOf),
@@ -3708,6 +3772,13 @@ function App(){
      6-second toast and the full recovery list with one function. */
   const restoreRecord=(collection,id,childKey,childId)=>{
     setData(d=>{
+      /* The one nested collection in CONFLICT_COLLECTIONS. Handled here rather
+         than by giving every caller a path, because this is the only place
+         that writes a restore back. */
+      if(collection==="household.expenses"){
+        const hh=d.household||{splitMine:50,expenses:[]};
+        return{...d,household:{...hh,expenses:(hh.expenses||[]).map(x=>x.id===id?{...x,deletedAt:null,updatedAt:new Date().toISOString()}:x)}};
+      }
       const arr=d[collection]||[];
       /* Two collections restore more than one record, because more than one
          was tombstoned by the delete. Routed here rather than in the modal so
@@ -3940,7 +4011,7 @@ function App(){
             }else if(!cancelled){
               resolved=localResolved;
               conflictShown=true;
-              setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt,remoteRev});
+              setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt,remoteRev,remoteWriter:(remoteEnvelope&&remoteEnvelope.lastWriter)||null});
             }
           }
         }else{
@@ -4209,7 +4280,7 @@ function App(){
             setHasUnsyncedChanges(true);
             setSyncStatus("stale");
             setSyncMsg("⚠️ Cloud changed — review before saving");
-            setConflict({local:payload,remote:remoteMigrated,remoteSavedAt:result.savedAt,remoteRev:result.rev});
+            setConflict({local:payload,remote:remoteMigrated,remoteSavedAt:result.savedAt,remoteRev:result.rev,remoteWriter:result.lastWriter||null});
           }
         }else{
           clearUploadPending();
@@ -4434,7 +4505,7 @@ function App(){
           }else{
             setSyncMsg("");
             setSyncStatus("stale");
-            setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:remoteEnvelope.savedAt,remoteRev});
+            setConflict({local:dataRef.current,remote:remoteMigrated,remoteSavedAt:remoteEnvelope.savedAt,remoteRev,remoteWriter:remoteEnvelope.lastWriter||null});
           }
         }
       }else{
@@ -12457,6 +12528,15 @@ function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(null); // no dismiss action — user must choose an option below
   const remoteWhen=conflict.remoteSavedAt?new Date(conflict.remoteSavedAt).toLocaleString():"an unknown time";
+  /* Who saved it. The server echoes back whatever X-Device-Id the writing
+     device sent — a friendly label if that device has one, otherwise an opaque
+     id. Strip the id when a label is present: "Charlene's phone" is the useful
+     part, and the raw id is only there to keep two unlabelled devices apart. */
+  const rawWriter=conflict.remoteWriter||"";
+  const writerLabel=rawWriter&&rawWriter!==deviceTag()
+    ?rawWriter.replace(/\s*\([^)]*\)\s*$/,"")||rawWriter
+    :"";
+  const savedByLine=writerLabel?`saved by ${writerLabel}`:"last saved";
   const choiceBtn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",display:"block"};
   const diff=useMemo(()=>buildConflictDiff(conflict.local,conflict.remote),[conflict]);
   const totalOnlyLocal=diff.reduce((s,c)=>s+c.onlyLocal.length,0);
@@ -12472,7 +12552,9 @@ function ConflictModal({conflict,onKeepLocal,onUseCloud,onSaveLocalToCloud}){
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600}}>Cloud and local data differ</h3>
         <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:10}}>
-          This device has changes that haven't been saved to the cloud, and the cloud copy — last saved {remoteWhen} — is different. Choose which one to keep.
+          This device has changes that haven't been saved to the cloud, and the cloud copy — {savedByLine} {remoteWhen} — is different. Choose which one to keep.
+          {totalOnlyLocal>0&&totalOnlyRemote>0&&totalChanged===0&&
+            <><br/><span style={{color:P.faint}}>You each added different things — nothing was edited on both sides, so whichever you pick, the other side's additions are the only thing at stake.</span></>}
         </p>
         {diff.length>0?(
           <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
@@ -12565,9 +12647,9 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
 function RecentlyDeletedModal({data,restoreRecord,retentionDays,onClose}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
-  const groups=useMemo(()=>CONFLICT_COLLECTIONS.filter(c=>!HIDE_FROM_RECENTLY_DELETED.has(c.key)).map(({key,label,nameOf})=>({
-    key,label,
-    items:((data||{})[key]||[]).filter(x=>x.deletedAt).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt)).map(x=>({id:x.id,label:nameOf(x),deletedAt:x.deletedAt})),
+  const groups=useMemo(()=>CONFLICT_COLLECTIONS.filter(c=>!HIDE_FROM_RECENTLY_DELETED.has(c.key)).map(c=>({
+    key:c.key,label:c.label,
+    items:conflictArr(c,data).filter(x=>x.deletedAt).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt)).map(x=>({id:x.id,label:c.nameOf(x),deletedAt:x.deletedAt})),
   })).filter(g=>g.items.length),[data]);
   const btn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink};
   return(
@@ -12768,6 +12850,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
   const[pass,setPass]=useState("");
   const[passState,setPassState]=useState("idle"); // idle | checking | bad | error
   const[forgetConfirm,setForgetConfirm]=useState(false);
+  const[devLabel,setDevLabel]=useState(()=>getDeviceLabel());
   const connectPass=async()=>{
     const typed=pass.trim();
     if(!typed)return;
@@ -13226,6 +13309,14 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 </span>
               </button>
             ))}
+            <label style={{display:"block",fontSize:11,color:P.faint,marginBottom:4}}>Name this device</label>
+            <input value={devLabel} onChange={e=>{setDevLabel(e.target.value);setDeviceLabel(e.target.value);}}
+              placeholder="e.g. My phone"
+              style={{width:"100%",boxSizing:"border-box",borderRadius:10,padding:"9px 12px",fontSize:14,marginBottom:6,
+                background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
+            <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginBottom:10}}>
+              Only used to say which device saved last if you and {owners.wife||"your partner"} ever change the same thing at once. Stored on this device, never uploaded as part of your data.
+            </div>
             <button onClick={()=>setForgetConfirm(true)} style={{...btn,width:"100%",marginBottom:8}}>
               <I.EyeOff size={14}/>Forget passphrase on this device
             </button>

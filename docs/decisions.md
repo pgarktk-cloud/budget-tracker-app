@@ -1,5 +1,53 @@
 # Architectural & Technical Decisions
 
+## A merge test that passes before the fix is not a test (2026-08-05)
+
+Every assertion in `mergetest.cjs` was run against the *previous* `index.html`
+before being trusted. Eight of the twenty-two failed there, which is the only
+reason the other fourteen mean anything: merge code is full of paths that look
+covered and aren't, because the default outcome frequently happens to be the
+right one. `node mergetest.cjs /path/to/old-index.html` is a cheap habit worth
+keeping for anything that resolves a conflict.
+
+The three defects it locked down share a shape worth naming: **each one was a
+field that existed, was written on every edit, and was never read.**
+`monthlyPlans` records have carried `updatedAt` since they were introduced and
+the merge ignored it. `household.expenses` rows carry `updatedAt` and the merge
+passed `()=>""` instead. Writing a timestamp is not the same as honouring one,
+and nothing fails loudly when you don't — the data just quietly picks a winner.
+
+`tsOf=()=>""` deserves its own note. It reads like "no timestamp available", but
+its actual effect is `"" > ""` = false, i.e. **local always wins**. A default
+that silently encodes a policy is worse than no default.
+
+## Deletion is what makes a merge hard (2026-08-05)
+
+Build 3C was split in half, and the fault line is deletion.
+
+Everything in 3C-1 — `monthlyPlans`, `household.expenses`, device identity —
+involves records that are **soft-deleted or upserted**, so a delete is itself a
+record and travels through a union merge like any other edit. Those were safe to
+fix immediately.
+
+The plan-category merge is not, and the reason is one line: `removeCat` does
+`cats.filter(c=>c.id!==id)`. A hard delete. Union the categories by id and the
+category one person deleted comes back from the other device's copy — trading a
+silent lost *edit* for a silent resurrected *delete*, which is not an
+improvement.
+
+So the prerequisite for per-category merging is a tombstone, and the cost of a
+tombstone is that **37 places read `plan.categories`** and each would have to
+filter. The planned shape avoids auditing all 37: filter at
+`resolvePlanForMonth`, the single point every reader already resolves a plan
+through, and **return the identical object when nothing is tombstoned** so
+render identity doesn't churn on the overwhelmingly common path. That is the
+same "return the identical object when nothing changed" rule the bills
+reconciler already follows.
+
+Worth stating plainly because it is tempting to do the union first and the
+tombstone "later": the union is the part that looks like the feature, and the
+tombstone is the part that makes it correct.
+
 ## The cutover that needed no cutover (2026-08-05)
 
 Moving sync from KV to a Durable Object sounded like the risky build of the
