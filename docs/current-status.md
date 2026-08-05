@@ -1,12 +1,19 @@
 # Current Status
 
-_Last updated: 2026-08-05 (device-name header fix, v1.22.1)_
+_Last updated: 2026-08-05 (two-phone protocol passed; device-name fix, v1.22.1)_
 
-**Live build:** `2026.08.05.0006` / v1.22.1.
+**Live build:** `2026.08.05.0006` / v1.22.1, deployed and serving.
 **Live Worker version:** `a3cb3ce0-32dc-449f-97c1-35c19ac046f8` (Durable Object).
 **Pick up next:** Build 4 — faster transaction entry. (Build 3 is complete:
 3B server atomicity, 3C-1 merge fixes, 3C-2 per-category merge. The one piece
 deliberately still open is `payPeriods.actualStarts` — see 3C-3 in roadmap.md.)
+
+**Build 3 is verified on real hardware, not just in runners.** Both owners ran
+the full two-device protocol on 2026-08-05 against the live Worker and
+everything passed — see the 3C-2 section for what was actually exercised. The
+manual gap that had been open all day is closed; treat two-device merge as
+confirmed working, and the conflict modal as unreachable by design rather than
+as untested.
 
 ## A device name broke sync outright (2026-08-05, v1.22.1)
 
@@ -68,9 +75,10 @@ Browser (localhost:8799): app mounts, no console errors beyond the known Babel
 size note, and the previously-fatal label now yields
 `Wife's iPhone (ab12cd34)`, which `Headers` accepts.
 
-**Not verified:** the actual phone. Confirmation is her device syncing again
-after updating — or immediately, by retyping the name without an apostrophe,
-which works on the shipped build with no update at all.
+**Confirmed on the affected phone (2026-08-05):** after updating to
+`2026.08.05.0006` the device name was set back to `Wife's iPhone`, apostrophe
+included, and sync works. Deployed and served from GitHub Pages with all three
+BUILD_ID sites matching (`version.json`, `index.html`, `sw.js`).
 
 ## Per-category plan merge — the headline two-device fix (2026-08-05, build 3C-2)
 
@@ -140,9 +148,28 @@ Driven in a sandbox against the real seeded dataset:
   own `ord` alone, and **survived a reload**
 - no console errors
 
-**Not verified:** a genuine two-device merge against the live Worker. The merge
-logic is unit-tested from both directions including convergence, but the real
-two-phone matrix is still a manual test.
+**VERIFIED ON TWO REAL PHONES, 2026-08-05.** The full two-device protocol was
+run by both owners against the live Worker, on build `2026.08.05.0006`, using
+airplane mode to hold both devices' edits simultaneously — which is the only way
+to reach the case, since `pushImportant` and the 8s idle autosave otherwise
+upload before the second device can diverge. All passed:
+
+- **the headline** — one phone edited category A, the other category B, same
+  month, both offline. After reconnecting, **both edits survived on both
+  phones**. This is the defect the whole sync programme existed to fix, and it
+  is now confirmed fixed on real hardware rather than only in `mergetest.cjs`.
+- **deletion** — a category deleted on one phone while the other edited a
+  different one stayed deleted on both. No resurrection.
+- **ordering** — a reorder on one phone reached the other unchanged and survived
+  a restart, confirming `ord` beat the id-sort that used to erase array order.
+- **`monthlyPlans`** — a month set up on one phone was not reverted by unrelated
+  activity on the other (the 3C-1 defect).
+- **`household.expenses`** — an edit made on the other phone arrived, and a
+  delete stayed deleted. Both directions; this could never work before v1.21.0.
+  The row also appeared correctly in "What's pending" and Recently Deleted.
+
+The remaining gap is unchanged and is not reachable by testing: the conflict
+modal (see 3C-1 below).
 
 ## Merge fixes that needed no data-model change (2026-08-05, build 3C-1)
 
@@ -191,10 +218,27 @@ including both household defects and the `monthlyPlans` reversion. A merge test
 that passes both before and after proves nothing, so this was run explicitly.
 
 Sandbox: device-name field renders and persists, no console errors, version
-reads 1.21.0. **Not visually verified: the conflict modal copy** — reproducing a
-genuine conflict needs two devices against the live Worker. Its writer-label
-derivation is pure string handling (strip the ` (id)` suffix when a label is
-present; show nothing when the writer is this device).
+reads 1.21.0.
+
+**The conflict modal is effectively UNREACHABLE, and that is the honest
+status — not a gap to keep chasing.** All three `setConflict` call sites
+(`index.html:4106`, `4375`, `4600`) fire only when `tryAutoMergeAll` returns
+null, and it returns null **only from its own `catch`** — i.e. when the merge
+itself throws. Once 3C-2 made categories merge per record, every case the modal
+was written for is handled before it can open. The two-phone protocol on
+2026-08-05 deliberately tried to reach it and could not.
+
+Consequences to carry forward:
+
+- **Its copy — including "saved by <device>" — has never been seen rendered**,
+  and cannot be without deliberately breaking the merge. The writer-label
+  derivation is pure string handling (strip the ` (id)` suffix when a label is
+  present; show nothing when the writer is this device).
+- **Device naming still earns its keep**, just not through this modal: naming a
+  phone is what surfaced the v1.22.1 header bug.
+- **If that modal ever appears in normal use, it means `tryAutoMergeAll`
+  threw.** Treat it as an exception report, not a routine conflict — that is
+  now its only remaining trigger.
 
 ### Why the plan-category merge is NOT in this build
 `plans` still merges whole-record. Fixing it means unioning categories by id —
@@ -376,9 +420,12 @@ data, dummy passphrase for the `kvReady` paths):
 - **Undo import** → previous copy restored, hold cleared, Pull re-enabled
 - dark mode legible; no console errors
 
-**Not verified:** a true 390px-viewport layout pass (the sheet was seen at its
-400px max width on desktop, which is the same layout, but not in a real phone
-viewport), and none of this was exercised against the real Worker.
+**Verified on a real phone, 2026-08-05.** Layout checked at true phone width in
+both themes, and the hold exercised against the live Worker: Replace set the
+hold and disabled Pull, and "Undo import — restore this copy" released it.
+Driven safely by re-importing a backup the same device had just exported, so
+the bytes written were identical to what was already there — worth reusing, it
+makes an otherwise destructive path testable on live data.
 
 ## Sync wording corrected (2026-08-05)
 
@@ -413,11 +460,11 @@ anyway. Logged in `roadmap.md`.
 39/39, bank 25/25, period 24/24, txorder 17/17, owner 15/15, suggest 11/11, sync
 15/15, installment 31/31).
 
-**Not verified in a browser:** the rewritten block lives in the `kvReady` branch,
-so it only renders on a device that has the sync passphrase. A sandbox copy on a
-fresh localhost origin has no passphrase by design (2026-08-01 secrets work), and
-typing the real one into a test copy is exactly what CLAUDE.md says not to do. It
-needs a look on a real device — see the manual checklist in the session notes.
+**Read on both real phones, 2026-08-05** — the only way to see it, since the
+block lives in the `kvReady` branch and a sandbox copy on a fresh localhost
+origin has no passphrase by design (2026-08-01 secrets work), while typing the
+real one into a test copy is exactly what CLAUDE.md forbids. Wording is correct
+in both themes, and the device-name field persists across a restart.
 
 ## Installments module (2026-08-02)
 

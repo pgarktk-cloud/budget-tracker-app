@@ -35,6 +35,23 @@ its own; none are combined.
 5b. **Salary reconciliation** — planned figures beside the actuals in
    `UnaccountedSheet` (supersedes the "Next up" section below).
 
+### Manual two-device verification — DONE 2026-08-05
+Both owners ran the full protocol on two real phones against the live Worker on
+build `2026.08.05.0006`: headline per-category merge, delete-not-resurrected,
+reorder survival, `monthlyPlans`, `household.expenses` both directions, the
+Settings sync wording, and the import preview + upload hold. All passed. The
+airplane-mode recipe is what makes it reproducible — without it `pushImportant`
+and the 8s autosave upload before the second device can diverge. Details in
+`current-status.md`.
+
+Two things learned worth reusing:
+- **The import path can be tested safely on live data** by re-importing a backup
+  the same device just exported — identical bytes, so Replace is a no-op while
+  still exercising the hold and the layout.
+- **The conflict modal could not be reached**, deliberately or otherwise. It is
+  now an exception path only. Don't schedule work to "test" it; if it appears,
+  `tryAutoMergeAll` threw.
+
 ### Follow-up opened by the v1.22.1 device-name bug — DO THIS BEFORE MORE SYNC WORK
 - **A sync failure is undiagnosable from a phone.** `lastSyncError` and
   `KVSync.lastStatus` are captured but rendered **only** in a `title` tooltip
