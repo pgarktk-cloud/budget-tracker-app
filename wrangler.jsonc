@@ -1,0 +1,50 @@
+{
+  // Deployment config for the Allocation Worker (sync + market-data proxy).
+  //
+  // WHY THIS FILE EXISTS: a Durable Object class can only be created at deploy
+  // time, and the dashboard editor cannot do it. So this Worker moved from
+  // dashboard-managed to `npx wrangler deploy` on 2026-08-05.
+  //
+  // ⚠ A deploy REPLACES the Worker's bindings with what is declared here.
+  // Anything missing from this file is silently unbound. ALLOC_KV in
+  // particular must stay, both as the rollback mirror and because the Durable
+  // Object seeds itself from it on first use.
+  //
+  // Secrets (SYNC_TOKEN, FINNHUB_KEY) are NOT here and are NOT touched by a
+  // deploy — they stay as set in the dashboard. Nothing secret belongs in this
+  // file; the repo is public.
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  "name": "alloc-kv",
+  "main": "worker.js",
+  // Must be >= 2024-04-03 for Durable Object RPC methods (room.read() etc.
+  // rather than a fetch() handler inside the object).
+  "compatibility_date": "2026-08-01",
+
+  // Declarative class lifecycle (replaced the imperative `migrations` array in
+  // June 2026). `exports` and `migrations` are mutually exclusive — this Worker
+  // has never had a migrations array, so it starts on the modern one.
+  // New namespaces must be SQLite-backed, which is also what this account's
+  // plan allows.
+  "exports": {
+    "SyncRoom": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "SYNC_ROOM", "class_name": "SyncRoom" }
+    ]
+  },
+
+  // ⚠ REPLACE the placeholder id below with the real namespace id before the
+  // first deploy — `npx wrangler kv namespace list` prints it. Deploying with
+  // a wrong id points the Worker at an empty namespace.
+  "kv_namespaces": [
+    { "binding": "ALLOC_KV", "id": "PASTE_ALLOC_KV_NAMESPACE_ID" }
+  ],
+
+  "observability": { "enabled": true }
+}

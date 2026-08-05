@@ -13,27 +13,144 @@
  *    API design; keeping the call server-side is what stops it leaking into
  *    browser history, referrers and DevTools.
  *
- * 2. KV DATA SYNC  (no login ever required)
- *    GET  /sync          → returns { data, savedAt, rev } from KV
- *    POST /sync          → body: { data, savedAt, rev } — saves to KV
+ * 2. DATA SYNC  (no login ever required)
+ *    GET  /sync          → returns { data, savedAt, rev }
+ *    POST /sync          → body: { data, savedAt, rev } — saves
  *    GET  /sync/meta     → returns { savedAt, rev } only (cheap conflict check)
  *
+ *    Backed by a Durable Object (SyncRoom) as of 2026-08-05, NOT plain KV.
+ *    Why: KV has no compare-and-swap, so the old read-rev-then-write check had
+ *    a real race — two devices could both read rev 5 and both be accepted — and
+ *    the three separate puts (data/savedAt/rev) could tear, leaving data
+ *    written against a stale rev. A Durable Object serialises everything for a
+ *    single instance and commits the whole document in ONE storage write, so
+ *    the check and the write cannot be separated. See docs/decisions.md.
+ *
+ *    The request and response shapes are UNCHANGED, so an app version from
+ *    before this switch keeps working against it.
+ *
  * ── Setup ────────────────────────────────────────────────────────────────────
- * Cloudflare dashboard → Workers & Pages → this Worker → Settings → Bindings:
+ * This Worker is deployed with the wrangler CLI (`npx wrangler deploy`), not
+ * from the dashboard editor — a Durable Object class can only be created at
+ * deploy time. See wrangler.jsonc, which must declare EVERY binding: a deploy
+ * replaces the Worker's bindings with whatever that file says, so a missing
+ * ALLOC_KV entry would silently unbind KV.
  *
- *   KV Namespace binding   ALLOC_KV      (create the namespace first)
- *   Secret                 SYNC_TOKEN    your sync passphrase
- *   Secret (optional)      FINNHUB_KEY   finnhub.io API key
+ *   KV Namespace binding      ALLOC_KV      (legacy store + rollback mirror)
+ *   Durable Object binding    SYNC_ROOM     (class SyncRoom, SQLite-backed)
+ *   Secret                    SYNC_TOKEN    your sync passphrase
+ *   Secret (optional)         FINNHUB_KEY   finnhub.io API key
  *
- * Add SYNC_TOKEN/FINNHUB_KEY as type **Secret** (encrypted), not plaintext
- * variables. NOTHING SECRET BELONGS IN THIS FILE — it lives in a public repo.
- * The same passphrase you set as SYNC_TOKEN is what you type into the app once
- * per device (Settings → Cloudflare KV Sync). It is never embedded in
- * index.html, which is served publicly from GitHub Pages.
+ * Secrets are NOT in wrangler.jsonc and are NOT replaced by a deploy — they
+ * stay as set in the dashboard. NOTHING SECRET BELONGS IN THIS FILE — it lives
+ * in a public repo. The same passphrase you set as SYNC_TOKEN is what you type
+ * into the app once per device (Settings → Cloudflare KV Sync). It is never
+ * embedded in index.html, which is served publicly from GitHub Pages.
  *
- * To rotate: change the SYNC_TOKEN secret here, then re-enter the new
- * passphrase on each device. No code change, no redeploy of index.html.
+ * To rotate: change the SYNC_TOKEN secret, then re-enter the new passphrase on
+ * each device. No code change, no redeploy of index.html.
  * ──────────────────────────────────────────────────────────────────────────── */
+
+import { DurableObject } from "cloudflare:workers";
+
+/* ── SyncRoom — the one place the household document lives ───────────────────
+ * A single instance (named "household") owns the whole document. Durable
+ * Objects deliver events to an instance one at a time and hold new ones while
+ * a storage operation is in flight, so the read-compare-write below genuinely
+ * cannot interleave with another writer — which is the entire reason this
+ * exists rather than more careful KV code.
+ *
+ * The document is stored under ONE key, so a write is all-or-nothing. The
+ * household's real document is ~150KB; the per-value ceiling is 2MB. If it
+ * ever approaches that, this needs chunking across rows INSIDE one write, not
+ * a second key written separately — that would reintroduce the tear.
+ */
+export class SyncRoom extends DurableObject {
+  /* Adopt whatever is already in KV the first time this object is used, so
+     the switch needs no manual data migration and no downtime. Memoised as a
+     promise because seeding does external I/O (a KV read), and unlike storage
+     operations that does allow other events in — without the memo two
+     concurrent first requests could both seed. */
+  #seeded = null;
+  #ensureSeeded() {
+    if (!this.#seeded) this.#seeded = this.#seed();
+    return this.#seeded;
+  }
+  async #seed() {
+    const existing = await this.ctx.storage.get("doc");
+    if (existing) return;                     // already ours; never re-adopt
+    const KV = this.env.ALLOC_KV;
+    let doc = { data: null, savedAt: null, rev: 0, lastWriter: null };
+    if (KV) {
+      try {
+        const raw = await KV.get("data");
+        const savedAt = await KV.get("savedAt");
+        const revRaw = await KV.get("rev");
+        doc = {
+          data: raw ? JSON.parse(raw) : null,
+          savedAt: savedAt || null,
+          rev: revRaw ? parseInt(revRaw, 10) : 0,
+          lastWriter: null,
+        };
+      } catch (e) { /* unreadable KV: start empty rather than refuse service */ }
+    }
+    await this.ctx.storage.put("doc", doc);
+  }
+  async #doc() {
+    await this.#ensureSeeded();
+    return (await this.ctx.storage.get("doc")) || { data: null, savedAt: null, rev: 0, lastWriter: null };
+  }
+
+  async meta() {
+    const d = await this.#doc();
+    return { savedAt: d.savedAt || null, rev: d.rev || 0, lastWriter: d.lastWriter || null };
+  }
+
+  async read() {
+    const d = await this.#doc();
+    return { data: d.data ?? null, savedAt: d.savedAt || null, rev: d.rev || 0, lastWriter: d.lastWriter || null };
+  }
+
+  /* The critical section. Everything between reading `rev` and committing the
+     new document is storage-only — no fetch, no KV, nothing that would let
+     another request in. The KV mirror is written AFTER the commit, on purpose. */
+  async write({ data, savedAt, rev, deviceId }) {
+    const current = await this.#doc();
+    const clientBaseRev = Number.isFinite(rev) ? rev : 0;
+    if ((current.rev || 0) !== clientBaseRev) {
+      return {
+        ok: false, conflict: true,
+        rev: current.rev || 0,
+        savedAt: current.savedAt || null,
+        data: current.data ?? null,
+        lastWriter: current.lastWriter || null,
+      };
+    }
+    const next = {
+      data,
+      savedAt: savedAt || new Date().toISOString(),
+      rev: (current.rev || 0) + 1,
+      lastWriter: deviceId || null,
+    };
+    await this.ctx.storage.put("doc", next);
+
+    /* Rollback mirror. For this release the three legacy KV keys are kept up
+       to date, so reverting the Worker to the pre-Durable-Object version
+       resumes exactly where this left off. Best-effort and deliberately after
+       the commit: a failure here must never fail an accepted write, and the
+       Durable Object is the authority either way. Remove in a later release,
+       once there is no intention of going back. */
+    const KV = this.env.ALLOC_KV;
+    if (KV) {
+      try {
+        await KV.put("data", JSON.stringify(next.data));
+        await KV.put("savedAt", next.savedAt);
+        await KV.put("rev", String(next.rev));
+      } catch (e) { /* mirror only */ }
+    }
+    return { ok: true, conflict: false, savedAt: next.savedAt, rev: next.rev };
+  }
+}
 
 /* Origins allowed to call this Worker from a browser. Defense in depth only:
    the token is the real gate, since curl and other non-browser clients ignore
@@ -54,7 +171,7 @@ function originAllowed(origin) {
 function corsFor(request) {
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token",
+    "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token, X-Device-Id",
     "Vary": "Origin",
   };
   const origin = request.headers.get("Origin");
@@ -124,82 +241,60 @@ export default {
       return json(request, { error: "Unauthorized" }, 401);
     }
 
-    // ── KV SYNC ─────────────────────────────────────────────────────────────
+    // ── DATA SYNC ───────────────────────────────────────────────────────────
+    // Everything here is delegated to the SyncRoom Durable Object. The
+    // request/response shapes are identical to the previous KV implementation
+    // so an app version from before the switch keeps working unchanged.
     if (path === "/sync" || path === "/sync/meta") {
 
-      const KV = env.ALLOC_KV;
-      if (!KV) return json(request, { error: "KV not bound — add ALLOC_KV binding in Worker settings" }, 500);
+      if (!env.SYNC_ROOM) {
+        return json(request, { error: "SYNC_ROOM not bound — deploy with wrangler.jsonc" }, 500);
+      }
+      // One document, one instance. getByName is deterministic, so every
+      // request from either device lands on the same object.
+      const room = env.SYNC_ROOM.getByName("household");
+
+      // Which device is writing — used only to make a conflict message say
+      // whose phone saved last. Never used for authentication, and never
+      // trusted for anything a client shouldn't be able to choose freely.
+      const deviceId = (request.headers.get("X-Device-Id") || "").slice(0, 64) || null;
 
       // GET /sync/meta — cheap metadata-only check (savedAt + revision number).
       // Used by the client to decide, without downloading the full dataset,
-      // whether the cloud has moved on since the last time this device
-      // fully reconciled with it. Also doubles as the passphrase test the
-      // Settings "Connect" button uses — it's the cheapest authenticated call.
+      // whether the cloud has moved on since the last time this device fully
+      // reconciled with it. Also doubles as the passphrase test the Settings
+      // "Connect" button uses — it's the cheapest authenticated call.
       if (path === "/sync/meta" && request.method === "GET") {
-        const savedAt = await KV.get("savedAt");
-        const revRaw = await KV.get("rev");
-        return json(request, { savedAt: savedAt || null, rev: revRaw ? parseInt(revRaw, 10) : 0 });
+        return json(request, await room.meta());
       }
 
       // GET /sync — load full data (+ the revision it corresponds to)
       if (request.method === "GET") {
-        const raw = await KV.get("data");
-        const savedAt = await KV.get("savedAt");
-        const revRaw = await KV.get("rev");
-        const rev = revRaw ? parseInt(revRaw, 10) : 0;
-        if (!raw) return json(request, { data: null, savedAt: null, rev });
-        try {
-          return json(request, { data: JSON.parse(raw), savedAt, rev });
-        } catch {
-          return json(request, { data: null, savedAt: null, rev });
-        }
+        return json(request, await room.read());
       }
 
       // POST /sync — save full data, gated by an optimistic-concurrency
       // revision check.
       //
-      // The client sends `rev`: the cloud revision it last fully
-      // reconciled with (i.e. the baseline its edits are built on top of).
-      // If that still matches KV's current revision, the write is accepted
-      // and the revision is incremented. If it doesn't match, someone else
-      // has saved in between — reject with the current server data + rev
-      // so the client can merge locally and retry, instead of blindly
-      // overwriting a change it never saw.
+      // The client sends `rev`: the cloud revision it last fully reconciled
+      // with (i.e. the baseline its edits are built on top of). If that still
+      // matches the current revision the write is accepted and the revision
+      // is incremented. If it doesn't, someone else saved in between — reject
+      // with the current server data + rev so the client can merge locally
+      // and retry, instead of blindly overwriting a change it never saw.
       //
-      // Note: KV has no compare-and-swap primitive, so this is a
-      // read-then-write check, not a true atomic transaction — there is a
-      // narrow window where two requests could both read the same current
-      // rev before either writes. For a small number of devices saving at
-      // human typing speed (not truly simultaneous automated writers) this
-      // is a solid practical guarantee. A fully atomic version would need
-      // a Durable Object instead of plain KV.
+      // The compare and the write now happen inside the Durable Object, in
+      // one storage commit, so unlike the old KV version two devices cannot
+      // both pass the same check.
       if (request.method === "POST") {
         let body;
         try { body = await request.json(); } catch { return json(request, { error: "Invalid JSON" }, 400); }
-
-        const incoming = body.savedAt || new Date().toISOString();
-        const clientBaseRev = Number.isFinite(body.rev) ? body.rev : 0;
-
-        const currentRevRaw = await KV.get("rev");
-        const currentRev = currentRevRaw ? parseInt(currentRevRaw, 10) : 0;
-
-        if (currentRev !== clientBaseRev) {
-          // Conflict: cloud moved on since the client's baseline. Hand back
-          // the current server state so the client can merge without a
-          // second round trip.
-          const raw = await KV.get("data");
-          const savedAt = await KV.get("savedAt");
-          let data = null;
-          try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
-          return json(request, { ok: false, conflict: true, rev: currentRev, savedAt: savedAt || null, data });
-        }
-
-        const newRev = currentRev + 1;
-        await KV.put("data", JSON.stringify(body.data));
-        await KV.put("savedAt", incoming);
-        await KV.put("rev", String(newRev));
-
-        return json(request, { ok: true, conflict: false, savedAt: incoming, rev: newRev });
+        return json(request, await room.write({
+          data: body.data,
+          savedAt: body.savedAt,
+          rev: body.rev,
+          deviceId,
+        }));
       }
     }
 
