@@ -1959,8 +1959,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.19.1";
-const BUILD_ID="2026.08.05.0001";
+const APP_VERSION="1.20.0";
+const BUILD_ID="2026.08.05.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2781,6 +2781,113 @@ function migrate(d){
   return d;
 }
 
+/* ── Backup validation ──────────────────────────────────────────────────────
+   Import replaces the entire dataset, so the file has to be checked BEFORE
+   migrate() ever sees it. migrate() is a defaulter, not a validator: it fills
+   in keys it enumerates and leaves everything else exactly as found, so a
+   plausible-looking file full of the wrong shapes survives it intact and
+   silently becomes the live document.
+
+   Split deliberately into errors and warnings:
+     • errors   — the file is not this app's data, or a collection is a shape
+                  the app would crash or silently misread. Refuse.
+     • warnings — legitimately older or hand-edited, but recoverable. An
+                  absent collection is the normal case for an old backup and
+                  migrate() will default it; say so rather than refusing.
+
+   Pure and module-scope so importtest.cjs can slice it out and run it against
+   real files without a browser. Never mutates its argument. */
+const BACKUP_ARRAY_KEYS=["plans","expenses","goals","investments","banks","assets",
+  "targets","mp2DividendRates","monthlyPlans","bills","billAdjustments",
+  "installments","installmentPayments","history","portHistory","snapshots"];
+/* Collections whose absence is normal in an older backup (the feature that
+   introduced them post-dates it). `plans` is not here — it is required. */
+const BACKUP_OPTIONAL_KEYS=["installments","installmentPayments","billAdjustments",
+  "bills","targets","mp2DividendRates","snapshots","monthlyPlans"];
+
+function validateBackup(obj){
+  const errors=[],warnings=[];
+  const fail=m=>{errors.push(m);return{ok:false,errors,warnings,summary:null};};
+
+  if(obj===null||typeof obj!=="object"||Array.isArray(obj))
+    return fail("This file doesn't contain a backup object.");
+  if(!Array.isArray(obj.plans))
+    return fail("No budget plans found — this doesn't look like a WheredItGo backup.");
+
+  // Any known collection that is present must actually be an array.
+  BACKUP_ARRAY_KEYS.forEach(k=>{
+    if(obj[k]!==undefined&&!Array.isArray(obj[k]))errors.push(`"${k}" should be a list, but it isn't.`);
+  });
+  if(obj.owners!==undefined&&(obj.owners===null||typeof obj.owners!=="object"||Array.isArray(obj.owners)))
+    errors.push(`"owners" should be a pair of names, but it isn't.`);
+  if(obj.currency!==undefined&&typeof obj.currency!=="string")
+    errors.push(`"currency" should be a currency code.`);
+  if(obj.household!==undefined&&(obj.household===null||typeof obj.household!=="object"||Array.isArray(obj.household)))
+    errors.push(`"household" should be an object, but it isn't.`);
+  else if(obj.household&&obj.household.expenses!==undefined&&!Array.isArray(obj.household.expenses))
+    errors.push(`"household.expenses" should be a list, but it isn't.`);
+  if(errors.length)return{ok:false,errors,warnings,summary:null};
+
+  // Plans: a plan without an id can't be referenced by monthlyPlans, and one
+  // without categories/groups renders as an empty budget rather than failing
+  // loudly — both are corruption, not an old shape.
+  obj.plans.forEach((p,i)=>{
+    const where=`Plan ${i+1}${p&&p.name?` ("${p.name}")`:""}`;
+    if(p===null||typeof p!=="object"||Array.isArray(p)){errors.push(`${where} isn't a plan.`);return;}
+    if(!p.id)errors.push(`${where} has no id.`);
+    if(!Array.isArray(p.categories))errors.push(`${where} has no category list.`);
+    if(!Array.isArray(p.groups))errors.push(`${where} has no group list.`);
+    if(Array.isArray(p.categories))p.categories.forEach((c,j)=>{
+      if(c===null||typeof c!=="object")errors.push(`${where}, category ${j+1} isn't a category.`);
+      else if(!c.id)errors.push(`${where}, category ${j+1} has no id.`);
+      else if(c.subs!==undefined&&!Array.isArray(c.subs))errors.push(`${where}, category "${c.name||c.id}" has a broken sub-item list.`);
+    });
+  });
+
+  // Expenses are the ledger — an unusable row here is money that can't be
+  // placed in a period or an envelope.
+  const nums=v=>v!==null&&v!==undefined&&v!==""&&isFinite(Number(v));
+  const checkTx=(arr,label)=>(arr||[]).forEach((e,i)=>{
+    if(e===null||typeof e!=="object"||Array.isArray(e)){errors.push(`${label} ${i+1} isn't a transaction.`);return;}
+    if(!e.id)errors.push(`${label} ${i+1} has no id.`);
+    if(!nums(e.amount))errors.push(`${label} ${i+1}${e.name?` ("${e.name}")`:""} has no usable amount.`);
+    if(e.date!==undefined&&e.date!==null&&typeof e.date!=="string")errors.push(`${label} ${i+1} has a broken date.`);
+  });
+  checkTx(obj.expenses,"Transaction");
+  checkTx(obj.household&&obj.household.expenses,"Household expense");
+
+  if(errors.length)return{ok:false,errors,warnings,summary:null};
+
+  BACKUP_OPTIONAL_KEYS.forEach(k=>{
+    if(obj[k]===undefined)warnings.push(`No "${k}" — an older backup. It'll start empty.`);
+  });
+  const savedAt=typeof obj.dataUpdatedAt==="string"?obj.dataUpdatedAt:null;
+  if(savedAt&&Date.parse(savedAt)>Date.now()+86400000)
+    warnings.push("This backup is dated in the future — check it's the file you meant.");
+
+  const live=a=>(Array.isArray(a)?a:[]).filter(x=>x&&!x.deletedAt).length;
+  const dead=a=>(Array.isArray(a)?a:[]).filter(x=>x&&x.deletedAt).length;
+  const summary={
+    savedAt,
+    currency:typeof obj.currency==="string"?obj.currency:null,
+    owners:obj.owners&&typeof obj.owners==="object"?{me:obj.owners.me||null,wife:obj.owners.wife||null}:null,
+    counts:{
+      transactions:live(obj.expenses),
+      plans:live(obj.plans),
+      monthlyPlans:live(obj.monthlyPlans),
+      goals:live(obj.goals),
+      investments:live(obj.investments),
+      banks:live(obj.banks),
+      assets:live(obj.assets),
+      installments:live(obj.installments),
+      householdExpenses:live(obj.household&&obj.household.expenses),
+    },
+    deleted:dead(obj.expenses)+dead(obj.goals)+dead(obj.investments)+dead(obj.banks)
+      +dead(obj.assets)+dead(obj.plans)+dead(obj.installments),
+  };
+  return{ok:true,errors,warnings,summary};
+}
+
 /* Bills Reserve = opening baseline + every month's (allocated-paid) +
    every manual adjustment's delta. Pure function of `data` so it can be
    called both from render and from inside a setData(d=>...) updater
@@ -3382,10 +3489,11 @@ const loadSyncMeta=()=>{
       if(m.pendingUploadFP===undefined)m.pendingUploadFP=null;
       if(m.lastCloudUploadAt===undefined)m.lastCloudUploadAt=m.lastCloudSavedAt||null;
       if(m.lastCloudDownloadAt===undefined)m.lastCloudDownloadAt=m.lastCloudPulledAt||null;
+      if(typeof m.importPending!=="boolean")m.importPending=false;
       return m;
     }
   }catch(e){}
-  return{hasUnsyncedChanges:false,lastCloudSavedAt:null,lastCloudPulledAt:null,lastCloudUploadAt:null,lastCloudDownloadAt:null,lastCloudSnapshot:null,changesSinceSave:0,localRev:0,pendingUpload:false,pendingUploadFP:null};
+  return{hasUnsyncedChanges:false,lastCloudSavedAt:null,lastCloudPulledAt:null,lastCloudUploadAt:null,lastCloudDownloadAt:null,lastCloudSnapshot:null,changesSinceSave:0,localRev:0,pendingUpload:false,pendingUploadFP:null,importPending:false};
 };
 const saveSyncMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m));}catch(e){}};
 
@@ -3532,6 +3640,25 @@ function App(){
     try{const raw=localStorage.getItem(PRE_CLOUD_BACKUP_KEY);if(raw)return JSON.parse(raw).at;}catch(e){}
     return null;
   });
+  /* ── Import hold ────────────────────────────────────────────────────────
+     An imported backup replaces everything, and every automatic upload path
+     would otherwise push it to the cloud within ~8 seconds — replacing the
+     copy the OTHER person is using, before anyone could look at it. So an
+     import sets this flag and every *automatic* push checks it; only an
+     explicit Save to Cloud (or a Pull, which throws the import away) clears
+     it. Lives in syncMeta, not in `data`: it is a state of this device, and
+     syncing it would make no sense on the other one. Survives a reload, so
+     closing the app mid-decision can't quietly release the upload either. */
+  const[importPending,setImportPending]=useState(()=>{
+    try{return!!loadSyncMeta().importPending;}catch(e){return false;}
+  });
+  const importPendingRef=useRef(importPending);
+  useEffect(()=>{importPendingRef.current=importPending;},[importPending]);
+  const setImportHold=on=>{
+    const meta=loadSyncMeta();meta.importPending=!!on;saveSyncMeta(meta);
+    importPendingRef.current=!!on;
+    setImportPending(!!on);
+  };
   const syncing=syncOp!=null;
   const lastCloudSnapshotRef=useRef(null);
   const dataRef=useRef(data);
@@ -3669,12 +3796,17 @@ function App(){
   };
   const openProfilePicker=()=>{setProfilePickerDismissable(true);setShowProfilePicker(true);};
 
+  /* Returns whether the backup actually landed. The conflict paths ignore the
+     result (they have their own recovery), but import MUST NOT proceed on a
+     failed stash — a full localStorage quota would otherwise leave the user
+     with no way back to the data the import replaced. */
   const stashPreCloudBackup=d=>{
     try{
       const at=new Date().toISOString();
       localStorage.setItem(PRE_CLOUD_BACKUP_KEY,JSON.stringify({at,data:d}));
       setPreCloudBackupAt(at);
-    }catch(e){}
+      return true;
+    }catch(e){return false;}
   };
   const restorePreCloudBackup=()=>{
     try{
@@ -3690,7 +3822,29 @@ function App(){
       const meta=loadSyncMeta();meta.hasUnsyncedChanges=dirty;saveSyncMeta(meta);
       setSyncMsg("Previous local copy restored");
       setTimeout(()=>setSyncMsg(""),3000);
+      /* Restoring is an explicit "undo the import" — release the hold so the
+         restored copy behaves like ordinary local data again. */
+      if(importPendingRef.current)setImportHold(false);
     }catch(e){}
+  };
+
+  /* Apply an already-validated backup. Order matters: the safety copy is
+     written FIRST and the import is abandoned if that write fails, then the
+     upload hold goes on BEFORE setData, so the persist effect can never see
+     a dirty document with the hold still off. Returns an error string, or
+     null on success. */
+  const importBackup=raw=>{
+    let migrated;
+    try{migrated=migrate(JSON.parse(JSON.stringify(raw)));}
+    catch(e){return "That backup couldn't be read.";}
+    if(!stashPreCloudBackup(dataRef.current))
+      return "Couldn't save a copy of your current data first, so the import was cancelled. Free up some space on this device and try again.";
+    /* Only hold when there is something to hold back. On a device with no
+       passphrase nothing uploads anyway, and a flag left set here would
+       silently block syncing later, the day a passphrase is finally entered. */
+    setImportHold(!!kvReady);
+    setData(migrated);
+    return null;
   };
 
   /* Never let a push happen from a session that hasn't actually confirmed
@@ -3969,6 +4123,9 @@ function App(){
     meta.changesSinceSave=0;
     meta.localRev=rev;
     saveSyncMeta(meta);
+    /* The one place an import hold is released by uploading: the data is now
+       genuinely on the cloud, so there is nothing left to hold back. */
+    if(importPendingRef.current)setImportHold(false);
     setLastCloudSavedAt(now);
     setHasUnsyncedChanges(false);
     setChangesSinceSave(0);
@@ -3976,6 +4133,11 @@ function App(){
     setCloudRev(rev);
   };
   const saveToCloud=async(reason="manual")=>{
+    /* A held import may only be uploaded by an action the user took on
+       purpose. "auto" covers the idle autosave, pushImportant, the
+       backgrounding push and the post-merge re-push — none of them are a
+       decision to share the imported file with the other device. */
+    if(importPendingRef.current&&reason!=="manual"&&reason!=="gesture")return;
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(!cloudConfirmedRef.current){setSyncMsg("Still connecting to the cloud — try again in a moment");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(!isOnline){setSyncStatus("offline");setSyncMsg("Offline — will sync when back online");setTimeout(()=>setSyncMsg(""),3000);return;}
@@ -4060,6 +4222,7 @@ function App(){
   const pushImportantTimerRef=useRef(null);
   const pushImportant=()=>{
     if(!loaded||!kvReady)return;
+    if(importPendingRef.current)return; // an import is waiting for an explicit Save to Cloud
     if(pushImportantTimerRef.current)clearTimeout(pushImportantTimerRef.current);
     pushImportantTimerRef.current=setTimeout(()=>{
       pushImportantTimerRef.current=null;
@@ -4077,6 +4240,7 @@ function App(){
   const autosaveFirstPendingRef=useRef(null);
   useEffect(()=>{
     if(!loaded||!kvReady)return;
+    if(importPending)return; // held until the user explicitly saves the import
     if(!hasUnsyncedChanges){
       autosaveFirstPendingRef.current=null;
       if(autosaveTimerRef.current){clearTimeout(autosaveTimerRef.current);autosaveTimerRef.current=null;}
@@ -4092,7 +4256,7 @@ function App(){
     },delay);
     return()=>{if(autosaveTimerRef.current)clearTimeout(autosaveTimerRef.current);};
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[changesSinceSave,hasUnsyncedChanges,loaded,kvReady]);
+  },[changesSinceSave,hasUnsyncedChanges,loaded,kvReady,importPending]);
 
   /* ── Flush on background/close ────────────────────────────────────────
      Two different signals, two different levels of safety:
@@ -4125,6 +4289,7 @@ function App(){
      idle autosave above and the automatic-refresh-on-resume below. */
   const flushToCloudBeacon=()=>{
     if(!kvReady||!cloudConfirmedRef.current||!hasUnsyncedRef.current)return;
+    if(importPendingRef.current)return; // never let teardown upload an unreviewed import
     try{
       const payload=dataRef.current;
       const body=JSON.stringify({data:payload,savedAt:new Date().toISOString(),rev:localRevRef.current||0});
@@ -4142,7 +4307,7 @@ function App(){
     if(!loaded)return;
     const onVisibility=()=>{
       if(document.visibilityState==="hidden"){
-        if(hasUnsyncedRef.current&&!savingRef.current)saveToCloudRef.current("auto");
+        if(hasUnsyncedRef.current&&!savingRef.current&&!importPendingRef.current)saveToCloudRef.current("auto");
       }else if(document.visibilityState==="visible"){
         checkCloudOnActivateRef.current();
         refreshMarketDataRef.current();
@@ -4174,6 +4339,15 @@ function App(){
 
   /* ── manual Pull from Cloud — GET only, never POSTs ──────────────────── */
   const pullFromCloud=async()=>{
+    /* A pull *merges*, so pulling on top of a held import would fold the
+       imported records into the cloud copy — neither "keep the import" nor
+       "throw it away", and impossible to explain. While a decision is
+       outstanding the only two answers are Save to Cloud (share it) or
+       Restore previous local copy (undo it), so refuse and say which. */
+    if(importPendingRef.current){
+      setSyncMsg("Finish the import first — Save to Cloud, or restore your previous copy");
+      setTimeout(()=>setSyncMsg(""),4000);return;
+    }
     if(!kvReady){setSyncMsg("Enter your sync passphrase in Settings first");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(!isOnline){setSyncStatus("offline");setSyncMsg("Offline — can't pull right now");setTimeout(()=>setSyncMsg(""),3000);return;}
     setSyncOp("pull");setSyncMsg("Pulling…");
@@ -4277,6 +4451,7 @@ function App(){
   const lastActivateCheckRef=useRef(0);
   const checkCloudOnActivate=async()=>{
     if(!kvReady||!cloudConfirmedRef.current)return;
+    if(importPendingRef.current)return; // silent: a passive check must not nag about a held import
     if(!(typeof navigator==="undefined"?true:navigator.onLine))return;
     if(syncOpRef.current||savingRef.current)return;
     const now=Date.now();
@@ -5480,7 +5655,7 @@ function App(){
       </div>
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
-        preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
+        preCloudBackupAt,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
       {conflict&&<ConflictModal conflict={conflict} onKeepLocal={resolveKeepLocal} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
@@ -12422,6 +12597,92 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   );
 }
 
+/* ── Import preview ────────────────────────────────────────────────────────
+   Shown between choosing a file and replacing anything. Two jobs: prove the
+   file is the one the user meant (date, owners, record counts), and state the
+   two consequences that aren't obvious — the whole dataset goes, and the
+   safety copy it leaves behind is a single slot.
+
+   Portalled: rendered from inside SettingsModal, which is itself inside no
+   TabPane — but the rule is cheap to honour and this sheet may later be opened
+   from elsewhere. */
+function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onCancel);
+  const{ok,errors,warnings,summary}=report;
+  const row={display:"flex",justifyContent:"space-between",gap:12,fontSize:12,padding:"3px 0"};
+  const counts=summary?[
+    ["Transactions",summary.counts.transactions],
+    ["Budget plans",summary.counts.plans],
+    ["Planned months",summary.counts.monthlyPlans],
+    ["Goals",summary.counts.goals],
+    ["Investments",summary.counts.investments],
+    ["Bank accounts",summary.counts.banks],
+    ["Assets & liabilities",summary.counts.assets],
+    ["Installment plans",summary.counts.installments],
+    ["Household expenses",summary.counts.householdExpenses],
+  ].filter(([,n])=>n>0):[];
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onCancel}>
+        <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+          style={{maxWidth:400,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+          <h3 style={{margin:"0 0 4px",fontWeight:600}}>{ok?"Import this backup?":"That file can't be imported"}</h3>
+          <div style={{fontSize:11,color:P.faint,marginBottom:12,wordBreak:"break-all"}}>{fileName}</div>
+
+          {!ok&&
+            <div style={{background:P.amberS,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+              <div style={{fontSize:12,color:P.amber,fontWeight:600,marginBottom:6}}>What's wrong with it</div>
+              {errors.slice(0,6).map((e,i)=><div key={i} style={{fontSize:12,color:P.sub,lineHeight:1.5}}>• {e}</div>)}
+              {errors.length>6&&<div style={{fontSize:11,color:P.faint,marginTop:4}}>…and {errors.length-6} more.</div>}
+              <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>Nothing on this device has been touched.</div>
+            </div>}
+
+          {ok&&summary&&
+            <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+              <div style={row}><span style={{color:P.faint}}>Backed up</span>
+                <b>{summary.savedAt?new Date(summary.savedAt).toLocaleString():"date not recorded"}</b></div>
+              {summary.owners&&(summary.owners.me||summary.owners.wife)&&
+                <div style={row}><span style={{color:P.faint}}>People</span>
+                  <b>{[summary.owners.me,summary.owners.wife].filter(Boolean).join(" & ")}</b></div>}
+              {summary.currency&&<div style={row}><span style={{color:P.faint}}>Currency</span><b>{summary.currency}</b></div>}
+              <div style={{borderTop:`1px solid ${P.line}`,margin:"8px 0"}}/>
+              {counts.length
+                ?counts.map(([label,n])=><div key={label} style={row}><span style={{color:P.faint}}>{label}</span><b>{n}</b></div>)
+                :<div style={{fontSize:12,color:P.amber}}>This backup contains no records at all.</div>}
+              {summary.deleted>0&&
+                <div style={{fontSize:11,color:P.faint,marginTop:6}}>Plus {summary.deleted} deleted {summary.deleted===1?"item":"items"} still recoverable from Recently Deleted.</div>}
+            </div>}
+
+          {ok&&warnings.length>0&&
+            <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginBottom:12}}>
+              {warnings.map((w,i)=><div key={i}>• {w}</div>)}
+            </div>}
+
+          {ok&&
+            <div style={{background:P.amberS,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,color:P.sub,lineHeight:1.6}}>
+              <b style={{color:P.amber}}>This replaces everything on this device</b> — every transaction, budget, goal and account is swapped for what's in the file.
+              <br/><br/>
+              It stays on this device until you tap <b>Save to Cloud</b>, so {partnerName||"your partner"} won't see it before you've had a look.
+              <br/><br/>
+              Your current data is kept as <b>one</b> "previous local copy" you can restore from Settings. Importing again replaces that copy too.
+            </div>}
+
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ok&&
+              <button onClick={onConfirm} style={{borderRadius:10,padding:"11px 14px",fontSize:14,fontWeight:600,border:"none",background:P.red,color:"#fff"}}>
+                Replace all data on this device
+              </button>}
+            <button onClick={onCancel} style={{borderRadius:10,padding:"11px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink}}>
+              {ok?"Cancel":"Close"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
 /* Hidden-by-default troubleshooting panel — a person shouldn't need this to
    use the app day to day, so it's collapsed behind a disclosure rather than
    always shown alongside the plain-language status pill above it. */
@@ -12454,7 +12715,7 @@ function SyncDiagnostics({localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,h
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudBackupAt,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
   const[confirm,setConfirm]=useState(false);
@@ -12513,11 +12774,46 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
     document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
     flash("Backup downloaded ✓");
   };
+  /* Choosing a file no longer changes anything. It validates, then opens the
+     preview; only the button in there replaces data. The input is reset on
+     every path so picking the SAME file twice still fires a change event. */
+  const MAX_BACKUP_BYTES=8*1024*1024;
+  const[importPreview,setImportPreview]=useState(null); // {report,fileName,raw}
+  const resetFileInput=()=>{if(fileRef.current)fileRef.current.value="";};
   const onFile=e=>{
-    const f=e.target.files&&e.target.files[0];if(!f)return;
+    const f=e.target.files&&e.target.files[0];
+    resetFileInput();
+    if(!f)return;
+    if(f.size>MAX_BACKUP_BYTES){
+      setImportPreview({fileName:f.name,raw:null,
+        report:{ok:false,warnings:[],summary:null,
+          errors:[`This file is ${(f.size/1048576).toFixed(1)} MB. A backup from this app is far smaller, so this is almost certainly something else.`]}});
+      return;
+    }
+    if(f.size===0){
+      setImportPreview({fileName:f.name,raw:null,report:{ok:false,warnings:[],summary:null,errors:["This file is empty."]}});
+      return;
+    }
     const r=new FileReader();
-    r.onload=()=>{try{const d=JSON.parse(String(r.result));if(!Array.isArray(d.plans))throw 0;setData(migrate(d));flash("Backup loaded ✓");}catch{flash("Not a valid backup.");}};
+    r.onerror=()=>setImportPreview({fileName:f.name,raw:null,
+      report:{ok:false,warnings:[],summary:null,errors:["This file couldn't be read from your device."]}});
+    r.onload=()=>{
+      let parsed;
+      try{parsed=JSON.parse(String(r.result));}
+      catch(err){
+        setImportPreview({fileName:f.name,raw:null,
+          report:{ok:false,warnings:[],summary:null,errors:["This isn't a readable backup file — the contents aren't valid JSON."]}});
+        return;
+      }
+      setImportPreview({fileName:f.name,raw:parsed,report:validateBackup(parsed)});
+    };
     r.readAsText(f);
+  };
+  const confirmImport=()=>{
+    if(!importPreview||!importPreview.report.ok)return;
+    const err=importBackup(importPreview.raw);
+    setImportPreview(null);
+    flash(err||"Backup imported — saved on this device only ✓");
   };
   const btn={background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
   return(
@@ -12863,17 +13159,27 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 </div>
               );
             })()}
+            {importPending&&
+              <div style={{fontSize:12,color:P.sub,marginBottom:8,padding:"10px 12px",background:P.amberS,borderRadius:10,lineHeight:1.6}}>
+                <b style={{color:P.amber}}>Imported data is on this device only.</b>
+                <div style={{marginTop:4}}>
+                  Nothing has been uploaded — {owners.wife||"your partner"} is still on the old copy. Tap <b>Save to Cloud</b> to share it, or <b>Restore previous local copy</b> to undo the import. Pulling is paused until you choose.
+                </div>
+              </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <button onClick={()=>saveToCloud()} disabled={syncOp==="push"} style={btn}>
+              <button onClick={()=>saveToCloud()} disabled={syncOp==="push"}
+                style={importPending?{...btn,background:P.gr,color:"#fff",border:"none"}:btn}>
                 <I.Cloud size={14}/>{syncOp==="push"?"Saving…":"Save to Cloud"}
               </button>
-              <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"} style={btn}>
+              <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"||importPending}
+                style={{...btn,opacity:importPending?.4:1}}
+                title={importPending?"Finish the import first":undefined}>
                 <I.Refresh size={14}/>{syncOp==="pull"?"Pulling…":"Pull from Cloud"}
               </button>
             </div>
             {preCloudBackupAt&&
               <button onClick={restorePreCloudBackup} style={{...btn,width:"100%",marginBottom:8}}>
-                <I.Reset size={14}/>Restore previous local copy
+                <I.Reset size={14}/>{importPending?"Undo import — restore previous local copy":"Restore previous local copy"}
               </button>}
             <button onClick={()=>setForgetConfirm(true)} style={{...btn,width:"100%",marginBottom:8}}>
               <I.EyeOff size={14}/>Forget passphrase on this device
@@ -12921,7 +13227,13 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
           <button onClick={download} style={btn}><I.Download size={14}/>Download</button>
           <button onClick={()=>fileRef.current&&fileRef.current.click()} style={btn}><I.Upload size={14}/>Import</button>
         </div>
-        <input ref={fileRef} type="file" accept=".json" onChange={onFile} style={{display:"none"}}/>
+        <input ref={fileRef} type="file" accept=".json,application/json" onChange={onFile} style={{display:"none"}}/>
+        <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginBottom:8}}>
+          Download saves everything to a file you keep. Import shows you what's in a file and asks before replacing anything{kvReady?", and holds off uploading until you say so":""}.
+        </div>
+        {importPreview&&
+          <ImportPreviewSheet report={importPreview.report} fileName={importPreview.fileName}
+            partnerName={owners.wife} onConfirm={confirmImport} onCancel={()=>setImportPreview(null)}/>}
         {msg&&<div style={{fontSize:12,color:P.gr,marginBottom:12}}>{msg}</div>}
         {onOpenRecentlyDeleted&&
           <button onClick={onOpenRecentlyDeleted} style={{...btn,width:"100%",marginBottom:12}}>

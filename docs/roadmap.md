@@ -6,8 +6,9 @@ Planned in a grilling session. Each ships, is verified and is rollback-able on
 its own; none are combined.
 
 1. **Sync wording correction — DONE**, build `2026.08.05.0001` / v1.19.1.
-2. **Backup import hardening** — `validateBackup`, preview sheet, size gate,
-   pre-import backup, and the upload held until an explicit Save to Cloud.
+2. **Backup import hardening — DONE**, build `2026.08.05.0002` / v1.20.0.
+   `validateBackup` + preview sheet + size gate + aborting pre-import backup +
+   the upload held until an explicit Save to Cloud. `importtest.cjs` (34/34).
 3. **Safer two-device sync** — a Cloudflare Durable Object (dual-read cutover,
    KV mirror for rollback) *plus* per-record merge granularity for plan
    categories/groups, `monthlyPlans`, `payPeriods.actualStarts`, and
@@ -19,6 +20,15 @@ its own; none are combined.
    money" becomes a real transfer instead of a goal-only edit.
 5b. **Salary reconciliation** — planned figures beside the actuals in
    `UnaccountedSheet` (supersedes the "Next up" section below).
+
+### Follow-ups opened by build 2
+- **The import hold has no second slot.** A second import overwrites the first
+  one's "previous local copy". Stated in the sheet; add a second slot only if it
+  is ever actually wanted.
+- **Nothing re-validates a document arriving from the cloud.** `validateBackup`
+  guards the file picker, but a pull still trusts `Array.isArray(remote.plans)`,
+  the same one-line check import used to have. Worth folding into build 3, where
+  the sync protocol is open anyway.
 
 ### Follow-up opened by build 1
 - **The conflict modal has three buttons and two outcomes.**

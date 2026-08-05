@@ -1,5 +1,46 @@
 # Architectural & Technical Decisions
 
+## An import is a decision, and a decision needs a window (2026-08-05)
+
+Import replaced everything and then uploaded it within eight seconds. The
+dangerous part was never the replacement — that is what the button is for — it
+was that the *consequence reached the other person* before the user could look at
+what they had done. Restoring a wrong backup on a phone silently overwrote the
+copy the other phone was using.
+
+So the fix is not more confirmations. It is a **hold**: the import lands locally,
+and every automatic upload path checks a flag. The user gets an unbounded window
+in which the mistake is theirs alone and reversible. Only an action they took on
+purpose — Save to Cloud — ends it.
+
+**`migrate()` is a defaulter, not a validator, and the two must not be conflated.**
+It fills in keys it enumerates and leaves everything else exactly as found. A file
+whose `banks` was the string `"nope"` passed straight through it and became the
+live document. Validation had to be a separate function that runs *before* it.
+
+**Errors are layered on purpose.** Top-level shape is checked and returns early,
+so a broken `banks` is reported as a broken `banks` — not buried under thirty
+consequent complaints about records inside it. A refusal a person can act on beats
+a complete one they can't read.
+
+**Pull is refused while a hold is outstanding.** This was the subtle one. A pull
+*merges*, so pulling on top of an unreviewed import would fold the imported
+records into the cloud copy — neither "keep it" nor "throw it away", and no
+sentence could honestly describe the result. When an operation has no explainable
+meaning, the right move is to refuse it and name the two that do.
+
+**The hold is only armed when sync is configured.** A flag set on a device with no
+passphrase costs nothing today and silently blocks syncing months later, the day
+a passphrase is finally entered. State that exists to gate a subsystem should not
+outlive the subsystem being absent.
+
+**One safety slot, said out loud.** The pre-import copy reuses the existing
+"Restore previous local copy" mechanism rather than inventing a second one, which
+means a second import overwrites the first one's copy. That is a real limitation,
+so the sheet says it in the sentence where it matters rather than in a doc nobody
+reads. And a stash that *fails* now aborts the import: proceeding would leave the
+user with no way back, which is worse than not importing at all.
+
 ## Documentation that describes a policy the code abandoned (2026-08-05)
 
 The Settings text said cloud upload happens only on an explicit tap. That was

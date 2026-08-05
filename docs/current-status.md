@@ -1,12 +1,85 @@
 # Current Status
 
-_Last updated: 2026-08-05 (sync wording correction)_
+_Last updated: 2026-08-05 (backup import hardening)_
 
-**Live build:** `2026.08.05.0001` / v1.19.1.
-**Pick up next:** Build 2 of the agreed six-build programme — backup import
-hardening. The full programme (wording → import → two-device sync → faster
-transaction entry → category↔goal link → salary reconciliation) was planned on
-2026-08-05; each build ships and is verified on its own.
+**Live build:** `2026.08.05.0002` / v1.20.0.
+**Pick up next:** Build 3 of the agreed six-build programme — safer two-device
+sync. **It starts with Checkpoint 3A, which is the user's action, not a code
+change:** confirm Durable Objects are free on their Cloudflare plan and decide
+between the `wrangler` CLI and dashboard click-paths. No sync code is written
+until that answer exists.
+
+## Backup import hardening (2026-08-05)
+
+Build `2026.08.05.0002` / v1.20.0. Import used to be one line: parse the file,
+check `Array.isArray(d.plans)`, replace the entire dataset, and let the 8-second
+autosave push it to the cloud. Any object with a `plans` array passed — including
+one whose `banks` was a string or whose transactions had no amounts.
+
+**Four independent changes.**
+
+1. **`validateBackup(obj)`** — new pure module-scope function beside `migrate()`,
+   returning `{ok, errors, warnings, summary}`. Errors refuse the file (wrong
+   top-level shape, a collection that should be a list and isn't, a plan with no
+   id / categories / groups, a transaction with no id or no usable amount).
+   Warnings don't (a missing `installments` is just an older backup). Layered:
+   top-level shape is checked first and returns early, so a file with a broken
+   `banks` reports that rather than an avalanche of consequent errors.
+   `summary` carries the backup date, owners, currency and live-record counts —
+   tombstones excluded from the counts and reported separately.
+2. **`ImportPreviewSheet`** — portalled, `dvh`-sized. Shows the summary, then
+   states the three things that aren't obvious: it replaces everything, it stays
+   on this device until Save to Cloud, and the safety copy is a **single slot**
+   that the next import overwrites. Two actions only: Replace, or Cancel. **No
+   merge option** — merging two full financial documents can't be made both safe
+   and explainable.
+3. **Pre-import safety copy** — reuses the shipped `stashPreCloudBackup` and its
+   existing "Restore previous local copy" button rather than inventing a second
+   mechanism. `stashPreCloudBackup` now **returns whether it succeeded**, and a
+   failed stash (quota) **aborts the import** instead of proceeding unprotected.
+   While an import is held the button relabels to "Undo import — restore
+   previous local copy".
+4. **The upload hold** — `meta.importPending` in syncMeta (localStorage, not in
+   `data`: it is a state of this device and syncing it would be meaningless on
+   the other one). While set, `pushImportant`, the idle autosave, the
+   visibility-hidden push, the pagehide beacon and the passive activation check
+   all skip, and `saveToCloud` refuses any `reason` that isn't `manual` or
+   `gesture`. Only a real Save to Cloud clears it — through `commitPush`, the
+   single success choke point — or restoring the previous copy.
+
+**Pull is blocked while an import is held**, deliberately. A pull *merges*, so
+pulling on top of an unreviewed import would fold imported records into the cloud
+copy — neither keeping the import nor discarding it, and impossible to explain.
+The two answers are Save to Cloud or Undo, and the UI says so.
+
+**The hold is only armed when `kvReady`.** On a device with no passphrase nothing
+uploads anyway, and a flag left set there would silently block syncing the day a
+passphrase was finally entered.
+
+### Verified
+`node parsecheck.cjs` OK. Eleven runners green, including new **`importtest.cjs`
+(34/34, committed)**: current-shape backups, a legitimately older backup accepted
+and correctly defaulted by `migrate()`, 21 refusal cases, tombstones excluded from
+counts, zero-amount accepted (0 is a figure; absent isn't), and `validateBackup`
+proven not to mutate what it inspects.
+
+Driven end-to-end in a sandbox copy on `localhost:8791` (fresh origin, no real
+data, dummy passphrase for the `kvReady` paths):
+- a structurally invalid file → refusal sheet naming the reason, "Nothing on this
+  device has been touched"
+- a valid file → preview with correct date/owners/counts, cross-checked against
+  the file's own contents
+- **Cancel** → data byte-identical, no safety copy written, no hold set
+- **Replace** → data swapped, safety copy holds the pre-import owner name
+- **the hold** → 14 seconds after import (well past the 8s autosave) plus a
+  simulated backgrounding and pagehide: **zero POSTs to `/sync`**, banner shown,
+  Pull disabled, flag persisted across a reload
+- **Undo import** → previous copy restored, hold cleared, Pull re-enabled
+- dark mode legible; no console errors
+
+**Not verified:** a true 390px-viewport layout pass (the sheet was seen at its
+400px max width on desktop, which is the same layout, but not in a real phone
+viewport), and none of this was exercised against the real Worker.
 
 ## Sync wording corrected (2026-08-05)
 
