@@ -79,25 +79,20 @@ its own; none are combined.
      goal-only edits; all three paths go through `contributeToGoal` and write
      both records in ONE `setData`, linked by id. `addContribution` deleted.
      `goaltest.cjs` (19/19). See `current-status.md`.
-   - **5a-2 The `category.goalId` link — NEXT UP.** An optional `goalId` on a
-     budget category, so a transfer against a linked category (e.g. "Long Term
-     Savings") credits the goal in the same action. Constraints already in the
-     codebase:
-     - `applyGoalContribution` already writes the linked pair — 5a-2 should
-       extend it (a `catId` override so the row keys to the CATEGORY, not the
-       goal) rather than write a second contribution path. That is the whole
-       reason 5a-1 went in first.
-     - a linked transfer must keep `catId` = the category id, or the envelope's
-       "transferred" figure and the Expenses category filter both stop seeing it
-     - `unaccountedParts` already prefers `e.goalId`, so such a row lands in
-       "Goal contributions" rather than "Transfers out" — decide deliberately
-       whether that is wanted before shipping, since it moves money between two
-       lines of the sheet
-     - the link is a **category** field, so it lives on a plan record: it must
-       survive `clonePlanForMonth`, and `stampPlanRecords` will stamp
-       `updatedAt` when it changes. Categories merge per record since 3C-2.
-     - a category whose linked goal is deleted must degrade to a plain untracked
-       transfer, not break
+   - **5a-2 The `category.goalId` link — DONE**, build `2026.08.06.0005` /
+     v1.28.0. Optional `goalId` on **untracked** categories only; the picker
+     lives in the Budget chevron panel and the link is surfaced on the Expenses
+     untracked card ("Also credits …"). `applyGoalContribution` gained a `catId`
+     override so the row keys to the CATEGORY; `categoryGoalFor` resolves the
+     link *before* the write so a deleted goal degrades to a plain transfer
+     instead of swallowing it; `quickTransfer` became one write.
+     `goaltest.cjs` 19 → 27. See `current-status.md`.
+
+     **The classification decision, made deliberately:** a linked transfer
+     counts as a **Goal contribution**, not "Transfers out". Both lines subtract
+     so the unaccounted sheet still reconciles, but hand-summing untracked
+     envelopes against "Transfers out" is now short by whatever went through a
+     linked category. **5b must account for this.**
 5b. **Salary reconciliation** — planned figures beside the actuals in
    `UnaccountedSheet` (supersedes the "Next up" section below).
 

@@ -155,6 +155,15 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   `removeContribution` and `restoreRecord` all route through them. Records made
   before v1.27.0 carry no link and are left alone — never backfill a
   relationship the user didn't assert. Covered by `goaltest.cjs`.
+  Since v1.28.0 an **untracked** category may carry an optional `goalId`, and a
+  transfer against it credits that goal in the same write. Two rules there:
+  `catId` stays the **category** (the envelope's transferred figure and the
+  category filter read it) while `goalId` records the credit; and the link is
+  resolved by `categoryGoalFor` **before** the write, so a deleted goal degrades
+  the category to a plain transfer rather than having
+  `applyGoalContribution`'s unknown-goal guard silently swallow the whole
+  transaction. `goalId` is deliberately not defaulted in `migrate()` — absent
+  means unlinked, and defaulting it would cost every device a KV write.
 - **Transaction order lives in record fields, never array position.**
   `mergeArrayById` re-sorts expenses by id on every sync and `fingerprint`
   canonicalizes with `sortedById`, so array order is erased the first time two

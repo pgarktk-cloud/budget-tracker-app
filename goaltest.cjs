@@ -39,8 +39,9 @@ vm.runInContext(slice("function applyGoalContribution(d,{",
                       "/* Tracked-spending rollup for one owner"),ctx);
 const{applyGoalContribution,applyGoalContributionDeleteByExpense,
   applyGoalContributionRestoreByExpense,applyGoalContributionDeleteByContribution,
-  applyGoalContributionRestoreByContribution}=ctx;
+  applyGoalContributionRestoreByContribution,categoryGoalFor}=ctx;
 assert.ok(typeof applyGoalContribution==="function","applyGoalContribution missing from the slice");
+assert.ok(typeof categoryGoalFor==="function","categoryGoalFor missing from the slice");
 
 /* The unaccounted classifier, lifted out of its useMemo so the "goal
    contributions are their own line" rule is asserted against the shipped
@@ -212,6 +213,71 @@ t("extra funds are still classified first and never as spending",()=>{
   const r=classify([{amount:2000,isExtraFunds:true,catId:"food"}],G);
   assert.equal(r.extraFunds,2000);
   assert.equal(r.trackedSpend,0);
+});
+
+/* ── 5a-2: category → goal link ──────────────────────────────────────────── */
+console.log("\ncategoryGoalFor — the link, and how it degrades\n");
+
+const GOALS=[{id:"g1",owner:"me",name:"Emergency Fund",contributions:[]},
+             {id:"gDead",owner:"me",name:"Old goal",deletedAt:NOW,contributions:[]}];
+
+t("an unlinked category resolves to nothing",()=>{
+  assert.equal(categoryGoalFor({id:"c1",name:"Savings"},GOALS),null);
+  assert.equal(categoryGoalFor(null,GOALS),null);
+  assert.equal(categoryGoalFor({id:"c1",goalId:""},GOALS),null);
+});
+
+t("a linked category resolves to its goal",()=>{
+  assert.equal(categoryGoalFor({id:"c1",goalId:"g1"},GOALS).name,"Emergency Fund");
+});
+
+t("A STALE LINK DEGRADES: a deleted or missing goal resolves to null",()=>{
+  // this is what stops a transfer being swallowed — see quickTransfer
+  assert.equal(categoryGoalFor({id:"c1",goalId:"gDead"},GOALS),null);
+  assert.equal(categoryGoalFor({id:"c1",goalId:"gone"},GOALS),null);
+  assert.equal(categoryGoalFor({id:"c1",goalId:"g1"},[]),null);
+});
+
+console.log("\nA category-linked transfer keys to the CATEGORY\n");
+
+t("catId is the category, goalId is the goal — they are different questions",()=>{
+  const d=applyGoalContribution(doc(),{goalId:"g1",amount:5000,date:"2026-08-06",
+    owner:"me",name:"Long Term Savings",catId:"cat-lts",
+    expenseId:"e1",contributionId:"c1",now:NOW});
+  const e=d.expenses[0];
+  assert.equal(e.catId,"cat-lts","the envelope's transferred figure reads catId");
+  assert.equal(e.goalId,"g1");
+  assert.equal(e.isTransfer,true);
+  assert.equal(d.goals.find(g=>g.id==="g1").contributions[0].amount,5000);
+});
+
+t("without a catId override it still defaults to the goal, as before",()=>{
+  assert.equal(add(doc()).expenses[0].catId,"g1");
+});
+
+t("delete symmetry still holds for a category-linked row",()=>{
+  let d=applyGoalContribution(doc(),{goalId:"g1",amount:5000,date:"2026-08-06",
+    owner:"me",catId:"cat-lts",expenseId:"e1",contributionId:"c1",now:NOW});
+  d=applyGoalContributionDeleteByExpense(d,{expenseId:"e1",now:NOW});
+  assert.ok(d.expenses[0].deletedAt);
+  assert.ok(d.goals.find(g=>g.id==="g1").contributions[0].deletedAt,
+    "the goal kept money whose transfer was deleted");
+});
+
+t("a linked transfer classifies as a goal contribution, not Transfers out",()=>{
+  // deliberate: the money left via the category but it funded a goal, and
+  // goalId is what says so. Both lines subtract, so the sheet still reconciles
+  // — but a hand-reconciliation of untracked envelopes vs "Transfers out" will
+  // now be short by this amount. Recorded in decisions.md.
+  const r=classify([{amount:5000,isTransfer:true,catId:"cat-lts",goalId:"g1",goalContributionId:"c1"}],G);
+  assert.equal(r.goalContribs,5000);
+  assert.equal(r.untrackedTransfers,0);
+});
+
+t("an unlinked transfer against the same category is untouched",()=>{
+  const r=classify([{amount:5000,isTransfer:true,catId:"cat-lts"}],G);
+  assert.equal(r.untrackedTransfers,5000);
+  assert.equal(r.goalContribs,0);
 });
 
 console.log("\n"+(fails?fails+"/"+n+" FAILED":n+"/"+n+" passed")+"\n");

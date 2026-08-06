@@ -1926,19 +1926,38 @@ function applyInstallmentUnlink(d,{expenseId,now}){
    before this build", the same way an absent `ord` means "unplaced": guessing
    which old expense pairs with which old contribution would be inventing data.
 */
-function applyGoalContribution(d,{goalId,amount,note,date,owner,name,expenseId,contributionId,now}){
+function applyGoalContribution(d,{goalId,amount,note,date,owner,name,catId,expenseId,contributionId,now}){
   const g=(d.goals||[]).find(x=>x.id===goalId&&!x.deletedAt);
   if(!g)return d;
   const amt=Number(amount);
   if(!(amt>0))return d;
   const contrib={id:contributionId,date,amount:amt,note:note||"",expenseId,updatedAt:now};
-  const expense={id:expenseId,catId:goalId,goalId,goalContributionId:contributionId,
+  /* `catId` defaults to the goal, which is what a direct contribution has
+     always been. A CATEGORY-LINKED transfer (v1.28.0) overrides it with the
+     budget category the money actually left, because that is what the
+     envelope's "transferred" figure and the Expenses category filter read.
+     `goalId` is what says a goal was credited — the two are different
+     questions and were only ever the same field by coincidence. */
+  const expense={id:expenseId,catId:catId||goalId,goalId,goalContributionId:contributionId,
     name:name||`${g.name||"Goal"} (goal)`,note:note||"",amount:amt,date,
     owner:owner||g.owner||"me",isTransfer:true,createdAt:now,updatedAt:now};
   return{...d,
     expenses:[...(d.expenses||[]),expense],
     goals:(d.goals||[]).map(x=>x.id===goalId
       ?{...x,contributions:[...(x.contributions||[]),contrib],updatedAt:now}:x)};
+}
+
+/* The live goal a budget category is linked to, or null.
+
+   Returns null when the goal has been deleted or no longer exists, which is
+   what makes a linked category **degrade** to an ordinary untracked transfer
+   rather than breaking: the link is a convenience, not a dependency, and a
+   deleted goal must never swallow a transfer. Callers decide before writing —
+   applyGoalContribution's own "unknown goal writes nothing" guard would
+   otherwise silently drop the transaction entirely. */
+function categoryGoalFor(cat,goals){
+  if(!cat||!cat.goalId)return null;
+  return(goals||[]).find(g=>g.id===cat.goalId&&!g.deletedAt)||null;
 }
 
 /* Deleting the ledger row means the money didn't move, so the goal must give
@@ -2117,8 +2136,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.27.0";
-const BUILD_ID="2026.08.06.0004";
+const APP_VERSION="1.28.0";
+const BUILD_ID="2026.08.06.0005";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2711,6 +2730,13 @@ function migrate(d){
       // default every category to tracked unless explicitly marked otherwise,
       // so existing budgets behave exactly as before this feature shipped
       if(c.trackExpenses===undefined)c.trackExpenses=true;
+      /* `goalId` (v1.28.0) is deliberately NOT defaulted. The project rule is
+         that a new field on an existing record type needs a default here — but
+         that rule exists so readers never hit an undefined they must guess at,
+         and here **absent already means the only sensible thing**: not linked.
+         Writing `goalId:null` onto every category in every plan would change
+         fingerprint() for every document and cost each device a KV write to
+         say nothing. Same call as `ord` on an expense. */
     });
     /* Rescue categories whose groupId doesn't resolve. Every renderer walks
        groups→categories, so an unresolvable groupId makes the category and all
@@ -5579,9 +5605,34 @@ function App(){
      and remembers the actual amount transferred, since it doesn't always match
      the budgeted figure exactly. Keyed by category id. */
   const quickTransferLast=data.quickTransferLast||{};
-  const quickTransfer=(catId,catName,amount,date,owner=budgetOwner)=>{
-    addExpenseTx(catId,catName,"Quick transfer",amount,date,owner,true);
-    setData(d=>({...d,quickTransferLast:{...(d.quickTransferLast||{}),[catId]:Number(amount)}}));
+  /* A transfer against an untracked category — and, when that category is
+     linked to a goal (v1.28.0), the goal credit too, in the SAME write.
+
+     Was two setData calls (the row, then quickTransferLast). Now one, for the
+     reason installments and goal contributions already follow: a half-written
+     pair can be synced.
+
+     The link is resolved HERE rather than inside applyGoalContribution,
+     because that function writes nothing for an unknown goal — correct for a
+     direct contribution, but it would silently swallow a transfer whose linked
+     goal has since been deleted. `categoryGoalFor` returning null is what makes
+     a stale link degrade to an ordinary transfer instead. */
+  const quickTransfer=(catId,catName,amount,date,owner=budgetOwner,linkedGoalId=null)=>{
+    const now=new Date().toISOString();
+    const amt=Number(amount);
+    const day=date||now.slice(0,10);
+    const expenseId=uid(),contributionId=uid();
+    setData(d=>{
+      const withLast={...d,quickTransferLast:{...(d.quickTransferLast||{}),[catId]:amt}};
+      if(linkedGoalId)
+        return applyGoalContribution(withLast,{goalId:linkedGoalId,amount:amt,
+          note:"Quick transfer",date:day,owner,name:catName,catId,
+          expenseId,contributionId,now});
+      return{...withLast,expenses:[...(withLast.expenses||[]),
+        {id:expenseId,catId,name:catName,note:"Quick transfer",amount:amt,date:day,
+         owner,isTransfer:true,isExtraFunds:false,createdAt:now,updatedAt:now}]};
+    });
+    pushImportantRef.current();
   };
 
   /* extra funds: ad-hoc top-up to a tracked category's room for the month,
@@ -6199,7 +6250,7 @@ function App(){
         <TabPane tab={tab}>
           {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,profile,setProfile:setProfileSynced,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,contributeToGoal,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
           {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current(),
-            installments,installmentPayments,onOpenInstallment:openInstallment}}/>}
+            installments,installmentPayments,onOpenInstallment:openInstallment,goals}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
             installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates:data.txTemplates}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
@@ -7517,7 +7568,7 @@ function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow,installments,installmentPayments,onOpenInstallment}){
+function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow,installments,installmentPayments,onOpenInstallment,goals}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -7537,6 +7588,10 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
      destination sheet needs for its before/after summary. */
   const[selectMode,setSelectMode]=useState(false);
   const[selectedCats,setSelectedCats]=useState({});
+  /* Goals this owner can link a category to. Live only — a tombstoned goal
+     must not be offerable, and an already-linked-but-deleted goal shows as
+     "No goal" because categoryGoalFor resolves it to null anyway. */
+  const ownerGoals=useMemo(()=>(goals||[]).filter(g=>g.owner===budgetOwner&&!g.deletedAt),[goals,budgetOwner]);
   const[showMoveSheet,setShowMoveSheet]=useState(false);
   useScrollLock(showMoveSheet);
   const moveSheetRef=useDialogA11y(()=>setShowMoveSheet(false),showMoveSheet);
@@ -8050,6 +8105,26 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
                           {c.trackExpenses===false?<I.EyeOff size={13}/>:<I.Receipt size={13}/>}
                           {c.trackExpenses===false?"Not tracked":"Tracked"}
                         </button>
+                        {/* ── Goal link, untracked categories only ──
+                            A tracked category is money SPENT; only an
+                            untracked one is money MOVED, which is the only
+                            thing a goal can be credited from. Offering this on
+                            "Groceries" would be offering nonsense.
+                            Rendered only when the owner has goals — an empty
+                            picker explains nothing. */}
+                        {c.trackExpenses===false&&ownerGoals.length>0&&(
+                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:P.neuSub}}>
+                            <I.Target size={13}/>
+                            <select value={c.goalId||""}
+                              onChange={e=>updateCat(c.id,{goalId:e.target.value||undefined})}
+                              aria-label={`Link ${c.name||"category"} to a goal`}
+                              style={{borderRadius:8,padding:"3px 6px",fontSize:11,maxWidth:150,
+                                background:"rgba(0,0,0,.05)",border:"none",color:c.goalId?P.neuInk:P.neuSub}}>
+                              <option value="">No goal</option>
+                              {ownerGoals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                            </select>
+                          </label>
+                        )}
                         <button onClick={()=>setConfirmDelete({type:"cat",id:c.id,name:c.name||"this category"})}
                           aria-label={`Delete ${c.name||"category"}`}
                           className="status-pill" style={{marginLeft:"auto",cursor:"pointer",
@@ -8712,6 +8787,17 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      the categories the VIEWED month's plan actually has, so a chip can never
      fill a catId the dropdown below has no option for (see recentTxTemplates).
      Only tracked categories: the tracked form is the only thing these refill. */
+  /* Resolve a category's goal link at the moment of the transfer, against the
+     VIEWED month's plan — the link lives on a plan record, so a month that
+     inherited an older plan sees whatever that plan said. Returns null for an
+     unlinked category or one whose goal has been deleted, which is what makes
+     a stale link degrade to a plain transfer (see categoryGoalFor). */
+  const goalIdForCat=catId=>{
+    const cat=(monthPlan.categories||[]).find(c=>c.id===catId);
+    const g=categoryGoalFor(cat,goals);
+    return g?g.id:null;
+  };
+
   const trackedCatIds=useMemo(()=>allCatOptions.filter(c=>c.tracked).map(c=>c.id),[allCatOptions]);
   /* Pinned shortcuts, and the Repeat list with those same entries removed —
      otherwise the identical chip appears in both rows, one line apart. */
@@ -8825,7 +8911,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     }else if(addMode==="untracked"){
       if(!form.catId)return;
       const env=untrackedEnvelopes.find(e=>e.id===form.catId);
-      quickTransfer(form.catId,form.name||env?.name||"",amt,form.date,budgetOwner);
+      quickTransfer(form.catId,form.name||env?.name||"",amt,form.date,budgetOwner,goalIdForCat(form.catId));
     }else if(addMode==="goals"){
       if(!form.goalId)return;
       /* Was two setData calls — the ledger row, then the goal credit — which
@@ -9272,6 +9358,18 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                     <div className="tnum" style={{fontSize:11,color:isFunded?P.jade:P.neuSub,marginTop:1}}>
                       {isFunded?`✓ Transferred ${fmt(funded)}`:`Budgeted ${fmt(env.budget)} · not yet transferred`}
                     </div>
+                    {/* The link is set in Budget but SPENT here, so it has to
+                        be visible here — otherwise a transfer quietly credits
+                        a goal and the only clue is the goal moving. Reads the
+                        live goal, so a deleted one simply stops showing. */}
+                    {(()=>{
+                      const g=categoryGoalFor((monthPlan.categories||[]).find(c=>c.id===env.id),goals);
+                      return g?(
+                        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:P.neuSub,marginTop:2,opacity:.8}}>
+                          <I.Target size={10}/>Also credits {g.name}
+                        </div>
+                      ):null;
+                    })()}
                   </div>
                   <button onClick={()=>setTransferModal({catId:env.id,name:env.name,budget:env.budget,suggested:lastAmt||env.budget})}
                     className={isFunded?"neu-btn":""}
@@ -9700,7 +9798,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       {transferModal&&<Portal><QuickTransferSheet
         transferModal={transferModal}
         onClose={()=>setTransferModal(null)}
-        onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner);setTransferModal(null);}}
+        onConfirm={(amount,date)=>{quickTransfer(transferModal.catId,transferModal.name,amount,date,budgetOwner,goalIdForCat(transferModal.catId));setTransferModal(null);}}
         fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/></Portal>}
 
       {/* ── extra funds sheet ── */}

@@ -1,5 +1,45 @@
 # Architectural & Technical Decisions
 
+## A convenience link must degrade, never swallow (2026-08-06)
+
+`category.goalId` lets a transfer against "Long Term Savings" also credit a
+goal. The obvious implementation hands the goal id to `applyGoalContribution`
+and lets it sort things out — and that function already refuses to write for an
+unknown goal, which reads like a safe guard.
+
+It is the opposite of safe here. Refusing is right for a *direct* contribution
+(there is nothing to record), but for a linked transfer the money genuinely
+moved: refusing would silently drop the whole transaction because a goal the
+user deleted months ago no longer exists. The failure would be invisible and the
+data simply missing.
+
+So the link is resolved **before** the write, by `categoryGoalFor`, which returns
+null for a deleted or missing goal. A stale link makes the category behave as an
+ordinary untracked category again. The rule generalises: **an optional link is a
+convenience, not a dependency — when it can't be honoured, the primary action
+must still happen.**
+
+## `catId` and `goalId` answer different questions (2026-08-06)
+
+A direct goal contribution had `catId` = the goal id, so the two were the same
+value and nothing forced the distinction. A category-linked transfer breaks the
+coincidence: the money left via a **budget category** and landed in a **goal**.
+
+`catId` had to stay the category, because that is what the envelope's
+"transferred" figure and the Expenses category filter read — pointing it at the
+goal would make the transfer vanish from the envelope that planned it. `goalId`
+is what records the credit. Two fields, two questions, and the old code only
+worked because it never had to tell them apart.
+
+**The classification consequence was chosen, not inherited.** `unaccountedParts`
+prefers `goalId`, so a linked transfer now counts under "Goal contributions"
+rather than "Transfers out". Both lines subtract, so the sheet reconciles either
+way — the choice is about which is *truthful*, and a transfer that funded a goal
+is a goal contribution. The cost is stated rather than hidden: hand-summing
+untracked envelopes against "Transfers out" is now short by whatever went
+through a linked category, which is the same trap extra funds already set, and
+5b has to account for it.
+
 ## Three screens, one action, three different meanings (2026-08-06)
 
 Crediting a goal was implemented three times. The add-transaction modal wrote

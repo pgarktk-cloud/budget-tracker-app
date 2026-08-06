@@ -1,15 +1,96 @@
 # Current Status
 
-_Last updated: 2026-08-06 (goal contributions unified, v1.27.0)_
+_Last updated: 2026-08-06 (category → goal link, v1.28.0)_
 
-**Live build:** `2026.08.06.0004` / v1.27.0. v1.24.0 and v1.26.0 are deployed;
+**Live build:** `2026.08.06.0005` / v1.28.0. v1.24.0 and v1.26.0 are deployed;
 v1.24.0 was confirmed on a real phone including the iOS keyboard behaviour.
-**v1.27.0 has not been opened on a phone yet.**
-**Pick up next:** **5a-2 — the `category.goalId` link** (see `roadmap.md`).
-5a-1 below did the half that was a correctness fix; the linking half is a
-feature and is its own build. Also open: the two deliberate sync holds —
+**v1.27.0 and v1.28.0 have not been opened on a phone.**
+
+⚠ **v1.27.0's Pages deploy did not publish.** It was committed and pushed
+(`6cc1cb1`, confirmed on `origin/main`), but GitHub Pages was still serving
+v1.26.0 ~25 minutes later, where the two builds before it published in 4–5.
+Check the repo's Pages/Actions status before assuming a later build shipped —
+v1.28.0 sits on top of it, so if the build is genuinely failing, neither is live.
+
+**Pick up next:** **5a is complete.** Remaining: the two deliberate sync holds —
 **3C-3** (`payPeriods.actualStarts` per-record merge) and the **Durable Object
-having no automated test** — and 5b (plan-vs-actual in `UnaccountedSheet`).
+having no automated test** — and **5b** (plan-vs-actual in `UnaccountedSheet`),
+which now has an extra input: see the reconciliation note below.
+
+## Category → goal link (2026-08-06, v1.28.0)
+
+Build `2026.08.06.0005` / v1.28.0. Second half of 5a, and the reason 5a-1 went
+first: this build adds **no new contribution path**, it extends the one that
+already existed.
+
+An untracked budget category can now carry an optional **`category.goalId`**.
+Transferring against a linked category credits the goal in the same action — one
+write, the same linked pair 5a-1 introduced.
+
+**Untracked categories only.** A tracked category is money *spent*; only an
+untracked one is money *moved*, which is the only thing a goal can be credited
+from. Offering this on "Groceries" would be offering nonsense.
+
+**`catId` is the category, `goalId` is the goal.** `applyGoalContribution` gained
+a `catId` override, so a linked transfer keys to the **budget category** — which
+is what the envelope's "transferred" figure and the Expenses category filter
+read — while `goalId` records that a goal was credited. They were only ever the
+same field by coincidence, on a direct contribution.
+
+**A stale link degrades; it never swallows a transfer.** The link is resolved by
+`categoryGoalFor` *before* the write, not inside `applyGoalContribution` — that
+function writes nothing for an unknown goal, which is right for a direct
+contribution but would silently drop a transfer whose linked goal was later
+deleted. A deleted goal makes the category behave as an ordinary untracked
+category again, and the "Also credits …" line simply stops rendering.
+
+**`quickTransfer` became one write.** It was two `setData` calls (the row, then
+`quickTransferLast`), which is the half-written-pair hazard installments and goal
+contributions already avoid.
+
+**`goalId` is deliberately NOT defaulted in `migrate()`.** The project rule says
+a new field on an existing record type needs a default — but that rule exists so
+readers never hit an undefined they must guess at, and here absent already means
+the only sensible thing: not linked. Writing `goalId:null` onto every category in
+every plan would change `fingerprint()` for every document and cost each device a
+KV write to say nothing. Same call as `ord` on an expense.
+
+**It lives on a plan record**, so it copy-on-writes like any other category edit,
+gets `updatedAt` from `stampPlanRecords`, merges per record (3C-2), and is
+carried into a cloned plan by `clonePlanRecord`'s `{...c}` spread.
+
+### One consequence to know before reconciling
+A linked transfer classifies as a **Goal contribution**, not "Transfers out" —
+`unaccountedParts` prefers `goalId`, and that is the truthful attribution. Both
+lines subtract, so the unaccounted sheet still reconciles exactly. But
+**hand-summing untracked envelopes against "Transfers out" will now be short by
+whatever went through a linked category.** This is the same class of trap the
+extra-funds note already records, and **5b must account for it** when it puts
+planned figures beside the actuals.
+
+### Verified
+`node parsecheck.cjs` OK. **Seventeen runners green**; `goaltest.cjs` extended
+19 → **27** with the link, its degradation, the `catId`-vs-`goalId` split, delete
+symmetry on a linked row, and both classifier outcomes.
+
+Sandbox, fresh origin:
+- the picker appears on **untracked** categories only — opening a tracked
+  category's panel adds none — and only when the owner has goals
+- linking "Long Term Savings" → "Emergency Fund" **materialised a custom August
+  plan** (copy-on-write) and stamped `updatedAt` on the category
+- the Expenses untracked card then read *"Also credits Emergency Fund"*
+- transferring 2,750 wrote one expense with `catId` = **the category**,
+  `goalId` = the goal, `isTransfer:true`, linked both ways, **no `ord`**, and
+  took the goal 18,500 → 21,250
+- the envelope read *"✓ Transferred SAR 2,750.00"* — category maths intact
+- the unaccounted sheet read *Income 22,000 · Goal contributions −2,750 · Still
+  unaccounted 19,250*
+- **the degradation case**: deleting the goal hid the "Also credits" line, and a
+  further transfer against the still-linked category **still landed**, as a plain
+  transfer with no `goalId`. The picker reads "No goal".
+- survived a reload; dark mode legible; no console errors or runtime exceptions
+
+**Not verified on a phone.**
 
 ## Goal contributions are one action again (2026-08-06, v1.27.0)
 

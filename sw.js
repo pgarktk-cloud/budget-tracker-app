@@ -5,7 +5,7 @@
 // index.html and with version.json — all three should be bumped together
 // on every deploy so the displayed build and the cached app release always
 // correspond.
-const BUILD_ID = '2026.08.06.0004';
+const BUILD_ID = '2026.08.06.0005';
 const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
