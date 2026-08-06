@@ -5,12 +5,16 @@
 // index.html and with version.json — all three should be bumped together
 // on every deploy so the displayed build and the cached app release always
 // correspond.
-const BUILD_ID = '2026.08.06.0005';
+const BUILD_ID = '2026.08.06.0006';
 const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
+  // './' only — NOT './index.html' as well. Cloudflare Pages 308-redirects
+  // /index.html to /, so caching both meant storing a redirected response for
+  // the same document under a second key. `isAppShellRequest` below still
+  // matches either path, so a direct /index.html hit is handled; there is just
+  // no reason to pre-cache the redirecting form of a page we already have.
   './',
-  './index.html',
   './manifest.webmanifest',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
   'https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js',

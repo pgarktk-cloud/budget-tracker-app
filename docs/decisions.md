@@ -1,5 +1,60 @@
 # Architectural & Technical Decisions
 
+## Two Cloudflare projects, not one (2026-08-06)
+
+Moving the app to Cloudflare made it tempting to serve it from the **existing**
+`alloc-kv` Worker via static assets: same origin, so CORS disappears entirely,
+one service, one deploy. It was rejected.
+
+Every app release would then redeploy the Worker that owns the `SyncRoom`
+Durable Object — and a Worker deploy **replaces its bindings** with whatever
+`wrangler.jsonc` declares. A mistake in a routine app release could silently
+unbind KV and take sync with it. Today an app build cannot touch the sync
+backend at all, which is why every build note in this file can say "`worker.js`
+is untouched, so nothing needs a `wrangler deploy`". That isolation is worth
+more than deleting a CORS allowlist.
+
+The cost is honest and small: one origin added to `ALLOWED_ORIGINS`, one Worker
+deploy, once.
+
+## The pipeline you can't read is the one that fails (2026-08-06)
+
+GitHub Pages failed five times in a row with `Timeout reached, aborting`, while
+its own status page stayed green. The build always succeeded; only the deploy
+died. Nothing in the repo could cause it and nothing in the repo could fix it —
+`.nojekyll`, re-running, deleting the stuck run and recreating the Pages site
+all changed nothing.
+
+Two things worth carrying forward.
+
+**A diagnosis that predicts a fix, and the fix does nothing, is wrong.** The
+stuck-deployment theory was plausible and fit the timeline — repeated timeouts,
+green status, a queue behind a first failure. Clearing the queue changed
+nothing, which meant the theory was wrong, not that it needed another attempt.
+Pushing `.nojekyll` before reading the error was the mistake: the error said the
+*build* had succeeded, so no amount of build configuration could ever have been
+the answer.
+
+**Deploy visibility is a feature.** The replacement deploys by an explicit
+command that prints what it uploaded and finishes in seconds. The old pipeline's
+failure was discovered by email, hours after the fact, with four builds stacked
+behind it. For an app two people use daily for real money, "I can see whether it
+shipped" is worth more than "it ships by itself".
+
+## Verification is the part that finds the bug (2026-08-06)
+
+The Cloudflare deploy was verified rather than assumed, and that is what caught
+**Pages 308-redirecting `/index.html` → `/`**. The site worked either way, so
+nothing would have looked broken — but `manifest.webmanifest` pointed
+`start_url` at `./index.html`, so the home-screen app would have taken a
+redirect on **every single launch**, and `sw.js` would have pre-cached a
+redirected response for a page it already had.
+
+The timing is the point: both phones were about to install the PWA. Found
+before, it is a one-line change; found after, it is "please delete and
+re-install the app on both phones". A deploy isn't done when the upload
+succeeds — it's done when you've read back what the server actually serves.
+
 ## A convenience link must degrade, never swallow (2026-08-06)
 
 `category.goalId` lets a transfer against "Long Term Savings" also credit a

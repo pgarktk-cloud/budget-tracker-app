@@ -335,6 +335,53 @@ doesn't reliably fire the field's blur), `navGroup` to make Enter jump to the
 next field in that group. Don't clamp a value that has a validation message
 telling the user it's out of range — clamping makes the message unreachable.
 
+## Hosting and deploying the app
+
+The app is served by **Cloudflare Pages** at **https://whered-it-go.pages.dev**
+(project `whered-it-go`), moved off GitHub Pages on 2026-08-06 after its deploy
+job failed five times with `Timeout reached, aborting` and no actionable
+diagnostics. Both the app and the sync Worker now live on one Cloudflare
+account, but as **two separate projects** — an app release must never be able to
+redeploy the Durable-Object-bearing Worker.
+
+**Deploy:**
+
+    node stage.cjs && npx wrangler pages deploy site --project-name=whered-it-go --branch=main
+
+- **`stage.cjs` is the release guard, not a copy step.** It refuses to stage
+  unless `APP_VERSION`/`BUILD_ID` in `index.html`, `BUILD_ID` in `sw.js` and
+  `version.json` all agree — the three-way mismatch this file has warned about
+  for months, now enforced. It rebuilds `site/` from scratch each run so a stale
+  file can't be published silently.
+- **`site/` is build output** (gitignored). The seven served files stay at the
+  repo root, because `parsecheck.cjs` and all 17 runners read `index.html` from
+  there. Never move the source into `site/`.
+- **The repo is not the website.** Only those seven files ship; the runners,
+  `worker.js`, `wrangler.jsonc` and `docs/` are tooling. Add a served file to
+  `SERVED` in `stage.cjs` or it silently won't deploy.
+- **Never add `pages_build_output_dir` to `wrangler.jsonc`.** That file is the
+  *Worker's* config; Pages warns it's missing that field and correctly ignores
+  the file. Adding it would make `wrangler deploy` and `wrangler pages deploy`
+  fight over one config.
+- Deployment is **direct upload**, deliberately — not Git-triggered. It gives
+  immediate readable output, which is exactly what the GitHub pipeline never did.
+
+**A new hosting origin needs a Worker change.** `ALLOWED_ORIGINS` in `worker.js`
+gates browser access; an origin missing from it loads the app fine and then
+fails every sync with a CORS error — the worst failure shape, because it looks
+like the app working. Add the origin, `npx wrangler deploy`, and confirm both
+bindings (`SYNC_ROOM`, `ALLOC_KV`) are still listed in the output.
+
+**Cloudflare Pages 308-redirects `/index.html` → `/`.** Hence `start_url` is
+`"./"` and `APP_SHELL` lists `'./'` only. Don't reintroduce `./index.html` in
+either.
+
+**Browser storage is per-origin**, so changing the app's address again would
+strand every device's data — the document, the passphrase, device identity and
+the local safety copies all live under the origin. Any future move must repeat
+the push-everything-first migration (see `docs/current-status.md`). A custom
+domain is the only thing that makes a future move free.
+
 ## Focusing a field — `focus()` is the gesture's, `select()` is the commit's
 
 **iOS Safari raises the keyboard only for a `focus()` called synchronously
@@ -510,10 +557,10 @@ and an error naming a collection the user has never heard of.
   minified. And cross-check the hash against unpkg before trusting it, so a
   single compromised CDN can't dictate what you pin. `sw.js`'s `APP_SHELL` must
   list the identical URLs or it caches files the page never asks for.
-- **Nothing in this repo may be secret** — it's public, because GitHub Pages
-  serves `index.html` from it. `SYNC_TOKEN`/`FINNHUB_KEY` are Cloudflare
-  Worker env secrets read via `env` in `worker.js`; `PROXY_URL` is a plain
-  public URL that authorizes nothing. Never reintroduce a credential literal.
+- **Nothing in this repo may be secret** — it's a public repo.
+  `SYNC_TOKEN`/`FINNHUB_KEY` are Cloudflare Worker env secrets read via `env`
+  in `worker.js`; `PROXY_URL` is a plain public URL that authorizes nothing.
+  Never reintroduce a credential literal.
 - The Worker authenticates **every** endpoint, `/quote` and `/name` included
   (they were open proxies until 2026-08-01). So live prices, not just sync,
   are off until a device has its passphrase — `fetchQuotes`/`fetchName` gate

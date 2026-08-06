@@ -58,5 +58,11 @@ desktop.ini
 
 # ── Scratch ───────────────────────────────────────────────────────────────
 sandbox/
+sandbox*/
 tmp/
 *.log
+
+# ── Deploy staging ────────────────────────────────────────────────────────
+# `node stage.cjs` rebuilds this from the seven served files on every deploy.
+# Build output, not source — the originals all live at the repo root.
+site/

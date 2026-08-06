@@ -156,6 +156,12 @@ export class SyncRoom extends DurableObject {
    the token is the real gate, since curl and other non-browser clients ignore
    CORS entirely. Add a new entry here if the app is ever hosted elsewhere. */
 const ALLOWED_ORIGINS = [
+  // Cloudflare Pages — the app's home since 2026-08-06.
+  "https://whered-it-go.pages.dev",
+  // GitHub Pages — the previous home, kept during the migration so a phone
+  // that hasn't moved yet still syncs against the same document. Both origins
+  // talk to this one Worker, which is what makes the move phone-by-phone
+  // rather than all-at-once. Remove once both devices are settled.
   "https://pgarktk-cloud.github.io",
 ];
 /* Local development: any http://localhost:PORT / http://127.0.0.1:PORT. */

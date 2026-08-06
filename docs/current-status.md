@@ -1,6 +1,71 @@
 # Current Status
 
-_Last updated: 2026-08-06 (category → goal link, v1.28.0)_
+_Last updated: 2026-08-06 (moved to Cloudflare Pages, v1.28.1)_
+
+## 🚚 The app moved to Cloudflare Pages (2026-08-06, v1.28.1)
+
+**New address: https://whered-it-go.pages.dev** — the old
+`pgarktk-cloud.github.io/budget-tracker-app` is still live as a fallback.
+
+**Why.** GitHub Pages stopped deploying this repo. Five runs, `build` green
+every time, `deploy` timing out every time with *"Timeout reached, aborting"*,
+while githubstatus.com stayed green throughout. Four remedies failed: adding
+`.nojekyll`, cancelling and re-running, deleting the stuck run, and recreating
+the Pages site from scratch via the Source toggle. Four builds were stranded
+unshipped and both phones were stuck on v1.26.0. Cloudflare already hosted the
+sync Worker, so this consolidated rather than added a vendor. **The first
+Cloudflare deploy finished in under two seconds.**
+
+### What shipped with the move
+- **`stage.cjs` (new, committed)** — stages the seven served files into `site/`
+  and **blocks the deploy if the three `BUILD_ID` sites disagree**. That
+  three-way match has been a documented hazard for months with nothing checking
+  it. Verified by feeding it a deliberate mismatch: exits 1 and names both sides.
+- **v1.28.1** — `start_url` is now `"./"` and `APP_SHELL` drops `'./index.html'`,
+  because **Cloudflare Pages 308-redirects `/index.html` → `/`**. Caught during
+  verification, before either phone installed the PWA — an installed app would
+  otherwise have redirected on every launch.
+- **`worker.js`** — `whered-it-go.pages.dev` added to `ALLOWED_ORIGINS`, with
+  the GitHub origin **deliberately kept** so a phone that hasn't moved yet still
+  syncs. That is what makes the migration phone-by-phone instead of all-at-once.
+  Worker version `baeffdd2-efd5-4914-bb85-1046ed149c3d`; both bindings
+  (`SYNC_ROOM`, `ALLOC_KV`) confirmed present after the deploy.
+
+### Verified
+`parsecheck` OK, 17 runners green. On the live site: all seven files 200,
+`version.json`/`index.html`/`sw.js` all read **1.28.1 / `2026.08.06.0006`**, the
+served `index.html` genuinely contains the v1.27/v1.28 code
+(`applyGoalContribution`, `categoryGoalFor`, `recentTxTemplates`). In a browser:
+app mounts, service worker registered at scope `/`, cache named
+`allocation-shell-2026.08.06.0006`, Settings reads *Version 1.28.1 · Build
+2026.08.06.0006*, no console or runtime errors. Worker CORS: the new origin and
+the old origin both allowed, `localhost` still allowed (the sandbox workflow
+depends on it), an unknown origin correctly gets **no** ACAO header, and a
+tokenless request still returns **401**.
+
+### ⚠ Still to do — the device migration (NOT done yet)
+Browser storage is **per-origin**, so nothing follows automatically: the
+document (`salaryPlanner:v3`), the passphrase (`allocation:syncToken`), device
+identity, the view profile and the two local safety copies are all still on the
+old address only. Per phone, **in this order**:
+
+1. **On the OLD address first:** confirm nothing is pending, tap **Save to
+   Cloud**, and **Download backup**. Anything unsynced stays stranded — this
+   step is the whole reason the migration is safe.
+2. Note two known figures (net worth, one envelope) to check against.
+3. Open the new address, Settings → enter the passphrase. The **v1.23.0
+   "new device with nothing local"** path validates the cloud document through
+   `cloudDocProblem()` and adopts it. Check the figures match.
+4. Set the device name, install to the home screen.
+5. **Move one phone first**, then edit on both (one on each address — they share
+   the Worker) and confirm both arrive. Only then move the second.
+6. Delete the old home-screen icons. Leave GitHub Pages and the `github.io`
+   entry in `ALLOWED_ORIGINS` alone for about a week.
+
+**Rollback:** the cloud document is untouched by any of this; the old address
+still works and each phone's old storage is intact until cleared.
+
+_Previously: 2026-08-06 (category → goal link, v1.28.0)_
 
 **Live build:** `2026.08.06.0005` / v1.28.0. v1.24.0 and v1.26.0 are deployed;
 v1.24.0 was confirmed on a real phone including the iOS keyboard behaviour.
