@@ -588,10 +588,14 @@ roughly in order of how much it actually matters:
    already share the dataset; it does mean no revoking one device without
    rotating for everyone. Rotation is cheap (change the Worker secret, re-enter
    on each device), so this is a deliberate trade, not an oversight.
-5. **No Content-Security-Policy.** GitHub Pages can't set headers, and a `<meta>`
-   CSP would need `unsafe-eval` for Babel's in-browser JSX compilation, making it
-   weak. Only worth revisiting if the app ever gains a build step — at which
-   point dropping Babel and adding a real CSP become the same piece of work.
+5. **No Content-Security-Policy — but the blocker changed on 2026-08-06.** The
+   reason used to be that GitHub Pages cannot set response headers. **Cloudflare
+   Pages can**, via a `_headers` file, so a real CSP is now *possible* for the
+   first time. What remains is that Babel's in-browser JSX compilation needs
+   `unsafe-eval`, which makes any CSP weak — so this is still most valuable
+   alongside a build step, where dropping Babel and adding a strict CSP become
+   the same piece of work. A `_headers` file is worth adding regardless for
+   cache-control.
 
 ## Installments (DONE, 2026-08-02)
 

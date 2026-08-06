@@ -2,6 +2,164 @@
 
 _Last updated: 2026-08-06 (moved to Cloudflare Pages, v1.28.1)_
 
+---
+
+# 📋 SESSION HANDOVER — 2026-08-06
+
+**Live: v1.28.1 / `2026.08.06.0006`, served from Cloudflare Pages at
+https://whered-it-go.pages.dev, installed on both phones.**
+Everything below is verified on real hardware unless it says otherwise.
+
+## What shipped
+
+Six app builds and a hosting migration. Each shipped and was verified on its
+own; detail for each is in its own section below.
+
+| Build | Version | What |
+|---|---|---|
+| 4a | v1.24.0 | **Repeat chips + autofocus** — one tap refills a past transaction's category, title and amount |
+| 4b-1 | v1.25.0 | **Rapid entry** — "Save & add another" keeps the sheet open; undo toast learned to reverse an *add* |
+| 4b-2 | v1.26.0 | **Pinned shortcuts** — new synced `txTemplates` collection, deduped against Repeat |
+| 5a-1 | v1.27.0 | **Goal contributions unified** — one linked write; three screens no longer disagree |
+| 5a-2 | v1.28.0 | **Category → goal link** — an untracked category can credit a goal |
+| — | v1.28.1 | **Moved to Cloudflare Pages** + `start_url`/`APP_SHELL` fix for its `/index.html` redirect |
+
+**Build 4 and 5a are both complete.** Nothing is queued.
+
+### Two bugs found that were on no list
+Both surfaced from fixtures built to test something else — worth remembering as
+a technique, not luck (see `decisions.md`, "The fixture found the older bug"):
+
+1. **The old name chips offered `isExtraFunds` rows as spend titles** — money
+   coming *in* suggested as a title for money going *out*. Shipped long before
+   this session; fixed in v1.24.0.
+2. **`addExpenseTx` minted its id inside a `setData` updater.** React may invoke
+   an updater more than once, so one logical insert could produce two ids.
+   Latent until v1.25.0 needed the id returned; fixed by hoisting it out.
+
+## Files created
+
+| File | Purpose |
+|---|---|
+| `stage.cjs` | Stages the 7 served files into `site/` **and blocks the deploy if the three `BUILD_ID` sites disagree**. Guard verified against a deliberate mismatch. |
+| `templatetest.cjs` | 17 assertions — pinned shortcuts, Repeat/Shortcut dedupe, migration byte-equivalence, merge |
+| `goaltest.cjs` | 27 assertions — goal contributions as one linked write, both delete directions, legacy records, the classifier, the category link |
+| `.nojekyll` | Now only relevant to the GitHub Pages fallback; harmless to keep |
+
+## Files modified
+
+`index.html` (all six builds), `sw.js` + `version.json` + `manifest.webmanifest`
+(build ids, plus the Cloudflare `start_url`/`APP_SHELL` fix), `worker.js` (the
+new origin in `ALLOWED_ORIGINS`), `suggesttest.cjs` (11 → 26 assertions),
+`.gitignore` (`site/`, `sandbox*/`), `CLAUDE.md`, and all three files in `docs/`.
+
+**Runner count is now 17** — `templatetest.cjs` and `goaltest.cjs` joined the
+15 that existed at the start of the session. `CLAUDE.md` lists all of them.
+
+---
+
+# ⚠️ KNOWN BUGS, LIMITATIONS AND UNFINISHED WORK
+
+_Current as of 2026-08-06. Supersedes the older list further down this file._
+
+## Needs attention before it's forgotten
+
+- **Both phones still hold a full copy of the financial document — and the sync
+  passphrase — under the OLD `pgarktk-cloud.github.io` origin.** Browser storage
+  is per-origin, so the migration copied nothing and deleted nothing. That data
+  is live, not stale, and it is a second unmanaged copy of everything. Clear
+  site data for the old origin on both phones once you're confident you won't
+  roll back. **Do this deliberately — it is the only cleanup step with a
+  privacy dimension.**
+- **GitHub Pages is still live** serving v1.26.0, and `https://pgarktk-cloud.github.io`
+  is still in `ALLOWED_ORIGINS`. Both are the intentional rollback path. Remove
+  in about a week (`worker.js` edit + `npx wrangler deploy`).
+
+## Deliberate scope limits (not defects)
+
+- **Rapid entry is tracked-mode only.** A Goals contribution writes two records
+  and an untracked transfer also writes `quickTransferLast`; a one-record undo
+  can't honestly reverse either.
+- **`category.goalId` is offered on untracked categories only** — a tracked
+  category is money spent, and only money moved can fund a goal.
+- **A category-linked transfer counts as a "Goal contribution", not "Transfers
+  out".** The unaccounted sheet still reconciles exactly, but hand-summing
+  untracked envelopes against "Transfers out" now comes up short by whatever
+  went through a linked category. **5b must account for this.**
+- **Goal contributions made before v1.27.0 carry no link**, so deleting one half
+  leaves the other alone. Deliberate — pairing historical records by amount and
+  date would invent a relationship the user never asserted.
+
+## Carried forward, still true
+
+- **The Durable Object handler has no automated test.** Cutover checks only —
+  that is the honest status, not implied coverage. Needs `wrangler dev` plus a
+  harness this repo doesn't have.
+- **3C-3: `payPeriods.actualStarts` merges whole-object, newest-document-wins**,
+  so a correction can be silently dropped. Blocked on a design question, not
+  effort: clearing an override *deletes* the key, so a union merge would
+  resurrect a cleared correction.
+- **The add-transaction Amount field is not a `NumField`** — it's a hand-rolled
+  string-draft input with the same commit-on-blur/`evalMathExpr` behaviour.
+  Leave it or convert it deliberately; don't half-convert it.
+- **Home's two trend cards have never met real history** (~Oct 2026, first
+  period with 3 completed buckets). Unit-tested only, and they now read
+  corrected period lengths too.
+- **`crediting:"monthly"`** is implemented and unit-tested but has never run
+  against a real monthly-crediting account.
+- **"Add sub-item" can silently drop a category's manual amount.** Known, left
+  alone; the fix would now have to be written fresh.
+- **`moveCat` in Expenses is the remaining accidental plan-materialisation
+  surface** — reordering envelopes on a carried-forward month creates a plan.
+- **16 of 24 plans are unreferenced** (~29% of the document). Offered and
+  declined as cosmetic. If ever done: tombstone, don't hard-delete.
+- **The conflict modal is unreachable and has never been seen rendered.** If it
+  appears, `tryAutoMergeAll` threw — treat it as an exception report.
+- **Two empty "retrigger deploy" commits** sit in history from the GitHub Pages
+  troubleshooting. Cosmetic.
+- MP2 remains an annual-bucket approximation; gold jewellery and other
+  investment types are out of scope; the snapshot weekly window (365d) isn't
+  user-configurable.
+
+## Security residuals
+
+- Assume the **pre-2026-08-01 dataset may already be public** (`SYNC_TOKEN` was
+  readable in the served `index.html` for months).
+- **No rate limiting on the Worker** — mitigated only by the passphrase being
+  five random words. Add Cloudflare Rate Limiting on `/sync*` *before* ever
+  shortening it.
+- **No Content-Security-Policy** — but this is now *possible* for the first
+  time. GitHub Pages couldn't set headers; Cloudflare Pages can, via a
+  `_headers` file. Babel's in-browser JSX compilation still needs
+  `unsafe-eval`, so it would be weak until the app gains a build step.
+
+---
+
+# ▶️ NEXT STEPS
+
+In rough order of value. Nothing is blocked on anything else.
+
+1. **5b — plan-vs-actual in `UnaccountedSheet`.** Fully scoped in `roadmap.md`.
+   Two inputs that are easy to miss: use base `e.budget` (extra funds are
+   already their own line), and the planned side of "Transfers out" must include
+   `derivedInstallmentRowsFor(...)` *and* account for linked categories now
+   counting as goal contributions.
+2. **3C-3 — `payPeriods.actualStarts` per-record merge.** Answer the deletion
+   question first; the merge is the easy half.
+3. **A test harness for the Durable Object.** The only genuinely untested code
+   in the sync path.
+4. **Housekeeping (~1 week out):** clear the old origin's site data on both
+   phones, turn GitHub Pages off, drop `github.io` from `ALLOWED_ORIGINS`.
+5. **Optional:** a `_headers` file on Cloudflare for real cache-control, and a
+   first pass at a CSP.
+
+**Deploying** is now `node stage.cjs && npx wrangler pages deploy site
+--project-name=whered-it-go --branch=main`. `stage.cjs` refuses to ship if the
+three `BUILD_ID` sites drift. Run `node parsecheck.cjs <babel-path>` and all 17
+runners first — see `CLAUDE.md`.
+
+---
+
 ## 🚚 The app moved to Cloudflare Pages (2026-08-06, v1.28.1)
 
 **New address: https://whered-it-go.pages.dev** — the old
@@ -3036,7 +3194,12 @@ architecture (owner/type-tagged Investment Accounts; MP2/TD valuation).
   Gold holding exists; confirmed `snapshot.byType.gold` is populated
   correctly in `localStorage`.
 
-## Known bugs / limitations / deferred work
+## Known bugs / limitations / deferred work (2026-07-28 — SUPERSEDED)
+
+> **Historical.** The current list is **"KNOWN BUGS, LIMITATIONS AND UNFINISHED
+> WORK" at the top of this file.** Kept for the phase context only; do not read
+> this as the live status.
+
 - **MP2 dividend model remains an annual-bucket approximation** (unchanged
   from Phase 2 — see prior note, still accurate).
 - **Gold jewellery, commodity trading, and any other investment type are

@@ -273,6 +273,16 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   - `fingerprint()` emits the two collections **only when non-empty**, so
     `migrate()` adding them is byte-identical for an existing document and
     doesn't cost a KV write per device on first open.
+- **`data.txTemplates` are pinned transaction shortcuts — chosen, not
+  observed.** Flat and id-keyed like every other synced collection.
+  Deliberately NOT derived from history the way the Repeat chips are: a
+  shortcut exists because someone pinned it, so it must survive a quiet month
+  and reach the other person's phone. The two are rendered as **separate chip
+  rows** and `recentTxTemplates(…,{excludeKeys})` removes pinned entries from
+  the derived row, so pinning *moves* an entry between rows rather than showing
+  it twice. Pinning is idempotent on `(owner,name,catId)` and **revives a
+  tombstone** rather than creating a twin — the row is keyed by what the user
+  recognises, not by an id they never see. Covered by `templatetest.cjs`.
 - `data.settings` is a small object for user-facing toggles that change
   *calculation* behavior (currently just `includeMp2EstimateInNetWorth`) —
   put future calculation-affecting toggles here, not as ad hoc top-level
