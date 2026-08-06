@@ -43,44 +43,43 @@ the old origin both allowed, `localhost` still allowed (the sandbox workflow
 depends on it), an unknown origin correctly gets **no** ACAO header, and a
 tokenless request still returns **401**.
 
-### ⚠ Still to do — the device migration (NOT done yet)
-Browser storage is **per-origin**, so nothing follows automatically: the
-document (`salaryPlanner:v3`), the passphrase (`allocation:syncToken`), device
-identity, the view profile and the two local safety copies are all still on the
-old address only. Per phone, **in this order**:
+### Device migration — DONE, both phones (2026-08-06)
+Both devices are on `whered-it-go.pages.dev` with the full dataset and the app
+installed to the home screen.
 
-1. **On the OLD address first:** confirm nothing is pending, tap **Save to
-   Cloud**, and **Download backup**. Anything unsynced stays stranded — this
-   step is the whole reason the migration is safe.
-2. Note two known figures (net worth, one envelope) to check against.
-3. Open the new address, Settings → enter the passphrase. The **v1.23.0
-   "new device with nothing local"** path validates the cloud document through
-   `cloudDocProblem()` and adopts it. Check the figures match.
-4. Set the device name, install to the home screen.
-5. **Move one phone first**, then edit on both (one on each address — they share
-   the Worker) and confirm both arrive. Only then move the second.
-6. Delete the old home-screen icons. Leave GitHub Pages and the `github.io`
-   entry in `ALLOWED_ORIGINS` alone for about a week.
+**The v1.23.0 "new device with nothing local" path ran for real and worked.**
+Browser storage is per-origin, so each phone arrived empty; entering the
+passphrase made the app validate the cloud copy through `cloudDocProblem()` and
+adopt it wholesale. That path had only ever been exercised against a fake Worker
+in a sandbox — this is its first run on live data, and it did exactly what it
+was built to do. Worth knowing: **the data was never "moved"**, it came down
+from the Worker, which is where it has always actually lived. The host only ever
+served the app shell.
 
-**Rollback:** the cloud document is untouched by any of this; the old address
-still works and each phone's old storage is intact until cleared.
+Left deliberately in place for about a week: GitHub Pages, and the `github.io`
+entry in `ALLOWED_ORIGINS`. Remove both once there's no intention of going back.
+
+**Rollback (still available):** the cloud document was never modified by any
+step, the old address still serves v1.26.0, and each phone's old-address storage
+remains until cleared.
 
 _Previously: 2026-08-06 (category → goal link, v1.28.0)_
 
-**Live build:** `2026.08.06.0005` / v1.28.0. v1.24.0 and v1.26.0 are deployed;
-v1.24.0 was confirmed on a real phone including the iOS keyboard behaviour.
-**v1.27.0 and v1.28.0 have not been opened on a phone.**
+**Live build:** `2026.08.06.0006` / v1.28.1, served from Cloudflare Pages and
+**installed on both phones**. Every build from v1.24.0 through v1.28.1 is now
+live on-device.
 
-⚠ **v1.27.0's Pages deploy did not publish.** It was committed and pushed
-(`6cc1cb1`, confirmed on `origin/main`), but GitHub Pages was still serving
-v1.26.0 ~25 minutes later, where the two builds before it published in 4–5.
-Check the repo's Pages/Actions status before assuming a later build shipped —
-v1.28.0 sits on top of it, so if the build is genuinely failing, neither is live.
+**Pick up next: the two-phone test for v1.27.0 / v1.28.0.** It is the one thing
+those builds still lack, and it is more interesting than usual — a goal
+contribution is the first user action that writes into **two collections that
+merge independently** (`expenses` and `goals.contributions`). Use the airplane-
+mode protocol from the 3C-2 verification, or `pushImportant` and the 8s autosave
+upload before the devices can diverge.
 
-**Pick up next:** **5a is complete.** Remaining: the two deliberate sync holds —
+After that: **5a is complete.** Remaining work is the two deliberate sync holds —
 **3C-3** (`payPeriods.actualStarts` per-record merge) and the **Durable Object
-having no automated test** — and **5b** (plan-vs-actual in `UnaccountedSheet`),
-which now has an extra input: see the reconciliation note below.
+having no automated test** — plus **5b** (plan-vs-actual in `UnaccountedSheet`),
+which now has an extra input: see the reconciliation note in the v1.28.0 section.
 
 ## Category → goal link (2026-08-06, v1.28.0)
 
