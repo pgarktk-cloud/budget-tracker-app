@@ -33,9 +33,23 @@ its own; none are combined.
      category + title + amount in one tap, conditional autofocus, and a fix to
      the pre-existing `isExtraFunds` leak in the older name chips.
      `suggesttest.cjs` 26/26. See `current-status.md`.
-   - **4b Rapid entry with undo-on-save, then a synced `txTemplates`
-     collection — NEXT UP.** Constraints already in the codebase, so don't
-     re-derive them:
+   - **4b-1 Rapid entry with undo-on-save — DONE**, build `2026.08.06.0002` /
+     v1.25.0. "Save & add another" keeps the sheet open, carries category+date,
+     clears title/note/amount, and the undo toast gained `undoKind:"remove"` so
+     it can reverse an *add*. `addExpenseTx` now returns the new id. Tracked
+     mode only — see `current-status.md` for why Goals/Untracked are excluded.
+   - **4b-2 A synced `txTemplates` collection — DONE**, build
+     `2026.08.06.0003` / v1.26.0. Pinned shortcuts in their own chip row,
+     deduped against Repeat via `excludeKeys`, idempotent pinning that revives
+     a tombstone rather than twinning it, unpin through the existing undo
+     toast. `templatetest.cjs` (17/17). **Note the eighth touch point the list
+     below missed: `BACKUP_ARRAY_KEYS` *and* `BACKUP_OPTIONAL_KEYS`** — since
+     v1.23.0 `validateBackup` gates every cloud pull, so a new collection
+     absent from OPTIONAL_KEYS would make an upgraded device refuse the other
+     phone's document. See `current-status.md`.
+
+   **Build 4 is complete.** Constraints kept here because they remain true of
+   this area of the code:
    - ~~`rankNameSuggestions` already does the ranking the chips need~~ — still
      true, and `recentTxTemplates` now sits beside it for the whole-transaction
      case. Extend one of those two; don't write a third matcher.

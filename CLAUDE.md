@@ -397,6 +397,17 @@ one of them), and pushing stops until a readable document arrives. Any new pull
 path must call it — a second `Array.isArray(remote.plans)` check is the exact
 bug this replaced.
 
+**Adding a synced collection therefore has EIGHT touch points, not seven.** The
+seven `installments` established (`defaultData`, `migrate`, `fingerprint`,
+`tryAutoMergeAll`, `CONFLICT_COLLECTIONS`, `countPendingChanges`,
+`purgeOldTombstones`) plus **both** backup key lists: `BACKUP_ARRAY_KEYS` (if
+present it must be a list) *and* `BACKUP_OPTIONAL_KEYS` (absent is normal, i.e.
+a warning). Because `validateBackup` now gates every cloud pull, omitting the
+second means the device that upgrades **first** starts refusing the other
+phone's document — which has no such key yet. Two healthy devices, sync broken,
+and an error naming a collection the user has never heard of.
+`cloudguardtest.cjs`'s forward-compatibility case is the guard; keep it green.
+
 ## Testing this app
 
 - No test suite, no build step. "Testing" means opening it in a browser.
@@ -411,7 +422,7 @@ bug this replaced.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are fifteen, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are sixteen, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -420,6 +431,8 @@ bug this replaced.
   (transaction-name ranking), `synctest.cjs` (per-setting merge resolution),
   `installmenttest.cjs` (installment schedule maths, derived Budget rows,
   payment/payoff/cancel/delete coupling, migration byte-equivalence),
+  `templatetest.cjs` (pinned transaction shortcuts: Repeat/Shortcut dedupe,
+  migration byte-equivalence, merge),
   `importtest.cjs` (`validateBackup` accept/refuse cases), `backupslottest.cjs`
   (rotating pre-import safety slots + quota degradation), `mergetest.cjs`
   (two-device merge: per-category plans, `monthlyPlans`, `household.expenses`),

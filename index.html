@@ -2025,8 +2025,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.24.0";
-const BUILD_ID="2026.08.06.0001";
+const APP_VERSION="1.26.0";
+const BUILD_ID="2026.08.06.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2537,6 +2537,11 @@ function defaultData(){
     // merger for each and a nested child merge would be the wrong shape.
     installments:[],
     installmentPayments:[],
+    /* Pinned transaction shortcuts. Flat and id-keyed like every other synced
+       collection, and deliberately NOT derived from history the way the Repeat
+       chips are: a shortcut exists because someone chose it, so it must survive
+       a quiet month and reach the other person's phone. */
+    txTemplates:[],
   };
 }
 
@@ -2843,6 +2848,18 @@ function migrate(d){
     if(!x.updatedAt)x.updatedAt="2000-01-01T00:00:00.000Z";
   });
   if(!Array.isArray(d.installmentPayments))d.installmentPayments=[];
+  /* Pinned transaction shortcuts (v1.26.0). Nothing to backfill — the
+     collection is new, so every existing document gets an empty array and
+     fingerprint() omits it while empty, keeping the upgrade byte-identical.
+     `ord` is NOT invented here for the same reason it isn't for expenses:
+     absent means "unplaced", and creation order is what `createdAt` records. */
+  if(!Array.isArray(d.txTemplates))d.txTemplates=[];
+  d.txTemplates.forEach(t=>{
+    if(!t.owner)t.owner="me";
+    if(t.note===undefined)t.note="";
+    if(!t.createdAt)t.createdAt=t.updatedAt||"2000-01-01T00:00:00.000Z";
+    if(!t.updatedAt)t.updatedAt="2000-01-01T00:00:00.000Z";
+  });
   /* `sequence` is backfilled by due date within a plan, but actualAmount and
      paidDate are deliberately NOT defaulted — their absence means "not paid",
      the same way an expense's absent `ord` means "unplaced". */
@@ -2882,11 +2899,17 @@ function migrate(d){
    real files without a browser. Never mutates its argument. */
 const BACKUP_ARRAY_KEYS=["plans","expenses","goals","investments","banks","assets",
   "targets","mp2DividendRates","monthlyPlans","bills","billAdjustments",
-  "installments","installmentPayments","history","portHistory","snapshots"];
+  "installments","installmentPayments","txTemplates","history","portHistory","snapshots"];
 /* Collections whose absence is normal in an older backup (the feature that
-   introduced them post-dates it). `plans` is not here — it is required. */
-const BACKUP_OPTIONAL_KEYS=["installments","installmentPayments","billAdjustments",
-  "bills","targets","mp2DividendRates","snapshots","monthlyPlans"];
+   introduced them post-dates it). `plans` is not here — it is required.
+
+   Both lists matter for `cloudDocProblem`, which reuses this function for every
+   document arriving from the cloud: being in ARRAY_KEYS means "if present it
+   must be a list" (an error), and being in OPTIONAL_KEYS means "absent is
+   fine" (a warning, which cloudDocProblem drops). A new collection must be in
+   BOTH or the other phone gets locked out the moment it upgrades. */
+const BACKUP_OPTIONAL_KEYS=["installments","installmentPayments","txTemplates",
+  "billAdjustments","bills","targets","mp2DividendRates","snapshots","monthlyPlans"];
 
 function validateBackup(obj){
   const errors=[],warnings=[];
@@ -3288,6 +3311,7 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
          they made, which would otherwise cost one KV write per device. */
       installments:(rest.installments||[]).length?sortedById(rest.installments):undefined,
       installmentPayments:(rest.installmentPayments||[]).length?sortedById(rest.installmentPayments):undefined,
+      txTemplates:(rest.txTemplates||[]).length?sortedById(rest.txTemplates):undefined,
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
       history:sortedByKey(hist,h=>h.month||""),
@@ -3617,6 +3641,7 @@ function tryAutoMergeAll(local,remote){
       billAdjustments:mergeArrayById(local.billAdjustments,remote.billAdjustments),
       installments:mergeArrayById(local.installments,remote.installments),
       installmentPayments:mergeArrayById(local.installmentPayments,remote.installmentPayments),
+      txTemplates:mergeArrayById(local.txTemplates,remote.txTemplates),
       monthlyPlans:mergeKeyedByTs(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
@@ -3668,6 +3693,7 @@ const CONFLICT_COLLECTIONS=[
   {key:"billAdjustments",label:"Bills Reserve adjustments",nameOf:a=>`${a.amount>=0?"+":""}${a.amount||0}${a.date?` (${a.date})`:""}`},
   {key:"installments",label:"Installments",nameOf:i=>`${i.name||"Installment"}${i.provider?` — ${installmentProviderLabel(i)}`:""}${i.originalAmount!=null?` (${Number(i.originalAmount).toLocaleString()})`:""}`},
   {key:"installmentPayments",label:"Installment payments",nameOf:p=>`#${p.sequence||"?"}${p.dueDate?` due ${p.dueDate}`:""}${p.scheduledAmount!=null?` — ${Number(p.scheduledAmount).toLocaleString()}`:""}`},
+  {key:"txTemplates",label:"Transaction shortcuts",nameOf:t=>`${t.name||"Shortcut"}${t.amount!=null?` — ${Number(t.amount).toLocaleString()}`:""}`},
   /* household.expenses is NESTED, hence `get`. It is id-keyed and soft-deleted
      exactly like every other collection here and was simply never added — so
      it merged, and counted toward the pending badge via a hand-written special
@@ -3959,8 +3985,18 @@ function App(){
     });
     pushImportantRef.current();
   };
+  /* Undoing an ADD is the mirror of undoing a delete, and the toast had only
+     ever needed the second one. Rapid entry (v1.25.0) writes rows the user has
+     not reviewed, so it needs the first: `undoKind:"remove"` tombstones the row
+     instead of restoring it.
+
+     Deliberately NOT routed through removeExpenseTx: that raises its own
+     "Deleted …" toast, which would tell the user they deleted something they
+     were only taking back. This path is silent, and the row is a plain tracked
+     expense by construction — rapid entry is tracked-mode only, so none of
+     removeExpenseTx's installment-link handling can apply. */
   const undoTimerRef=useRef(null);
-  const[undoAction,setUndoAction]=useState(null); // {label,collection,id,childKey?,childId?} | null
+  const[undoAction,setUndoAction]=useState(null); // {label,collection,id,childKey?,childId?,undoKind?} | null
   const triggerUndo=(label,restoreArgs)=>{
     if(undoTimerRef.current)clearTimeout(undoTimerRef.current);
     setUndoAction({label,...restoreArgs});
@@ -3968,7 +4004,15 @@ function App(){
   };
   const performUndo=()=>{
     if(!undoAction)return;
-    restoreRecord(undoAction.collection,undoAction.id,undoAction.childKey,undoAction.childId);
+    if(undoAction.undoKind==="remove"){
+      const{collection,id}=undoAction;
+      const now=new Date().toISOString();
+      setData(d=>({...d,[collection]:(d[collection]||[]).map(x=>
+        x.id===id?{...x,deletedAt:now,updatedAt:now}:x)}));
+      pushImportantRef.current();
+    }else{
+      restoreRecord(undoAction.collection,undoAction.id,undoAction.childKey,undoAction.childId);
+    }
     if(undoTimerRef.current)clearTimeout(undoTimerRef.current);
     setUndoAction(null);
   };
@@ -3996,6 +4040,7 @@ function App(){
       mp2DividendRates:(d.mp2DividendRates||[]).filter(fresh),
       installments:(d.installments||[]).filter(fresh),
       installmentPayments:(d.installmentPayments||[]).filter(fresh),
+      txTemplates:(d.txTemplates||[]).filter(fresh),
       household:d.household?{...d.household,expenses:(d.household.expenses||[]).filter(fresh)}:d.household,
     };
   };
@@ -5330,10 +5375,20 @@ function App(){
      boosts that category's effective budget in the Expenses tab without
      ever touching the category's base amount/percentage in the Budget tab. */
   const expenses=(data.expenses||[]).filter(e=>!e.deletedAt);
+  /* Returns the new row's id, which rapid entry needs so its undo toast can
+     target the row it just wrote.
+
+     `uid()` is hoisted OUT of the updater deliberately: an updater must be a
+     pure function of the previous state, and React may invoke it more than
+     once. Minting the id inside meant two invocations produced two different
+     ids for one logical insert. Nothing depended on that before, but returning
+     the id makes it observable, and the pure version is correct either way. */
   const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>{
     const now=new Date().toISOString();
-    setData(d=>({...d,expenses:[...(d.expenses||[]),{id:uid(),catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,createdAt:now,updatedAt:now}]}));
+    const id=uid();
+    setData(d=>({...d,expenses:[...(d.expenses||[]),{id,catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,createdAt:now,updatedAt:now}]}));
     pushImportantRef.current();
+    return id;
   };
   const updateExpenseTx=(id,patch)=>{
     setData(d=>({...d,expenses:(d.expenses||[]).map(e=>{
@@ -5372,6 +5427,37 @@ function App(){
       ?applyInstallmentExpenseDelete(d,{expenseId:id,now:new Date().toISOString()})
       :{...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)});
     if(e)triggerUndo(`Deleted "${e.name||"transaction"}"`,{collection:"expenses",id});
+    pushImportantRef.current();
+  };
+
+  /* Pinned transaction shortcuts. Deliberately thin: a shortcut is inert data
+     that fills a form, so there is no coupling to protect and no reason for a
+     module-scope apply* pair like installments needed.
+
+     Pinning is idempotent on (owner,name,catId) — re-pinning an existing
+     shortcut updates its amount rather than creating a twin, because the row
+     is keyed by what the user recognises, not by an id they never see. A
+     TOMBSTONED match is revived rather than left dead beside a new record, so
+     pin/unpin/pin doesn't accumulate junk that syncs forever. */
+  const pinTxTemplate=({catId,name,note,amount,owner=budgetOwner})=>{
+    if(!catId||!name||!(Number(amount)>0))return;
+    const now=new Date().toISOString();
+    setData(d=>{
+      const list=d.txTemplates||[];
+      const hit=list.find(t=>(t.owner||"me")===owner&&t.catId===catId&&t.name===name);
+      if(hit)return{...d,txTemplates:list.map(t=>t===hit
+        ?{...t,amount:Number(amount),note:note||"",deletedAt:null,updatedAt:now}:t)};
+      return{...d,txTemplates:[...list,{id:uid(),owner,catId,name,note:note||"",
+        amount:Number(amount),createdAt:now,updatedAt:now}]};
+    });
+    pushImportantRef.current();
+  };
+  const removeTxTemplate=id=>{
+    const t=(data.txTemplates||[]).find(x=>x.id===id);
+    const now=new Date().toISOString();
+    setData(d=>({...d,txTemplates:(d.txTemplates||[]).map(x=>
+      x.id===id?{...x,deletedAt:now,updatedAt:now}:x)}));
+    if(t)triggerUndo(`Removed shortcut "${t.name||"Shortcut"}"`,{collection:"txTemplates",id});
     pushImportantRef.current();
   };
 
@@ -6001,7 +6087,7 @@ function App(){
           {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current(),
             installments,installmentPayments,onOpenInstallment:openInstallment}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
-            installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense}}/>}
+            installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates:data.txTemplates}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,profile,setProfile:setProfileSynced,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
@@ -8172,8 +8258,32 @@ function rankNameSuggestions(names,query,limit=6){
    Deduped on `name|catId`, not name alone: the same name under two categories
    is genuinely two different repeats ("Top-up" against Transport and against
    Phone), and collapsing them would silently pick one category for both. */
-function recentTxTemplates(expenses,owner,{limit=8,catIds=null}={}){
+/* Pinned shortcuts for one owner, oldest-pinned first so the row doesn't
+   reshuffle under someone's thumb as they add more. Same category filter as
+   recentTxTemplates and for the same reason: a shortcut whose category has been
+   deleted from the plan would fill a catId the dropdown can't show.
+
+   Kept separate from the derived Repeat list rather than merged into it — a
+   shortcut is a thing the user made and can delete, a repeat is an observation
+   about history, and one row that sometimes offers a delete affordance is the
+   overloading this app already decided against for the name chips. */
+function liveTxTemplates(templates,owner,{catIds=null}={}){
   const ok=catIds?(catIds instanceof Set?catIds:new Set(catIds)):null;
+  return(templates||[]).filter(t=>
+    t&&!t.deletedAt&&(t.owner||"me")===owner
+    &&t.name&&t.catId&&Number(t.amount)>0
+    &&(!ok||ok.has(t.catId)))
+    .sort((a,b)=>String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
+}
+
+/* Is this exact (name,catId) already pinned? Drives both the "already pinned"
+   state of the pin button and the de-duplication of the Repeat row against the
+   Shortcuts row — without it the same entry shows twice, one row apart. */
+function txTemplateKey(t){return`${t.name}|${t.catId}`;}
+
+function recentTxTemplates(expenses,owner,{limit=8,catIds=null,excludeKeys=null}={}){
+  const ok=catIds?(catIds instanceof Set?catIds:new Set(catIds)):null;
+  const skip=excludeKeys?(excludeKeys instanceof Set?excludeKeys:new Set(excludeKeys)):null;
   const rows=(expenses||[]).filter(e=>
     e&&!e.deletedAt&&!e.isTransfer&&!e.isExtraFunds
     &&(e.owner||"me")===owner
@@ -8187,6 +8297,7 @@ function recentTxTemplates(expenses,owner,{limit=8,catIds=null}={}){
   const seen=new Map();
   for(const e of rows){
     const key=`${e.name}|${e.catId}`;
+    if(skip&&skip.has(key))continue;
     if(!seen.has(key))seen.set(key,{key,name:e.name,catId:e.catId,amount:Number(e.amount),date:e.date||""});
     if(seen.size>=limit)break;
   }
@@ -8244,7 +8355,7 @@ function UnaccountedSheet({monthLabel,income,parts,total,fmt,onClose}){
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense}){
+function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -8481,9 +8592,19 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      the categories the VIEWED month's plan actually has, so a chip can never
      fill a catId the dropdown below has no option for (see recentTxTemplates).
      Only tracked categories: the tracked form is the only thing these refill. */
+  const trackedCatIds=useMemo(()=>allCatOptions.filter(c=>c.tracked).map(c=>c.id),[allCatOptions]);
+  /* Pinned shortcuts, and the Repeat list with those same entries removed —
+     otherwise the identical chip appears in both rows, one line apart. */
+  const shortcutTemplates=useMemo(()=>liveTxTemplates(txTemplates,budgetOwner,{catIds:trackedCatIds})
+  ,[txTemplates,budgetOwner,trackedCatIds]);
+  const shortcutKeys=useMemo(()=>new Set(shortcutTemplates.map(txTemplateKey)),[shortcutTemplates]);
   const repeatTemplates=useMemo(()=>recentTxTemplates(expenses,budgetOwner,
-    {catIds:allCatOptions.filter(c=>c.tracked).map(c=>c.id)})
-  ,[expenses,budgetOwner,allCatOptions]);
+    {catIds:trackedCatIds,excludeKeys:shortcutKeys})
+  ,[expenses,budgetOwner,trackedCatIds,shortcutKeys]);
+  /* Is what's currently typed already pinned? Drives the pin button's state. */
+  const currentIsPinned=useMemo(()=>!!form.catId&&!!form.name
+    &&shortcutKeys.has(txTemplateKey({name:form.name,catId:form.catId}))
+  ,[form.catId,form.name,shortcutKeys]);
 
   const openAdd=(presetCatId)=>{
     setEditTx(null);
@@ -8594,6 +8715,36 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       addContribution(form.goalId,amt,form.note);
     }
     closeForm();
+  };
+
+  /* Rapid entry: save this row and stay in the sheet for the next one.
+
+     Tracked mode only, and that is a scope decision rather than an oversight.
+     A Goals contribution writes TWO records (the transfer row and the goal's
+     own contribution), so a one-record undo would silently leave the goal
+     credited — "undo" has to mean undo. Untracked transfers additionally write
+     `quickTransferLast`. Both are legitimate future work; neither is a
+     one-record insert, which is the only shape this undo can honestly reverse.
+
+     What carries to the next row and what clears is the whole design: category
+     and date STAY (several items from one shop on one day is the case this
+     exists for, and both are one tap to change), title/note/amount CLEAR
+     (they're what differs). Nothing here writes `ord` — an absent `ord` is
+     meaningful, and a rapid burst is exactly where inventing one would reorder
+     someone's day. `createdAt` is stamped once per row by addExpenseTx. */
+  const canRapidSave=!editTx&&addMode==="tracked"&&!!form.catId&&!!form.name&&!!form.amount;
+  const saveAndAddAnother=()=>{
+    if(!canRapidSave)return;
+    const amt=evalMathExpr(form.amount,Number(form.amount)||0);
+    if(!amt)return;
+    const name=form.name;
+    const id=addExpenseTx(form.catId,name,form.note,amt,form.date,budgetOwner);
+    triggerUndo&&triggerUndo(`Saved "${name}"`,{collection:"expenses",id,undoKind:"remove"});
+    setForm(f=>({...f,name:"",note:"",amount:""}));
+    /* Synchronous — this is inside the tap, which is what keeps the iOS
+       keyboard up between rows. Losing it here would cost more taps than the
+       whole feature saves. See focusField. */
+    focusField(nameRef);
   };
 
   /* transaction log grouped by bucket (calendar month or pay period) */
@@ -9154,6 +9305,47 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                 Amount is prefilled and then selected, so a recurring-but-
                 varying cost (groceries) costs one keystroke rather than being
                 a reason not to prefill at all. */}
+            {/* ── Shortcuts: the pinned, synced half of the same idea ──
+                Its own row rather than merged into Repeat, for the reason the
+                name chips stayed separate in v1.24.0: one row that sometimes
+                offers a delete affordance and sometimes doesn't is harder to
+                explain than two rows that each mean one thing. Renders only
+                when the owner has pinned something, so it costs nothing to
+                anyone who never uses it. */}
+            {!editTx&&addMode==="tracked"&&shortcutTemplates.length>0&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Shortcuts</div>
+                <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2,
+                  scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+                  {shortcutTemplates.map(t=>(
+                    <div key={t.id} style={{flexShrink:0,display:"flex",alignItems:"center",
+                      borderRadius:999,background:P.jadeS||"rgba(0,0,0,.05)",maxWidth:215}}>
+                      <button onMouseDown={e=>e.preventDefault()}
+                        onClick={()=>{
+                          setForm(f=>({...f,catId:t.catId,name:t.name,
+                            note:t.note||f.note,amount:String(t.amount)}));
+                          focusField(amountRef);
+                        }}
+                        style={{display:"flex",alignItems:"baseline",gap:6,background:"transparent",
+                          border:"none",padding:"5px 4px 5px 11px",color:P.sub,fontSize:12,minWidth:0}}>
+                        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
+                        <span className="tnum" style={{fontWeight:600,color:P.ink,flexShrink:0}}>{fmt(t.amount)}</span>
+                      </button>
+                      {/* Unpin. Destructive-but-cheap, so it takes the undo
+                          toast rather than a confirm dialog — the same trade
+                          every other delete in this app makes. */}
+                      <button onClick={()=>removeTxTemplate(t.id)}
+                        aria-label={`Remove shortcut ${t.name}`}
+                        style={{background:"transparent",border:"none",padding:"5px 9px 5px 3px",
+                          color:P.sub,opacity:.5,display:"flex",alignItems:"center"}}>
+                        <I.X size={12}/>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {!editTx&&addMode==="tracked"&&repeatTemplates.length>0&&(
               <div style={{marginBottom:14}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Repeat</div>
@@ -9338,6 +9530,40 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                 {editTx?"Save changes":addMode==="goals"?"Add to goal":addMode==="untracked"?"Transfer":isFuture?"Save planned transaction":"Record transaction"}
               </button>
             </div>
+
+            {/* ── rapid entry ──
+                Below the primary rather than beside it: at 390px "Record
+                transaction" and this label side by side squeeze both into two
+                lines. Kept out of the flex row above so the Delete button's
+                layout while editing is untouched.
+                Not `disabled` — a disabled button swallows the blur that
+                commits the amount field's draft (the NumField rule in
+                CLAUDE.md, which this hand-rolled amount input follows too), so
+                it dims and no-ops instead. */}
+            {!editTx&&addMode==="tracked"&&(
+              <button onClick={saveAndAddAnother}
+                style={{width:"100%",marginTop:8,borderRadius:10,padding:"10px 0",
+                  fontSize:14,fontWeight:600,background:"transparent",
+                  border:`1px solid ${P.line}`,color:P.sub,
+                  opacity:canRapidSave?1:.5}}>
+                Save &amp; add another
+              </button>
+            )}
+
+            {/* Pin the current form as a shortcut. Sits under the save actions
+                because it is about the *next* time, not this transaction —
+                putting it up beside the fields implied it changed what gets
+                recorded. Text-only and quiet: it is the rarest action here. */}
+            {!editTx&&addMode==="tracked"&&(
+              <button onClick={()=>pinTxTemplate({catId:form.catId,name:form.name,note:form.note,
+                  amount:evalMathExpr(form.amount,Number(form.amount)||0),owner:budgetOwner})}
+                style={{width:"100%",marginTop:6,background:"transparent",border:"none",
+                  padding:"8px 0",minHeight:36,fontSize:12,fontWeight:600,
+                  color:currentIsPinned?P.jade:P.sub,
+                  opacity:canRapidSave?1:.4}}>
+                {currentIsPinned?"✓ Pinned as a shortcut":"Pin this as a shortcut"}
+              </button>
+            )}
           </div>
         </div>
         </Portal>

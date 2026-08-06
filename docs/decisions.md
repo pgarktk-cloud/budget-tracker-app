@@ -1,5 +1,95 @@
 # Architectural & Technical Decisions
 
+## Chosen and observed are different data, even when they look identical (2026-08-06)
+
+A pinned shortcut and a Repeat chip render as the same chip and fill the same
+form. The obvious move is one list. They are not the same data:
+
+- A **Repeat** entry is an *observation* about recent history. It is derived, it
+  is per-device, and it disappears when you stop doing the thing.
+- A **shortcut** is a *decision*. It must survive a quiet month, and it must
+  reach the other person's phone — which makes it a synced collection with an
+  id, a tombstone and a merge rule.
+
+Storage had to differ, so the honest UI is two rows. This is the third time the
+same call has come up in this feature (name chips vs Repeat, Repeat vs
+Shortcuts) and the answer has been the same each time: **overloading one control
+saves a row of pixels and costs a sentence of explanation.**
+
+**The cost of two rows is that they can show the same entry twice**, one line
+apart, which looks like a bug even though both are correct. So pinning *moves*
+an entry between rows — `recentTxTemplates` takes `excludeKeys` and the pinned
+keys are passed in. Worth stating because the dedupe is not a detail: without it
+the separation would have looked like duplication, and the temptation would have
+been to merge the rows and lose the distinction.
+
+**Pinning is keyed by what the user recognises.** Re-pinning `(owner, name,
+catId)` updates the amount instead of creating a twin, and a tombstoned match is
+*revived* rather than left dead beside a new record. The alternative — key by
+id — is correct in the database and wrong in the head: nobody pins "Jollibee"
+twice on purpose, and pin/unpin/pin should not leave a graveyard that syncs
+forever.
+
+## A new collection has an eighth touch point now, and it's the dangerous one (2026-08-06)
+
+`installments` established seven places a synced collection must be wired into,
+and that list was written down. It is now incomplete, because v1.23.0 put
+`validateBackup` on the critical path for **every document arriving from the
+cloud**, not just imported files.
+
+So a new collection must also be added to **both** backup key lists:
+`BACKUP_ARRAY_KEYS` (if present it must be a list — an error) and
+`BACKUP_OPTIONAL_KEYS` (its absence is normal — a warning, which
+`cloudDocProblem` drops).
+
+Missing the second is the sharp one, and the failure is asymmetric in the worst
+way: the device that upgrades **first** starts refusing the other phone's
+document, because that phone has no `txTemplates` key yet. Sync would break
+between two entirely healthy devices, and the error would name a collection the
+user has never heard of.
+
+The general lesson: **a validation gate that was written for one entry point
+becomes a constraint on every entry point it is later reused at.** The
+forward-compatibility assertion in `cloudguardtest.cjs` exists for exactly this,
+and it staying green is what proves the wiring is right.
+
+## An undo that only runs one direction is half a mechanism (2026-08-06)
+
+The undo toast had shipped a dozen call sites deep and looked general. It was
+not: `triggerUndo` stored restore arguments and `performUndo` called
+`restoreRecord`, so the only thing it could express was *un-delete*. That was
+invisible for as long as every undoable action happened to be a delete.
+
+Rapid entry writes rows nobody has reviewed, so it needs the mirror — undo an
+*add* — and the shape of the fix mattered. Routing it through the existing
+`removeExpenseTx` would have been one line and would have raised that function's
+own *"Deleted …"* toast, telling the user they deleted something they were only
+taking back. **A message that is technically accurate about the mechanism and
+wrong about the intent is still a lie**, so the undo-an-add path tombstones
+silently.
+
+It tombstones rather than splicing for the ordinary reason: a hard delete cannot
+survive a merge, because the other device's copy resurrects it.
+
+**Tracked mode only, and the boundary is "can this be honestly reversed".** A
+Goals contribution writes two records — the transfer row and the goal's own
+contribution — so a one-record undo leaves the goal credited. Untracked
+transfers also write `quickTransferLast`. Both could be supported; neither is a
+single-record insert, and offering an Undo that only partly undoes is worse than
+not offering the button.
+
+## An updater that mints an id is not a pure updater (2026-08-06)
+
+`addExpenseTx` called `uid()` **inside** its `setData` updater. React may invoke
+an updater more than once, and each invocation would have produced a different
+id for one logical insert. Nothing had ever depended on it, so nothing had ever
+failed.
+
+Needing the id as a return value is what made the latent bug reachable, and the
+fix — hoist `uid()` above `setData` — is what the rule already required. Worth
+recording because the diff looks cosmetic: **the reason to move it is not that
+it's tidier, it's that an updater must be a pure function of previous state.**
+
 ## A prefilled field is only useful if it's cheap to overwrite (2026-08-06)
 
 The Repeat chips refill a whole past transaction. The obvious objection is the

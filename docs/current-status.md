@@ -1,15 +1,173 @@
 # Current Status
 
-_Last updated: 2026-08-06 (Repeat chips + autofocus, v1.24.0)_
+_Last updated: 2026-08-06 (pinned shortcuts, v1.26.0)_
 
-**Live build:** `2026.08.06.0001` / v1.24.0. **Committed? No — v1.24.0 is
-working-tree only at time of writing; it has passed the runners and a sandbox
-pass but has not been committed, pushed or opened on a phone.**
-**Pick up next:** Build 4b — rapid entry with undo-on-save, then the synced
-`txTemplates` collection (see `roadmap.md`). Sync remains closed out apart from
-two deliberate holds: **3C-3** (`payPeriods.actualStarts` per-record merge) and
-the **Durable Object having no automated test**. Neither is a bug; both are
-their own build.
+**Live build:** `2026.08.06.0003` / v1.26.0. v1.24.0 is deployed and confirmed
+on a real phone, including the iOS keyboard behaviour the sandbox could not
+prove. **v1.25.0 and v1.26.0 have not been opened on a phone yet.**
+**Pick up next:** **Build 4 is complete.** Nothing is queued. The open items
+are the two deliberate sync holds — **3C-3** (`payPeriods.actualStarts`
+per-record merge) and the **Durable Object having no automated test** — plus
+5a (category→goal link) and 5b (plan-vs-actual in `UnaccountedSheet`), both
+still only scoped. Neither hold is a bug; all four are their own build.
+
+## Pinned transaction shortcuts (2026-08-06, v1.26.0)
+
+Build `2026.08.06.0003` / v1.26.0. Second half of Build 4b, and the last piece
+of Build 4. **A new synced collection**, so unlike the two builds before it this
+one does touch the data model.
+
+**A shortcut is chosen; a Repeat chip is observed.** That distinction is the
+whole feature. Repeat is derived from recent history, so it forgets anything you
+haven't done lately and it is per-device by definition. `data.txTemplates` is a
+record someone pinned on purpose: it survives a quiet month, and it reaches the
+other person's phone.
+
+`{id, owner, catId, name, amount, note, createdAt, updatedAt, deletedAt?}`.
+
+**Its own row, not merged into Repeat.** Same reasoning as v1.24.0's name chips:
+one row that sometimes offers a delete affordance and sometimes doesn't is
+harder to explain than two rows that each mean one thing. The Shortcuts row
+renders only when the owner has pinned something, so it costs nothing to anyone
+who never uses it.
+
+**The two rows must not show the same entry twice.** `recentTxTemplates` gained
+`excludeKeys`, and the view passes it the pinned `name|catId` keys — so pinning
+an entry *moves* it from Repeat to Shortcuts rather than duplicating it, and
+unpinning moves it back. Both directions are asserted in the runner and were
+watched in the browser.
+
+**Pinning is idempotent on `(owner,name,catId)`.** Re-pinning updates the amount
+rather than creating a twin, because the row is keyed by what the user
+recognises, not by an id they never see. A **tombstoned** match is revived
+rather than left dead beside a new record, so pin/unpin/pin doesn't accumulate
+junk that syncs forever.
+
+**Unpinning tombstones and takes the undo toast** rather than a confirm dialog —
+the trade every other delete in this app makes. It reuses the *restore* half of
+the toast, which the rapid-entry build (v1.25.0) had left untouched.
+
+### The seven touch points, plus one the roadmap didn't list
+`defaultData`, `migrate`, `fingerprint`, `tryAutoMergeAll`,
+`CONFLICT_COLLECTIONS`, `countPendingChanges` (via that list) and
+`purgeOldTombstones` — the same set `installments` needed.
+
+The eighth is **`BACKUP_ARRAY_KEYS` + `BACKUP_OPTIONAL_KEYS`**, and it is the
+one that could have hurt. Since v1.23.0 `validateBackup` is on the critical path
+for *every document arriving from the cloud*, not just imports. A new collection
+must be in **both** lists: `ARRAY_KEYS` so a corrupt value is an error,
+`OPTIONAL_KEYS` so its *absence* is only a warning — which `cloudDocProblem`
+drops. Missing the second would have made this build refuse the other phone's
+document the moment one device upgraded first. `cloudguardtest.cjs` stays green,
+which is what proves it.
+
+**Emitted from `fingerprint()` only when non-empty**, so an existing document is
+byte-identical after the upgrade and no device pays a Cloudflare KV write for a
+collection it hasn't used. Asserted directly.
+
+### Verified
+`node parsecheck.cjs` OK. **Sixteen runners green**, including new
+**`templatetest.cjs` (17/17, committed)** — the pure helpers, the Repeat/Shortcut
+dedupe in both directions, migrate defaults and idempotence, the byte-identical
+upgrade, and merge behaviour (two devices pinning different shortcuts both
+survive; an unpin is not resurrected by a stale copy; the newer edit wins).
+
+Run against `HEAD` it fails immediately on its slice marker, which is the
+intended signal that it is testing code that did not previously exist.
+
+Sandbox, fresh origin, seeded from live plan ids:
+- no Shortcuts row until something is pinned; pin button reads *Pin this as a
+  shortcut* and flips to *✓ Pinned as a shortcut*
+- pinning moved Jollibee **out of Repeat and into Shortcuts** — not duplicated
+- tapping a shortcut filled category/title/amount, focus landed on Amount
+  **inside the gesture** with the figure selected (the v1.24.0 rule)
+- re-pinning at a different amount **updated** the record — still one row
+- the × unpinned it: live 0, one tombstone, Shortcuts row gone, Jollibee back in
+  Repeat, toast *Removed shortcut "Jollibee"* — and UNDO restored it with its
+  amount intact
+- unpin → re-pin **revived the tombstone**: one record total, not two
+- survived a reload; dark mode legible (jade-tinted shortcut chips vs neutral
+  repeat chips); no console errors, no runtime exceptions
+
+**Not verified on a phone.** Three things to look at on the first real open:
+the version reads 1.26.0, pinning survives to the *other* device (this is the
+first of the three builds that syncs anything), and the × is comfortable to hit
+without mis-tapping the chip.
+
+## Rapid entry: "Save & add another" (2026-08-06, v1.25.0)
+
+Build `2026.08.06.0002` / v1.25.0. First half of Build 4b. **No data-model
+change, no `migrate()` change, no `fingerprint()` change** — the rows it writes
+are ordinary expenses. Rollback-able on its own.
+
+A secondary button under the primary writes the row and **stays in the sheet**
+for the next one, so a shop run is one sheet rather than one sheet per item.
+
+**What carries and what clears is the design.** Category and date **stay** —
+several items from one shop on one day is the case this exists for, and both are
+one tap to change. Title, note and amount **clear**, because they are what
+differs. Nothing writes `ord`: an absent `ord` is meaningful, and a rapid burst
+is precisely where inventing one would reorder someone's day. `createdAt` is
+stamped once per row by `addExpenseTx`, unchanged.
+
+**The undo toast had to learn a second verb.** It was delete-only —
+`triggerUndo` stored restore arguments and `performUndo` called `restoreRecord`,
+i.e. it could only ever *un*-tombstone. Rapid entry writes rows the user has not
+reviewed, so it needs the mirror: `undoKind:"remove"` tombstones the row instead.
+
+Deliberately **not** routed through `removeExpenseTx`, which raises its own
+*"Deleted …"* toast — telling someone they deleted a thing they were only taking
+back is a worse lie than no message. The undo path is silent, and the row is a
+plain tracked expense by construction, so none of `removeExpenseTx`'s
+installment-link handling can apply.
+
+**`addExpenseTx` now returns the new id**, which rapid entry needs to target its
+undo. Minting `uid()` moved **out** of the `setData` updater in the process: an
+updater must be a pure function of previous state and React may invoke it more
+than once, so minting inside meant two invocations produced two different ids
+for one logical insert. Nothing depended on that before; returning the id makes
+it observable, and the pure version is correct either way.
+
+**Tracked mode only, and that is a scope decision.** A Goals contribution writes
+*two* records (the transfer row and the goal's own contribution), so a
+one-record undo would leave the goal credited — "undo" has to mean undo.
+Untracked transfers additionally write `quickTransferLast`. Both are legitimate
+future work; neither is the single-record insert this undo can honestly reverse.
+
+**Not `disabled` when the form is incomplete** — a disabled button swallows the
+blur that commits the amount field's draft (the `NumField` rule, which the
+hand-rolled amount input follows too). It dims to `.5` and no-ops.
+
+### Verified
+`node parsecheck.cjs` OK. **All fifteen runners green** (unchanged — this build
+adds no pure helper; its logic is the mutation coupling, which the sandbox
+exercises end to end).
+
+Driven in a sandbox on a fresh origin:
+- **the loop** — a Repeat chip filled the row, "Save & add another" wrote it and
+  the sheet **stayed open**; focus landed on Title **inside the gesture** (the
+  iOS keyboard rule from v1.24.0), category (`Allowance`) and date carried,
+  title/note/amount cleared
+- **two consecutive saves** — "Coffee" 18 then "Bread" 12, both written, both
+  keeping the carried category, **neither carrying an `ord`**, `createdAt` set
+- **undo** — tapping UNDO took the live count 2 → 1 and left exactly one
+  tombstone (soft delete, so it still merges across devices), raised **no**
+  "Deleted" toast, and left the sheet open
+- **incomplete form** — tapping the button with an empty form changed nothing
+- **the primary is unaffected** — "Record transaction" still writes and closes
+- layout: buttons stacked, equal width, 40px tap target, no horizontal overflow
+  on the sheet or the page; the Repeat row scrolls within itself as intended
+- dark mode legible; no console errors, no runtime exceptions
+
+**One fixture lesson worth reusing.** The first seed pointed at category ids
+copied from an earlier sandbox. A fresh origin mints new ones, so the Repeat row
+rendered empty — which was **the `catIds` filter working correctly** (a
+transaction whose category the plan doesn't have is not offerable), not a bug.
+Seed category ids by reading them out of the live plan, never by hardcoding.
+
+**Not verified on a phone.** The thing to check is that the keyboard stays up
+between consecutive rows — that is the entire point of the feature, and it is
+the one behaviour a desktop sandbox cannot confirm.
 
 ## Faster transaction entry, part 1: Repeat + autofocus (2026-08-06, v1.24.0)
 
