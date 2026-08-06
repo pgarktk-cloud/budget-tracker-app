@@ -2025,8 +2025,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.23.0";
-const BUILD_ID="2026.08.05.0008";
+const APP_VERSION="1.24.0";
+const BUILD_ID="2026.08.06.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -8146,6 +8146,53 @@ function rankNameSuggestions(names,query,limit=6){
   return hits.map(h=>h.n).slice(0,limit);
 }
 
+/* Repeatable past transactions, most recent first — the data behind the
+   "Repeat" chips in the add-transaction modal. One tap refills category, name
+   AND amount, which is what makes a recurring entry two taps instead of six.
+
+   Pure + module scope so suggesttest.cjs can slice it out (see CLAUDE.md).
+
+   Three exclusions, none of them cosmetic:
+   - `isExtraFunds` rows are money coming IN, stored as ordinary expenses.
+     Offering one here would let a tap record incoming money as spending — the
+     exact trap CLAUDE.md records against new reduces over `expenses`.
+   - `isTransfer` rows (untracked transfers, goal contributions, installment
+     payments) don't belong to a plan category at all; their `catId` is a goal
+     or installment id, so replaying one through the tracked form would write a
+     tracked expense against an id no envelope will ever match.
+   - tombstones. The caller already filters them (`index.html`'s App-level
+     `expenses`), but this is defensive: a pure helper that silently offers
+     deleted rows when handed a raw array is a trap for the next caller.
+
+   `catIds`, when given, keeps only rows whose category still exists in the
+   viewed month's plan. Without it a chip could fill a `catId` the dropdown has
+   no option for — the select would render blank and Save would write a
+   dangling reference.
+
+   Deduped on `name|catId`, not name alone: the same name under two categories
+   is genuinely two different repeats ("Top-up" against Transport and against
+   Phone), and collapsing them would silently pick one category for both. */
+function recentTxTemplates(expenses,owner,{limit=8,catIds=null}={}){
+  const ok=catIds?(catIds instanceof Set?catIds:new Set(catIds)):null;
+  const rows=(expenses||[]).filter(e=>
+    e&&!e.deletedAt&&!e.isTransfer&&!e.isExtraFunds
+    &&(e.owner||"me")===owner
+    &&e.name&&e.catId&&Number(e.amount)>0
+    &&(!ok||ok.has(e.catId)));
+  /* date first, then createdAt — the same "when did this happen / when was it
+     entered" pair compareTxForDisplay uses. `ord` is deliberately ignored: it
+     is a within-a-day display preference, not a statement about recency. */
+  rows.sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))
+    ||String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  const seen=new Map();
+  for(const e of rows){
+    const key=`${e.name}|${e.catId}`;
+    if(!seen.has(key))seen.set(key,{key,name:e.name,catId:e.catId,amount:Number(e.amount),date:e.date||""});
+    if(seen.size>=limit)break;
+  }
+  return[...seen.values()];
+}
+
 /* Explains the "unaccounted" figure in the Expenses hero. Portalled for the
    same reason as ConfirmDialog/AdjustReserveSheet — ExpenseTrackerView renders
    inside TabPane, whose stuck transform would otherwise anchor this to the tab
@@ -8400,10 +8447,16 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   const ownerGoals=useMemo(()=>(goals||[]).filter(g=>g.owner===budgetOwner),[goals,budgetOwner]);
 
   /* recurring-name memory: previously used transaction names, most recent first,
-     scoped to this owner so suggestions stay relevant */
+     scoped to this owner so suggestions stay relevant.
+
+     `!e.isExtraFunds` was missing until v1.24.0 and is not cosmetic: extra-funds
+     rows are money coming IN, stored as ordinary expenses, so the list offered
+     "Wife sent extra" as a title for a *spend*. Found by seeding one in the
+     sandbox while testing the Repeat chips — the same classification trap
+     CLAUDE.md records against any reduce over `expenses`. */
   const recentNames=useMemo(()=>{
     const seen=new Map();
-    [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.name&&!e.isTransfer)
+    [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.name&&!e.isTransfer&&!e.isExtraFunds)
       .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
       .forEach(e=>{if(!seen.has(e.name))seen.set(e.name,e.catId);});
     return[...seen.keys()].slice(0,40);
@@ -8416,13 +8469,21 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     const out=[];const seen=new Set();
     const push=n=>{if(n&&!seen.has(n)){seen.add(n);out.push(n);}};
     if(form.catId){
-      [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer)
+      [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer&&!e.isExtraFunds)
         .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
         .forEach(e=>push(e.name));
     }
     recentNames.forEach(push);
     return out;
   },[expenses,budgetOwner,form.catId,recentNames]);
+
+  /* "Repeat" chips — the whole past transaction, not just its name. Scoped to
+     the categories the VIEWED month's plan actually has, so a chip can never
+     fill a catId the dropdown below has no option for (see recentTxTemplates).
+     Only tracked categories: the tracked form is the only thing these refill. */
+  const repeatTemplates=useMemo(()=>recentTxTemplates(expenses,budgetOwner,
+    {catIds:allCatOptions.filter(c=>c.tracked).map(c=>c.id)})
+  ,[expenses,budgetOwner,allCatOptions]);
 
   const openAdd=(presetCatId)=>{
     setEditTx(null);
@@ -8446,6 +8507,49 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   };
   const closeForm=()=>{setShowAdd(false);setEditTx(null);};
   const addDlgRef=useDialogA11y(closeForm,showAdd);
+
+  /* Field refs for the entry-speed affordances: a Repeat tap lands the caret in
+     Amount (already selected, so a different figure is one keystroke), and
+     opening the modal from an envelope lands it in Title. */
+  const nameRef=useRef(null),amountRef=useRef(null);
+  /* SYNCHRONOUS when the field is already mounted, and that is the whole point:
+     iOS Safari only raises the keyboard for a focus() call inside the user
+     gesture that triggered it. A Repeat tap re-fills a form whose Amount input
+     is already in the DOM (React reuses the element — only its value changes),
+     so focusing it inline both works and opens the keyboard.
+
+     The deferred branch is for the modal-open case only, where the field does
+     not exist yet at handler time. It uses setTimeout(0) rather than
+     requestAnimationFrame because rAF is throttled in a background or
+     non-foreground tab — which is exactly how this failed under automation.
+     That branch is outside the gesture, so on iOS it moves the caret without
+     raising the keyboard; that is acceptable for "you still have to type a
+     title" and is not something a focus call can fix. */
+  const focusField=(ref)=>{
+    /* Focus and selection are deliberately split across the commit.
+       focus() must be synchronous (the iOS keyboard rule above), but select()
+       must NOT be: at gesture time the input still holds the OLD value, and
+       React setting the new one immediately afterwards collapses any selection
+       to the caret. Selecting on the next tick is what actually leaves "250"
+       highlighted so one keystroke replaces it. */
+    const el=ref.current;
+    if(el)el.focus();
+    setTimeout(()=>{
+      const e2=ref.current;if(!e2)return;
+      if(document.activeElement!==e2)e2.focus();
+      if(e2.select)try{e2.select();}catch(e){/* not every input supports select */}
+    },0);
+  };
+  /* Autofocus only when the category is already decided — i.e. the modal was
+     opened from an envelope, so Title is genuinely the next thing to type.
+     With no category chosen, Title is the WRONG field (the select above it is
+     the next step) and stealing focus would pop the keyboard over the list the
+     user still has to pick from. Edits are left alone: useDialogA11y focuses
+     the dialog, which is what a screen reader expects on open. */
+  useEffect(()=>{
+    if(!showAdd||editTx)return;
+    if(addMode==="tracked"&&form.catId)focusField(nameRef);
+  },[showAdd]);
 
   /* The transaction being edited, and the installment it belongs to (if any).
      A linked row is edited through applyInstallmentExpenseEdit so the payment's
@@ -9041,6 +9145,37 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
               </div>
             )}
 
+            {/* ── Repeat: refill a whole past transaction in one tap ──
+                Deliberately a SEPARATE affordance from the name chips under
+                Title, which still fill the name only. Two controls with two
+                honest meanings beats one chip whose effect depends on where it
+                came from — and it leaves the name chips free to keep narrowing
+                as you type, which is their whole job.
+                Amount is prefilled and then selected, so a recurring-but-
+                varying cost (groceries) costs one keystroke rather than being
+                a reason not to prefill at all. */}
+            {!editTx&&addMode==="tracked"&&repeatTemplates.length>0&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Repeat</div>
+                <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2,
+                  scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+                  {repeatTemplates.map(t=>(
+                    <button key={t.key} onMouseDown={e=>e.preventDefault()}
+                      onClick={()=>{
+                        setForm(f=>({...f,catId:t.catId,name:t.name,amount:String(t.amount)}));
+                        focusField(amountRef);
+                      }}
+                      style={{flexShrink:0,display:"flex",alignItems:"baseline",gap:6,
+                        borderRadius:999,padding:"5px 11px",background:"rgba(0,0,0,.05)",
+                        border:"none",color:P.sub,fontSize:12,maxWidth:190}}>
+                      <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
+                      <span className="tnum" style={{fontWeight:600,color:P.ink,flexShrink:0}}>{fmt(t.amount)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* ── category / envelope / goal dropdown, dynamic by mode ──
                 A linked installment row shows its plan read-only instead: the
                 category, the owner and the link are all fixed, because moving
@@ -9110,7 +9245,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
 
             <div style={{marginBottom:12}}>
               <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Title{addMode==="goals"&&!editTx?<span style={{color:P.faint,fontWeight:400}}> (optional)</span>:null}</div>
-              <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
+              <input ref={nameRef} value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
                 placeholder={addMode==="goals"&&!editTx?"e.g. Monthly deposit":"e.g. Amazon Now"}
                 style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,
                   background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
@@ -9148,7 +9283,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
             <div style={{display:"flex",gap:8,marginBottom:12}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount ({cur})</div>
-                <input type="text" inputMode="decimal" value={form.amount}
+                <input ref={amountRef} type="text" inputMode="decimal" value={form.amount}
                   onChange={e=>setForm(f=>({...f,amount:e.target.value}))}
                   onBlur={e=>setForm(f=>({...f,amount:e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(f.amount)||0))}))}
                   onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}

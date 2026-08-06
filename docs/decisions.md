@@ -1,5 +1,74 @@
 # Architectural & Technical Decisions
 
+## A prefilled field is only useful if it's cheap to overwrite (2026-08-06)
+
+The Repeat chips refill a whole past transaction. The obvious objection is the
+amount: groceries are 250 one week and 180 the next, so prefilling it is wrong
+about as often as it's right.
+
+The resolution is not to prefill less, it is to make the wrong case cost one
+keystroke — **prefill the amount and select it**. A right guess saves a typed
+figure; a wrong guess costs nothing, because the first digit typed replaces the
+whole thing. Choosing between "always right" and "don't try" was a false choice.
+
+**Repeat is a second control, not a change to the first.** `roadmap.md` had
+flagged that the name chips fill the name only, deliberately, and that changing
+that was a real decision. It stays unchanged. One chip whose effect depends on
+which row it came from is unexplainable; two controls with two meanings are not,
+and the name chips keep the job they're good at — narrowing as you type, which a
+whole-transaction chip cannot do.
+
+**Autofocus had to become conditional to be worth having.** Focusing Title on
+open is right when the modal was opened from an envelope (the category is
+already decided). It is actively wrong from the generic Add button, where the
+next step is the category select and raising the keyboard buries the list the
+user has to read. "Autofocus" as a flat rule would have been a regression half
+the time it fired.
+
+## The iOS keyboard rule is a focus rule, and it decides where focus() goes (2026-08-06)
+
+The first Repeat implementation deferred focus to `requestAnimationFrame`. It
+failed under browser automation, which was luck: rAF is throttled in a
+non-foreground tab, so the bug was visible on a desktop.
+
+The real defect was worse and would not have shown up there at all. **iOS Safari
+raises the keyboard only for a `focus()` call made synchronously inside the user
+gesture that triggered it.** A deferred focus moves the caret and nothing else —
+on the phone this feature exists for, the chip would have looked like it worked
+while saving no typing at all. A feature whose entire value is "fewer taps"
+would have shipped with its main tap still required.
+
+So focus is synchronous. But **`select()` cannot be**, and the reason is React:
+at gesture time the input still holds the *old* value, and the commit that sets
+the new one collapses any selection to the caret. Selecting on the next tick is
+what actually leaves the figure highlighted.
+
+The general shape worth remembering: **`focus()` belongs to the gesture and
+`select()` belongs to the commit.** They look like one operation and are not.
+
+The modal-open autofocus keeps a deferred path because its field genuinely isn't
+mounted yet, and it uses `setTimeout(0)` rather than rAF — same throttling
+lesson. That path can't raise an iOS keyboard, and that limitation is written
+down rather than papered over, because no focus call can fix it.
+
+## The fixture found the older bug (2026-08-06)
+
+The `isExtraFunds` row seeded into the sandbox existed to prove the *new*
+function excluded it. It did — and it also showed up in the *old* name-chip row
+directly below, which had filtered `isTransfer` but never `isExtraFunds` since
+the day it shipped. "Wife sent extra" was being offered as a title for a spend.
+
+Worth naming because the mechanism generalises: **a fixture built to exercise
+new code runs past all the old code on the same screen.** Testing the new
+function in isolation — which the unit test also does — would have proved the
+new function correct and left the shipped bug in place. Both are worth doing;
+only one of them found this.
+
+It is also the third time this specific trap has bitten (`spentMap` in
+2026-08-01, the unaccounted figure, now the name chips), which is why the rule
+in `CLAUDE.md` is phrased as an obligation on *every* reduce over `expenses`
+rather than a note about one function.
+
 ## An unreadable document is a failed read, not a conflict (2026-08-05)
 
 Validating documents arriving from the cloud (v1.23.0) looked like it had an

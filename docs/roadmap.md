@@ -27,16 +27,30 @@ its own; none are combined.
      clearing an override *deletes the key* by design, so a union merge would
      resurrect a cleared correction. Needs the same "how is a deletion
      represented" answer.
-4. **Faster transaction entry** — autofocus + Repeat, richer suggestion chips,
-   rapid entry with undo-on-save, then a synced `txTemplates` collection.
-   **NEXT UP — starting fresh 2026-08-05.** Constraints already in the codebase,
-   so don't re-derive them:
-   - `rankNameSuggestions` (module scope) already does the ranking the chips
-     need — extend it, don't write a second matcher. `suggesttest.cjs` covers it.
-   - Chips fill the **name only** today, deliberately, even though `recentNames`
-     also carries the category. Changing that is a real decision, not a tidy-up.
+4. **Faster transaction entry** — split in two:
+   - **4a Repeat + autofocus — DONE**, build `2026.08.06.0001` / v1.24.0.
+     `recentTxTemplates` at module scope, a Repeat chip row that refills
+     category + title + amount in one tap, conditional autofocus, and a fix to
+     the pre-existing `isExtraFunds` leak in the older name chips.
+     `suggesttest.cjs` 26/26. See `current-status.md`.
+   - **4b Rapid entry with undo-on-save, then a synced `txTemplates`
+     collection — NEXT UP.** Constraints already in the codebase, so don't
+     re-derive them:
+   - ~~`rankNameSuggestions` already does the ranking the chips need~~ — still
+     true, and `recentTxTemplates` now sits beside it for the whole-transaction
+     case. Extend one of those two; don't write a third matcher.
+   - ~~Chips fill the **name only**, deliberately.~~ **Resolved 2026-08-06 by
+     not changing it**: the name chips still fill the name, and Repeat is a
+     separate control that fills everything. Two controls, two honest meanings.
+   - **Focus must be synchronous inside the user gesture** or iOS won't raise
+     the keyboard, and `select()` must be deferred one tick or React's commit
+     collapses the selection. `focusField` in `ExpenseTrackerView` already does
+     both — reuse it rather than calling `focus()` directly.
    - Every numeric field is a `NumField`; rapid entry needs `live` on anything
-     a submit button reacts to, since a disabled button eats the blur.
+     a submit button reacts to, since a disabled button eats the blur. Note the
+     add-transaction **Amount field is not a `NumField`** — it is a hand-rolled
+     string-draft input with the same commit-on-blur/`evalMathExpr` behaviour.
+     Leave it or convert it deliberately; don't half-convert it.
    - An expense's `createdAt` is stamped once at insert and never re-stamped,
      and an absent `ord` is meaningful (see `compareTxForDisplay`). Rapid entry
      must not default `ord` to a number.
@@ -108,7 +122,10 @@ Two things learned worth reusing:
 - ~~**Nothing re-validates a document arriving from the cloud.**~~ **DONE
   2026-08-05**, build `2026.08.05.0008` / v1.23.0 — `cloudDocProblem()` gates all
   three pull paths, reusing `validateBackup` minus its warnings.
-  `cloudguardtest.cjs` (19/19). See `current-status.md`.
+  `cloudguardtest.cjs` (19/19). **Deployed and confirmed on a real phone
+  2026-08-06**, with the Settings sync row reading normally — i.e. the live
+  document passes `validateBackup` and the gate is inert on real data. See
+  `current-status.md`.
 
 ### Follow-up opened by build 1
 - ~~**The conflict modal has three buttons and two outcomes.**~~ **DONE

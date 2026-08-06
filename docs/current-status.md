@@ -1,23 +1,134 @@
 # Current Status
 
-_Last updated: 2026-08-05 (cloud-pull validation, v1.23.0)_
+_Last updated: 2026-08-06 (Repeat chips + autofocus, v1.24.0)_
 
-**Live build:** `2026.08.05.0008` / v1.23.0.
-**Pick up next:** Build 4 — faster transaction entry (see `roadmap.md`; the
-constraints are already written down there, don't re-derive them). Sync is now
-closed out apart from two deliberate holds: **3C-3** (`payPeriods.actualStarts`
-per-record merge) and the **Durable Object having no automated test**. Neither
-is a bug; both are their own build.
+**Live build:** `2026.08.06.0001` / v1.24.0. **Committed? No — v1.24.0 is
+working-tree only at time of writing; it has passed the runners and a sandbox
+pass but has not been committed, pushed or opened on a phone.**
+**Pick up next:** Build 4b — rapid entry with undo-on-save, then the synced
+`txTemplates` collection (see `roadmap.md`). Sync remains closed out apart from
+two deliberate holds: **3C-3** (`payPeriods.actualStarts` per-record merge) and
+the **Durable Object having no automated test**. Neither is a bug; both are
+their own build.
 
-**Not yet deployed.** v1.23.0 is committed and pushed but has only been run in
-the sandbox — no phone has it. `worker.js` is untouched by this build, so
-nothing needs a `wrangler deploy`; GitHub Pages serves the new `index.html` once
-the push lands, and all three BUILD_ID sites already match. The first real-device
-open is the only thing left to confirm, and the thing to look at is the Settings
-sync row: it should read normally, **not** "Cloud copy rejected". If it does
-read that, the live document genuinely fails `validateBackup` — capture the
-reason before doing anything else, because pushing is deliberately blocked in
-that state and the app is then telling you something true about the cloud.
+## Faster transaction entry, part 1: Repeat + autofocus (2026-08-06, v1.24.0)
+
+Build `2026.08.06.0001` / v1.24.0. **No data-model change, no `migrate()`
+change, no `fingerprint()` change** — so it costs no device a KV write and is
+rollback-able on its own. This is the first half of Build 4; rapid entry and
+`txTemplates` are deliberately not in it.
+
+**Repeat chips.** A row of chips above the Category select refills a whole past
+transaction — category, title *and* amount — in one tap. A recurring entry goes
+from six interactions (open, select category, type title, type amount, dismiss
+keyboard, save) to two.
+
+`recentTxTemplates(expenses,owner,{limit,catIds})` is a new pure module-scope
+function beside `rankNameSuggestions`, so `suggesttest.cjs` can slice it. Its
+three exclusions are the design, not hygiene:
+
+- **`isExtraFunds` rows are money coming IN**, stored as ordinary expenses.
+  Offering one would let a tap record incoming money as spending — the exact
+  trap `CLAUDE.md` records against any new reduce over `expenses`.
+- **`isTransfer` rows** (untracked transfers, goal contributions, installment
+  payments) have a goal or installment id as their `catId`, not a plan category.
+  Replaying one through the tracked form would write a tracked expense against
+  an id no envelope can ever match.
+- **`catIds`** keeps only categories the *viewed month's* plan still has.
+  Without it a chip could fill a `catId` the dropdown below has no option for:
+  the select renders blank and Save writes a dangling reference.
+
+Deduped on **`name|catId`, not name alone** — the same title under two
+categories ("Top-up" against Transport and against Phone) is genuinely two
+repeats, and collapsing them would silently pick one category for both.
+
+**Why Repeat is a separate control from the name chips.** `roadmap.md` flagged
+that the existing chips fill the name only "deliberately", and that changing it
+is a real decision. It stays unchanged: two controls with two honest meanings
+beats one chip whose effect depends on where it came from, and it leaves the
+name chips free to keep narrowing as you type, which is their whole job.
+
+**Amount is prefilled *and then selected*.** The objection to prefilling an
+amount is that groceries differ every time. Selecting the text answers it — the
+figure is there when it repeats, and one keystroke replaces it when it doesn't.
+
+**Autofocus is conditional, and the condition matters.** Opening the modal from
+an envelope ("Add to Allowance") already knows the category, so Title is
+genuinely the next field and gets focus. Opening it with **no** category chosen
+does *not* steal focus: the select is the next step, and raising the keyboard
+over the list the user still has to pick from would be worse than doing nothing.
+
+### Two things the sandbox caught that reasoning did not
+
+**1. A pre-existing bug in the old name chips.** Seeding an `isExtraFunds` row
+to prove the new function excluded it revealed that `recentNames` /
+`nameCandidates` — shipped long before this build — filtered `isTransfer` but
+**not** `isExtraFunds`, so "Wife sent extra" was being offered as a title for a
+*spend*. Fixed in the same build. It is the same classification trap in the same
+file, found only because the fixture was built to exercise the new code.
+
+**2. `requestAnimationFrame` was the wrong way to focus, for a reason worse than
+the test failure.** The first implementation deferred focus to rAF and it never
+fired under automation (rAF is throttled in a non-foreground tab). The real
+problem is bigger: **iOS Safari only raises the keyboard for a `focus()` call
+made synchronously inside the user gesture.** A deferred focus would have moved
+the caret on the user's iPhone without opening the keyboard — the affordance
+would have looked like it worked while saving no taps at all.
+
+Focus and selection are therefore **split across the commit**: `focus()` runs
+synchronously in the handler (keyboard), `select()` runs on the next tick,
+because at gesture time the input still holds the *old* value and React setting
+the new one collapses any selection to the caret. Both halves were verified
+individually.
+
+The modal-open autofocus keeps a deferred path (the field isn't mounted yet at
+handler time) and uses `setTimeout(0)` rather than rAF. That branch is outside
+the gesture, so on iOS it moves the caret without raising the keyboard — stated
+plainly rather than papered over, because no focus call can fix it.
+
+### Verified
+`node parsecheck.cjs` OK. **All fifteen runners green**; `suggesttest.cjs`
+extended from 11 to **26** with a `recentTxTemplates` section covering every
+exclusion, the `name|catId` dedupe, the catIds filter, the createdAt tie-break,
+and that `ord` is ignored (it is a display preference, not recency).
+
+Driven end-to-end in a 390-wide sandbox on a fresh origin, seeded with a fixture
+built to fail: two Jollibee rows at different amounts, a Netflix row, plus an
+`isExtraFunds` row, an `isTransfer` row and a tombstoned row all named "should
+not appear".
+
+- chips rendered `Jollibee SAR 250.00` (the **newer** amount, not the older 300)
+  and `Netflix SAR 55.00`, newest first; all three decoys absent
+- tapping Jollibee filled category **Allowance**, title **Jollibee**, amount
+  **250**, date today — and focus landed on Amount **within the gesture**, with
+  `250` selected after the commit
+- typing `180` replaced the selection; Record wrote one expense with
+  `amount:180`, `createdAt` stamped and **no `ord`** — the absent-`ord`-is-
+  meaningful rule survives the new path
+- the chip then re-read `Jollibee SAR 180.00`, confirming the memo tracks writes
+- "Add to Allowance" preset the category and focused Title; the generic "Add
+  transaction" correctly left focus on the dialog
+- Repeat is hidden in **Untracked** and **Goals** modes
+- dark mode legible; no console errors
+
+**Not verified on a phone.** The iOS keyboard behaviour is the reason the
+synchronous-focus shape was chosen and is the one thing a desktop sandbox
+cannot prove. Check it on the first real-device open: tapping a Repeat chip
+should raise the keyboard with the amount selected.
+
+**Deployed and confirmed on a real phone, 2026-08-06.** v1.23.0 is serving from
+GitHub Pages, the app reads 1.23.0 on-device, and **the Settings sync row reads
+normally** — not "Cloud copy rejected". That row was the one thing this build
+existed to make legible, so it is the check that matters: the live document
+passes `validateBackup`, and the new gate is therefore inert on real data
+exactly as intended rather than untested. `worker.js` was untouched by this
+build, so no `wrangler deploy` was needed and the Worker is unchanged at
+`a3cb3ce0`.
+
+Restated for the next session, because the inverse still holds: if that row ever
+reads "Cloud copy rejected", the live document genuinely fails `validateBackup`
+— capture the reason before doing anything else, because pushing is deliberately
+blocked in that state and the app is telling you something true about the cloud.
 
 ## Documents arriving from the cloud are now validated (2026-08-05, v1.23.0)
 

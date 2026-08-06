@@ -311,6 +311,26 @@ doesn't reliably fire the field's blur), `navGroup` to make Enter jump to the
 next field in that group. Don't clamp a value that has a validation message
 telling the user it's out of range — clamping makes the message unreachable.
 
+## Focusing a field — `focus()` is the gesture's, `select()` is the commit's
+
+**iOS Safari raises the keyboard only for a `focus()` called synchronously
+inside the user gesture.** Deferring it (rAF, `setTimeout`, an effect) moves the
+caret and nothing else, so an affordance whose whole value is "fewer taps" ships
+with its main tap still required — and a desktop sandbox will show it as
+working. Focus the field inline in the handler whenever it is already mounted.
+
+**`select()` must NOT be in the same tick.** At gesture time the input still
+holds the *old* value, and React's commit setting the new one collapses the
+selection to the caret. Select on the next tick. `focusField` in
+`ExpenseTrackerView` does both halves — reuse it rather than calling `focus()`.
+
+Prefer `setTimeout(...,0)` over `requestAnimationFrame` for the deferred half:
+rAF is throttled in a non-foreground tab, which makes it fail under browser
+automation for reasons unrelated to the code.
+
+Autofocus is **conditional or it's a regression**: focusing a text field when
+the user's next step is a `<select>` buries the list behind the keyboard.
+
 ## Navigation
 
 Tabs live in three module-scope lists — `PRIMARY_TABS` (bottom bar),
@@ -391,15 +411,19 @@ bug this replaced.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners: `trendtest.cjs` (Home trend maths), `billstest.cjs` (bills
-  reconciler), `budgettest.cjs` (carry-forward chain + copy-on-write + plan
-  clone + category moves), `banktest.cjs` (bank interest accrual),
-  `periodtest.cjs` (pay-period boundaries), `txordertest.cjs` (transaction
-  display order + entry-stamp backfill), `ownertest.cjs` (per-profile
-  ownership + `netWorthParts`), `suggesttest.cjs` (transaction-name ranking),
-  `synctest.cjs` (per-setting merge resolution), `installmenttest.cjs`
-  (installment schedule maths, derived Budget rows, payment/payoff/cancel/delete
-  coupling, migration byte-equivalence).
+  runners — **there are fifteen, run all of them**: `trendtest.cjs` (Home trend
+  maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
+  chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
+  interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
+  (transaction display order + entry-stamp backfill), `ownertest.cjs`
+  (per-profile ownership + `netWorthParts`), `suggesttest.cjs`
+  (transaction-name ranking), `synctest.cjs` (per-setting merge resolution),
+  `installmenttest.cjs` (installment schedule maths, derived Budget rows,
+  payment/payoff/cancel/delete coupling, migration byte-equivalence),
+  `importtest.cjs` (`validateBackup` accept/refuse cases), `backupslottest.cjs`
+  (rotating pre-import safety slots + quota degradation), `mergetest.cjs`
+  (two-device merge: per-category plans, `monthlyPlans`, `household.expenses`),
+  `devicetagtest.cjs` (`headerSafe` against Node's real `Headers`), and
   `cloudguardtest.cjs` (the gate on documents arriving from the cloud).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
