@@ -1,5 +1,39 @@
 # Architectural & Technical Decisions
 
+## Three screens, one action, three different meanings (2026-08-06)
+
+Crediting a goal was implemented three times. The add-transaction modal wrote
+the ledger transfer and the contribution; the Goals tab and Home's sheet wrote
+only the contribution. Nothing was obviously broken — each screen did something
+reasonable — but the *same user action* meant different things depending on
+where it was started, and one of those meanings was wrong: a goal could grow
+while the money was still sitting in "still unaccounted for".
+
+**The fix is deleting a function, not adding one.** `addContribution` was the
+goal-only writer, and keeping it alongside the new `contributeToGoal` would have
+been the safer-looking change. It is exactly how the three paths drifted in the
+first place: a second entry point that does half the work will eventually be
+called by a third screen. One writer, no alternative.
+
+**The two records had to link by id.** Before this, the only thing tying a
+transfer to a goal was `catId` happening to equal a live goal id — inference,
+not a relationship. So deleting a goal silently reclassified its whole history
+from "Goal contributions" to "Transfers out"; the sheet still added up, but
+figures moved between lines months after the money did. An explicit link cannot
+rot, and legacy rows keep the old inference as a fallback.
+
+**Nothing is backfilled**, and that is the same call `ord` and `actualAmount`
+already made: absence means "made before this existed". Pairing historical
+expenses with historical contributions by amount and date would be *inventing* a
+relationship the user never asserted, and it would be wrong precisely in the
+messy cases — two contributions of the same size in one month.
+
+**Delete symmetry is not a nicety here.** If deleting the transfer left the goal
+credited, the app would claim money both left the budget and didn't. The
+mirrors are four small pure functions rather than two, because restore has to
+reverse each direction independently — and Recently Deleted can restore from
+either side.
+
 ## Chosen and observed are different data, even when they look identical (2026-08-06)
 
 A pinned shortcut and a Repeat chip render as the same chip and fill the same

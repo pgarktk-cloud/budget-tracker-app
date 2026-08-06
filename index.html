@@ -1895,6 +1895,98 @@ function applyInstallmentUnlink(d,{expenseId,now}){
   return{...d,expenses,installmentPayments:payments};
 }
 
+/* ── Goal contributions: one action, one write, two linked records ──────────
+
+   Money reaching a goal has always meant two things — it leaves the budget
+   (a ledger transfer) and it lands in the goal (a contribution). Three UI
+   paths did this and only one of them did both:
+
+     • the add-transaction modal's Goals mode wrote BOTH, but in TWO separate
+       setData calls, so a sync between them could persist half of it
+     • the Goals tab's "Add money" wrote ONLY the contribution
+     • Home's GoalContributionSheet wrote ONLY the contribution
+
+   So a goal could grow without any money leaving the budget, and the same
+   action meant different things depending on which screen you started from.
+   These functions are the one place it happens now, and both records land in a
+   single write — the rule installments already follow.
+
+   The two records LINK BY ID (`expense.goalContributionId` /
+   `contribution.expenseId`). Before this, the only thing tying a transfer to a
+   goal was `catId` happening to equal a live goal id — which is why deleting a
+   goal silently reclassified its contributions as ordinary transfers. An
+   explicit link cannot rot that way.
+
+   `catId` stays the goal id for a direct contribution, so every existing
+   reader (the unaccounted classifier, the Expenses category filter) keeps
+   working unchanged. `goalId` is the field that MEANS it, and readers should
+   prefer it — see `unaccountedParts`.
+
+   Nothing is backfilled onto historical records. An absent link means "made
+   before this build", the same way an absent `ord` means "unplaced": guessing
+   which old expense pairs with which old contribution would be inventing data.
+*/
+function applyGoalContribution(d,{goalId,amount,note,date,owner,name,expenseId,contributionId,now}){
+  const g=(d.goals||[]).find(x=>x.id===goalId&&!x.deletedAt);
+  if(!g)return d;
+  const amt=Number(amount);
+  if(!(amt>0))return d;
+  const contrib={id:contributionId,date,amount:amt,note:note||"",expenseId,updatedAt:now};
+  const expense={id:expenseId,catId:goalId,goalId,goalContributionId:contributionId,
+    name:name||`${g.name||"Goal"} (goal)`,note:note||"",amount:amt,date,
+    owner:owner||g.owner||"me",isTransfer:true,createdAt:now,updatedAt:now};
+  return{...d,
+    expenses:[...(d.expenses||[]),expense],
+    goals:(d.goals||[]).map(x=>x.id===goalId
+      ?{...x,contributions:[...(x.contributions||[]),contrib],updatedAt:now}:x)};
+}
+
+/* Deleting the ledger row means the money didn't move, so the goal must give
+   it back — in the SAME write, or the two halves describe different money.
+   Legacy rows carry no link and fall through to a plain tombstone. */
+function applyGoalContributionDeleteByExpense(d,{expenseId,now}){
+  const e=(d.expenses||[]).find(x=>x.id===expenseId);
+  const expenses=(d.expenses||[]).map(x=>x.id===expenseId?{...x,deletedAt:now,updatedAt:now}:x);
+  if(!e||!e.goalId||!e.goalContributionId)return{...d,expenses};
+  return{...d,expenses,
+    goals:(d.goals||[]).map(g=>g.id!==e.goalId?g:{...g,updatedAt:now,
+      contributions:(g.contributions||[]).map(c=>
+        c.id===e.goalContributionId?{...c,deletedAt:now,updatedAt:now}:c)})};
+}
+function applyGoalContributionRestoreByExpense(d,{expenseId,now}){
+  const e=(d.expenses||[]).find(x=>x.id===expenseId);
+  const expenses=(d.expenses||[]).map(x=>x.id===expenseId?{...x,deletedAt:null,updatedAt:now}:x);
+  if(!e||!e.goalId||!e.goalContributionId)return{...d,expenses};
+  return{...d,expenses,
+    goals:(d.goals||[]).map(g=>g.id!==e.goalId?g:{...g,updatedAt:now,
+      contributions:(g.contributions||[]).map(c=>
+        c.id===e.goalContributionId?{...c,deletedAt:null,updatedAt:now}:c)})};
+}
+
+/* The mirror: deleting the contribution from the goal's own list takes the
+   ledger row with it. Without this the money would still have left the budget
+   while the goal no longer shows it arriving. */
+function applyGoalContributionDeleteByContribution(d,{goalId,contributionId,now}){
+  const g=(d.goals||[]).find(x=>x.id===goalId);
+  const c=g&&(g.contributions||[]).find(x=>x.id===contributionId);
+  const goals=(d.goals||[]).map(x=>x.id!==goalId?x:{...x,updatedAt:now,
+    contributions:(x.contributions||[]).map(y=>
+      y.id===contributionId?{...y,deletedAt:now,updatedAt:now}:y)});
+  if(!c||!c.expenseId)return{...d,goals};
+  return{...d,goals,
+    expenses:(d.expenses||[]).map(x=>x.id===c.expenseId?{...x,deletedAt:now,updatedAt:now}:x)};
+}
+function applyGoalContributionRestoreByContribution(d,{goalId,contributionId,now}){
+  const g=(d.goals||[]).find(x=>x.id===goalId);
+  const c=g&&(g.contributions||[]).find(x=>x.id===contributionId);
+  const goals=(d.goals||[]).map(x=>x.id!==goalId?x:{...x,updatedAt:now,
+    contributions:(x.contributions||[]).map(y=>
+      y.id===contributionId?{...y,deletedAt:null,updatedAt:now}:y)});
+  if(!c||!c.expenseId)return{...d,goals};
+  return{...d,goals,
+    expenses:(d.expenses||[]).map(x=>x.id===c.expenseId?{...x,deletedAt:null,updatedAt:now}:x)};
+}
+
 /* Tracked-spending rollup for one owner, for their CURRENT bucket (calendar
    month, or pay-period when that owner has pay-periods enabled).
 
@@ -2025,8 +2117,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.26.0";
-const BUILD_ID="2026.08.06.0003";
+const APP_VERSION="1.27.0";
+const BUILD_ID="2026.08.06.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3977,7 +4069,13 @@ function App(){
         const e=(d.expenses||[]).find(x=>x.id===id);
         if(e&&(e.installmentPaymentId||e.installmentPayoff))
           return applyInstallmentExpenseRestore(d,{expenseId:id,now:new Date().toISOString()});
+        if(e&&e.goalId&&e.goalContributionId)
+          return applyGoalContributionRestoreByExpense(d,{expenseId:id,now:new Date().toISOString()});
       }
+      /* Restoring a goal contribution from Recently Deleted must bring its
+         ledger row back too — the delete tombstoned both. */
+      if(collection==="goals"&&childKey==="contributions"&&childId)
+        return applyGoalContributionRestoreByContribution(d,{goalId:id,contributionId:childId,now:new Date().toISOString()});
       if(childKey&&childId){
         return{...d,[collection]:arr.map(p=>p.id===id?{...p,[childKey]:(p[childKey]||[]).map(c=>c.id===childId?{...c,deletedAt:null}:c),updatedAt:new Date().toISOString()}:p)};
       }
@@ -5179,15 +5277,25 @@ function App(){
     if(g)triggerUndo(`Deleted goal "${g.name||"Goal"}"`,{collection:"goals",id});
     pushImportantRef.current();
   };
-  const addContribution=(goalId,amount,note="")=>{
+  /* THE one way money reaches a goal. Every UI path calls this — the Goals
+     tab, Home's sheet, and the add-transaction modal's Goals mode — so the
+     same action means the same thing everywhere, and the ledger row and the
+     contribution can never be persisted half-written. See
+     applyGoalContribution at module scope for why they link by id.
+
+     `addContribution` is deliberately GONE rather than kept alongside: leaving
+     a goal-only writer in place is exactly how the three paths drifted apart,
+     and a second entry point would silently reintroduce the bug. */
+  const contributeToGoal=({goalId,amount,note="",date,owner,name})=>{
     const now=new Date().toISOString();
-    const contrib={id:uid(),date:now.slice(0,10),amount:Number(amount),note,updatedAt:now};
-    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:[...(g.contributions||[]),contrib],updatedAt:now}:g)}));
+    setData(d=>applyGoalContribution(d,{goalId,amount,note,
+      date:date||now.slice(0,10),owner,name,
+      expenseId:uid(),contributionId:uid(),now}));
     pushImportantRef.current();
   };
   const removeContribution=(goalId,cid)=>{
     const now=new Date().toISOString();
-    setData(d=>({...d,goals:d.goals.map(g=>g.id===goalId?{...g,contributions:(g.contributions||[]).map(c=>c.id===cid?{...c,deletedAt:now,updatedAt:now}:c),updatedAt:now}:g)}));
+    setData(d=>applyGoalContributionDeleteByContribution(d,{goalId,contributionId:cid,now}));
     triggerUndo("Deleted contribution",{collection:"goals",id:goalId,childKey:"contributions",childId:cid});
     pushImportantRef.current();
   };
@@ -5220,7 +5328,7 @@ function App(){
   };
 
   /* MP2 contributions — same add/edit/delete-with-undo shape as goal
-     contributions (App()'s addContribution/removeContribution above), just
+     contributions (App()'s contributeToGoal/removeContribution above), just
      scoped under an investment account instead of a goal. */
   const addMp2Contribution=(invId,amount,date,note="")=>{
     const now=new Date().toISOString();
@@ -5423,8 +5531,14 @@ function App(){
        the SAME setData. Both directions live in applyInstallmentExpense*, so
        delete and restore can't get out of step. */
     const linked=!!(e&&(e.installmentPaymentId||e.installmentPayoff));
+    /* A goal contribution carries its goal with it for the same reason:
+       deleting the transfer means the money didn't move, so the goal has to
+       give it back in the SAME write. */
+    const goalLinked=!!(e&&e.goalId&&e.goalContributionId);
     setData(d=>linked
       ?applyInstallmentExpenseDelete(d,{expenseId:id,now:new Date().toISOString()})
+      :goalLinked
+      ?applyGoalContributionDeleteByExpense(d,{expenseId:id,now:new Date().toISOString()})
       :{...d,expenses:(d.expenses||[]).map(e=>e.id===id?{...e,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}:e)});
     if(e)triggerUndo(`Deleted "${e.name||"transaction"}"`,{collection:"expenses",id});
     pushImportantRef.current();
@@ -6083,10 +6197,10 @@ function App(){
         </div>
 
         <TabPane tab={tab}>
-          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,profile,setProfile:setProfileSynced,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
+          {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,profile,setProfile:setProfileSynced,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,contributeToGoal,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
           {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current(),
             installments,installmentPayments,onOpenInstallment:openInstallment}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
             installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates:data.txTemplates}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
@@ -6098,7 +6212,7 @@ function App(){
             includeMp2Estimate}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
-          {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners:data.owners}}/>}
+          {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners}}/>}
           {tab==="installments"&&<InstallmentsView {...{installments,installmentPayments,
             addInstallment,updateInstallment,recordInstallmentPayment,payOffInstallmentEarly,
             cancelInstallment,removeInstallment,
@@ -6153,7 +6267,7 @@ function App(){
    banksSar/invSar/assetSar/liabSar, holdingStats, goal contributions) or a
    thin per-owner reslice of the same raw collections (banks/plans/goals).
    It never recomputes financial logic and never mutates data except through
-   the exact same mutator functions (addContribution) the rest of the app
+   the exact same mutator functions (contributeToGoal) the rest of the app
    already uses. Deliberately split into small sibling components so a
    future card (Wishlist, Subscriptions, Achievements) is just one more
    <XCard/> added to the list at the bottom of HomeView. ─────────────────── */
@@ -7064,7 +7178,7 @@ function GoalsSummaryCard({goals,profile,owners,onOpen}){
    standalone income dialog (income is a plain input in Budget's header),
    and the trade-add modal lives inline inside InvestmentsView rather than
    as a shared component (noted as a known limitation/future extension
-   point). + Goal Contribution gets a native Home sheet since addContribution
+   point). + Goal Contribution gets a native Home sheet since contributeToGoal
    is trivially reusable standalone. Deliberately lighter-weight than a card:
    sits as a slim strip right under the Hero, not its own "section". */
 function quickActionItems({onExpense,onIncome,onInvestment,onGoal}){
@@ -7125,10 +7239,10 @@ function QuickActionSheet({onClose,...handlers}){
 
 /* Native "add goal contribution" sheet for Home — styled identically to
    GoalsView's own add-money sheet (same .sheet-bg/.sheet classes, same
-   Portal+useScrollLock pattern) but calls addContribution(goalId,...)
+   Portal+useScrollLock pattern) but calls contributeToGoal({goalId,...})
    directly rather than routing through the Goals tab, since that mutator is
    already a clean standalone function. */
-function GoalContributionSheet({goals,addContribution,onClose}){
+function GoalContributionSheet({goals,contributeToGoal,onClose}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
   const[goalId,setGoalId]=useState((goals&&goals[0]&&goals[0].id)||null);
@@ -7164,7 +7278,7 @@ function GoalContributionSheet({goals,addContribution,onClose}){
                 <input value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. Monthly deposit"
                   style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
               </div>
-              <button onClick={()=>{if(canSubmit){addContribution(goalId,amount,note);onClose();}}}
+              <button onClick={()=>{if(canSubmit){contributeToGoal({goalId,amount,note});onClose();}}}
                 disabled={!canSubmit}
                 style={{width:"100%",borderRadius:10,padding:"10px",fontSize:14,fontWeight:600,background:P.gr,color:"#fff",border:"none",opacity:canSubmit?1:.5}}>
                 Add contribution
@@ -7259,7 +7373,7 @@ function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,heading,onClose
   );
 }
 
-function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,addContribution,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
+function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,plans,activePlanId,goals,fmt,cur,setTab,setGlobalAddTrigger,contributeToGoal,history,planForMonth,expenses,payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}){
   /* profile/setProfile now come from App() and are shared with Banks,
      Investments and Net Worth — see VIEW_PROFILE_KEY. setProfile is already
      the synced setter, so this alias just keeps the call sites below. */
@@ -7397,7 +7511,7 @@ function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth
         </button>
       </Portal>
       {qaSheet&&<QuickActionSheet {...actions} onClose={()=>setQaSheet(false)}/>}
-      {goalSheet&&<GoalContributionSheet goals={goals} addContribution={addContribution} onClose={()=>setGoalSheet(false)}/>}
+      {goalSheet&&<GoalContributionSheet goals={goals} contributeToGoal={contributeToGoal} onClose={()=>setGoalSheet(false)}/>}
     </div>
   );
 }
@@ -8355,7 +8469,7 @@ function UnaccountedSheet({monthLabel,income,parts,total,fmt,onClose}){
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,addContribution,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates}){
+function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -8523,7 +8637,13 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     viewMonthExpenses.forEach(e=>{
       const amt=Number(e.amount)||0;
       if(e.isExtraFunds)extraFunds+=amt;
-      else if(e.isTransfer&&goalIds.has(e.catId))goalContribs+=amt;
+      /* Prefer the EXPLICIT link. `catId` matching a live goal id was the only
+         discriminator before v1.27.0, so deleting a goal silently reclassified
+         every contribution to it as an ordinary transfer — the figures moved
+         between lines of the unaccounted sheet months after the fact. A row
+         written by contributeToGoal says what it is; legacy rows still fall
+         back to the old test. */
+      else if(e.isTransfer&&(e.goalId?goalIds.has(e.goalId):goalIds.has(e.catId)))goalContribs+=amt;
       else if(e.isTransfer)untrackedTransfers+=amt;
       else trackedSpend+=amt;
     });
@@ -8708,11 +8828,11 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       quickTransfer(form.catId,form.name||env?.name||"",amt,form.date,budgetOwner);
     }else if(addMode==="goals"){
       if(!form.goalId)return;
-      const goal=ownerGoals.find(g=>g.id===form.goalId);
-      // deduct from salary/budget as a transfer, same as an untracked category…
-      addExpenseTx(form.goalId,form.name||(goal?`${goal.name} (goal)`:"Goal contribution"),form.note,amt,form.date,budgetOwner,true);
-      // …and route the money into the goal's own progress
-      addContribution(form.goalId,amt,form.note);
+      /* Was two setData calls — the ledger row, then the goal credit — which
+         could persist half-written if a sync landed between them. One write
+         now, and the two records link by id. */
+      contributeToGoal({goalId:form.goalId,amount:amt,note:form.note,
+        date:form.date,owner:budgetOwner,name:form.name||undefined});
     }
     closeForm();
   };
@@ -11986,7 +12106,7 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
 }
 
 /* ── GOALS VIEW — square cards with type icons ── */
-function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,removeContribution,owners}){
+function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners}){
   const[addModal,setAddModal]=useState(null);     // goalId for "add money"
   useScrollLock(!!addModal);
   const[addAmount,setAddAmount]=useState("");
@@ -12096,7 +12216,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,addContribution,remo
                   New total: {fmt(saved+Number(addAmount))} ({g.target>0?(((saved+Number(addAmount))/g.target)*100).toFixed(0):0}%)
                 </div>
               )}
-              <button onClick={()=>{if(Number(addAmount)>0){addContribution(addModal,addAmount,addNote);setAddModal(null);}}}
+              <button onClick={()=>{if(Number(addAmount)>0){contributeToGoal({goalId:addModal,amount:addAmount,note:addNote,owner:g.owner});setAddModal(null);}}}
                 style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none"}}>
                 Add {addAmount?fmt(Number(addAmount)):"money"}
               </button>

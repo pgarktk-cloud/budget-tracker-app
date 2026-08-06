@@ -1,15 +1,93 @@
 # Current Status
 
-_Last updated: 2026-08-06 (pinned shortcuts, v1.26.0)_
+_Last updated: 2026-08-06 (goal contributions unified, v1.27.0)_
 
-**Live build:** `2026.08.06.0003` / v1.26.0. v1.24.0 is deployed and confirmed
-on a real phone, including the iOS keyboard behaviour the sandbox could not
-prove. **v1.25.0 and v1.26.0 have not been opened on a phone yet.**
-**Pick up next:** **Build 4 is complete.** Nothing is queued. The open items
-are the two deliberate sync holds — **3C-3** (`payPeriods.actualStarts`
-per-record merge) and the **Durable Object having no automated test** — plus
-5a (category→goal link) and 5b (plan-vs-actual in `UnaccountedSheet`), both
-still only scoped. Neither hold is a bug; all four are their own build.
+**Live build:** `2026.08.06.0004` / v1.27.0. v1.24.0 and v1.26.0 are deployed;
+v1.24.0 was confirmed on a real phone including the iOS keyboard behaviour.
+**v1.27.0 has not been opened on a phone yet.**
+**Pick up next:** **5a-2 — the `category.goalId` link** (see `roadmap.md`).
+5a-1 below did the half that was a correctness fix; the linking half is a
+feature and is its own build. Also open: the two deliberate sync holds —
+**3C-3** (`payPeriods.actualStarts` per-record merge) and the **Durable Object
+having no automated test** — and 5b (plan-vs-actual in `UnaccountedSheet`).
+
+## Goal contributions are one action again (2026-08-06, v1.27.0)
+
+Build `2026.08.06.0004` / v1.27.0. First half of 5a. **A behaviour change to how
+money moves**, so read this before the next reconciliation.
+
+**The defect.** Money reaching a goal has always meant two things — it leaves
+the budget (a ledger transfer) and it lands in the goal (a contribution). Three
+UI paths did this, and they disagreed:
+
+| Path | Ledger row | Contribution |
+|---|---|---|
+| Add-transaction modal → Goals | yes, but a **separate `setData`** | yes |
+| Goals tab → "Add money" | **no** | yes |
+| Home → goal contribution sheet | **no** | yes |
+
+So a goal could grow with **nothing leaving the budget** — the money was still
+sitting in "still unaccounted for" while the goal said it had arrived. Which
+screen you started from decided what the action meant. And the one path that did
+both used two writes, so a sync landing between them could persist half of it.
+
+**`applyGoalContribution` and its four delete/restore mirrors** (module scope,
+pure) are the one place it happens now, and both records land in **one** write —
+the rule installments already follow. `contributeToGoal` is the single App
+mutator over them, and all three UI paths call it. **`addContribution` is
+deleted rather than kept alongside**: leaving a goal-only writer in place is
+exactly how the three paths drifted, and a second entry point would silently
+reintroduce it.
+
+**The two records link by id** (`expense.goalContributionId` /
+`contribution.expenseId`). Before this the only thing tying a transfer to a goal
+was `catId` happening to equal a live goal id — which is why `CLAUDE.md` warned
+that *deleting a goal silently reclassifies its contributions as transfers*.
+`unaccountedParts` now prefers the explicit link, so a row written by this build
+says what it is and cannot rot that way. The sheet still reconciles either way;
+the fix is that figures stop moving between lines months after the fact.
+
+**Deleting either half now takes the other with it, and undo reverses both.**
+Deleting the transfer means the money didn't move, so the goal gives it back —
+in the same write. `removeExpenseTx`, `removeContribution` and `restoreRecord`
+all route through the pure functions, so the two halves cannot get out of step.
+
+**Nothing is backfilled.** An absent link means "made before this build", the
+same way an absent `ord` means "unplaced" — guessing which historical expense
+pairs with which historical contribution would be inventing data. Legacy records
+keep exactly their old behaviour, including deleting alone, and that is asserted
+in the runner and was watched in the browser.
+
+### What this changes about your numbers
+Every future contribution from the Goals tab or the Home sheet now **also
+deducts from the budget**, which it did not before. Existing contributions are
+untouched. If a past goal contribution was made from the Goals tab, it is still
+invisible in the unaccounted maths — that history is not rewritten.
+
+### Verified
+`node parsecheck.cjs` OK. **Seventeen runners green**, including new
+**`goaltest.cjs` (19/19, committed)** — the linked write, both delete directions
+and both restores, non-positive amounts and deleted goals writing nothing at
+all, legacy records unchanged, and the classifier including the deleted-goal
+case with an explicit assertion that the sheet's total is unchanged either way.
+
+Sandbox, fresh origin, against the seeded default goals (whose contributions are
+legacy — no links — which is exactly the mixed state a real device will be in):
+- Goals tab → "Add money" 750 wrote **both** records, linked, `isTransfer:true`,
+  `catId` still the goal id, `createdAt` stamped, **no `ord`**
+- the Expenses hero's sheet then read *Income 22,000 · Goal contributions −750 ·
+  Still unaccounted 21,250* — money that was previously invisible there
+- deleting the **transaction** took the goal from 19,250 → 18,500 and UNDO
+  restored both
+- deleting the **contribution** removed the ledger row too, and UNDO restored
+  both
+- deleting the **legacy** "Opening balance" contribution tombstoned it alone and
+  left the ledger untouched
+- survived a reload; no console errors, no runtime exceptions
+
+**Not verified on a phone.** Worth checking that a contribution made on one
+device shows up correctly on the other, since this is the first build where one
+user action writes into two collections that merge independently.
 
 ## Pinned transaction shortcuts (2026-08-06, v1.26.0)
 

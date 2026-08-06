@@ -138,8 +138,23 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   money arrived (fixed 2026-08-01). The same trap bites when reconciling by
   hand — summing envelope budgets against plan income double-counts them.
   Likewise `isTransfer` is set by **both** untracked transfers and goal
-  contributions; `catId` matching a live goal id is the only discriminator,
-  so a deleted goal silently reclassifies its contributions as transfers.
+  contributions. Since v1.27.0 a goal contribution carries an explicit
+  **`goalId` + `goalContributionId`**, and `unaccountedParts` prefers it;
+  `catId` matching a live goal id is only the fallback, for rows written before
+  that build (which is why a deleted goal used to silently reclassify its whole
+  history as transfers).
+- **Money reaching a goal is ONE write producing TWO linked records.**
+  `applyGoalContribution` (module scope, pure) writes the ledger transfer and
+  the goal's contribution together, and the App mutator `contributeToGoal` is
+  the only way in — the Goals tab, Home's sheet and the add-transaction modal
+  all call it. **There is no goal-only writer any more**, deliberately:
+  `addContribution` was deleted because its existence is how those three paths
+  came to disagree (two of them credited a goal without any money leaving the
+  budget). Deleting either half tombstones the other in the same write, via
+  `applyGoalContributionDelete/RestoreByExpense|ByContribution`; `removeExpenseTx`,
+  `removeContribution` and `restoreRecord` all route through them. Records made
+  before v1.27.0 carry no link and are left alone — never backfill a
+  relationship the user didn't assert. Covered by `goaltest.cjs`.
 - **Transaction order lives in record fields, never array position.**
   `mergeArrayById` re-sorts expenses by id on every sync and `fingerprint`
   canonicalizes with `sortedById`, so array order is erased the first time two
@@ -422,7 +437,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are sixteen, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are seventeen, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -433,6 +448,9 @@ and an error naming a collection the user has never heard of.
   payment/payoff/cancel/delete coupling, migration byte-equivalence),
   `templatetest.cjs` (pinned transaction shortcuts: Repeat/Shortcut dedupe,
   migration byte-equivalence, merge),
+  `goaltest.cjs` (goal contributions as one linked write: both delete
+  directions, both restores, legacy unlinked records, the unaccounted
+  classifier),
   `importtest.cjs` (`validateBackup` accept/refuse cases), `backupslottest.cjs`
   (rotating pre-import safety slots + quota degradation), `mergetest.cjs`
   (two-device merge: per-category plans, `monthlyPlans`, `household.expenses`),

@@ -73,9 +73,31 @@ its own; none are combined.
      `countPendingChanges` and `purgeOldTombstones` — the same seven touch
      points `installments` needed. Emit it from `fingerprint()` **only when
      non-empty**, so adding it costs existing documents no KV write.
-5a. **Category → goal link** — an optional `category.goalId`; a transfer against
-   a linked category credits the goal in one action, and the Goals tab's "Add
-   money" becomes a real transfer instead of a goal-only edit.
+5a. **Category → goal link** — split in two:
+   - **5a-1 One contribution path — DONE**, build `2026.08.06.0004` / v1.27.0.
+     The Goals tab's "Add money" and Home's sheet are real transfers now, not
+     goal-only edits; all three paths go through `contributeToGoal` and write
+     both records in ONE `setData`, linked by id. `addContribution` deleted.
+     `goaltest.cjs` (19/19). See `current-status.md`.
+   - **5a-2 The `category.goalId` link — NEXT UP.** An optional `goalId` on a
+     budget category, so a transfer against a linked category (e.g. "Long Term
+     Savings") credits the goal in the same action. Constraints already in the
+     codebase:
+     - `applyGoalContribution` already writes the linked pair — 5a-2 should
+       extend it (a `catId` override so the row keys to the CATEGORY, not the
+       goal) rather than write a second contribution path. That is the whole
+       reason 5a-1 went in first.
+     - a linked transfer must keep `catId` = the category id, or the envelope's
+       "transferred" figure and the Expenses category filter both stop seeing it
+     - `unaccountedParts` already prefers `e.goalId`, so such a row lands in
+       "Goal contributions" rather than "Transfers out" — decide deliberately
+       whether that is wanted before shipping, since it moves money between two
+       lines of the sheet
+     - the link is a **category** field, so it lives on a plan record: it must
+       survive `clonePlanForMonth`, and `stampPlanRecords` will stamp
+       `updatedAt` when it changes. Categories merge per record since 3C-2.
+     - a category whose linked goal is deleted must degrade to a plain untracked
+       transfer, not break
 5b. **Salary reconciliation** — planned figures beside the actuals in
    `UnaccountedSheet` (supersedes the "Next up" section below).
 
