@@ -69,17 +69,26 @@ _Previously: 2026-08-06 (category → goal link, v1.28.0)_
 **installed on both phones**. Every build from v1.24.0 through v1.28.1 is now
 live on-device.
 
-**Pick up next: the two-phone test for v1.27.0 / v1.28.0.** It is the one thing
-those builds still lack, and it is more interesting than usual — a goal
-contribution is the first user action that writes into **two collections that
-merge independently** (`expenses` and `goals.contributions`). Use the airplane-
-mode protocol from the 3C-2 verification, or `pushImportant` and the 8s autosave
-upload before the devices can diverge.
+**Everything shipped today is verified on both phones**, including the v1.27.0 /
+v1.28.0 two-phone merge test (see that section — it was the first user action
+writing into two independently-merging collections, and all three cases passed).
+**Nothing is queued.**
 
-After that: **5a is complete.** Remaining work is the two deliberate sync holds —
-**3C-3** (`payPeriods.actualStarts` per-record merge) and the **Durable Object
-having no automated test** — plus **5b** (plan-vs-actual in `UnaccountedSheet`),
-which now has an extra input: see the reconciliation note in the v1.28.0 section.
+**Pick up next**, in rough order of value:
+- **5b** — plan-vs-actual in `UnaccountedSheet`. Scoped in `roadmap.md`, and it
+  now has an extra input: a category-linked transfer counts as a Goal
+  contribution, so hand-summing untracked envelopes against "Transfers out"
+  comes up short. See the reconciliation note in the v1.28.0 section.
+- **3C-3** — `payPeriods.actualStarts` per-record merge, the last deliberate
+  sync hold. Blocked on a design question: clearing an override *deletes* the
+  key, so a union merge would resurrect a cleared correction.
+- **The Durable Object has no automated test.** Needs `wrangler dev` plus a
+  harness this repo doesn't have. Verified by cutover checks only — that is the
+  honest status, not implied coverage.
+
+Housekeeping, in about a week: remove GitHub Pages and drop the `github.io`
+entry from `ALLOWED_ORIGINS` in `worker.js` once there's no intention of going
+back.
 
 ## Category → goal link (2026-08-06, v1.28.0)
 
@@ -154,7 +163,9 @@ Sandbox, fresh origin:
   transfer with no `goalId`. The picker reads "No goal".
 - survived a reload; dark mode legible; no console errors or runtime exceptions
 
-**Not verified on a phone.**
+**Verified on both phones 2026-08-06**, as part of the v1.27.0 two-phone run
+below — the linked-transfer path shares `applyGoalContribution` with the direct
+contribution, so the merge behaviour proven there covers this build too.
 
 ## Goal contributions are one action again (2026-08-06, v1.27.0)
 
@@ -230,9 +241,24 @@ legacy — no links — which is exactly the mixed state a real device will be i
   left the ledger untouched
 - survived a reload; no console errors, no runtime exceptions
 
-**Not verified on a phone.** Worth checking that a contribution made on one
-device shows up correctly on the other, since this is the first build where one
-user action writes into two collections that merge independently.
+### VERIFIED ON TWO REAL PHONES, 2026-08-06
+This was the interesting one: a goal contribution is **the first user action
+that writes into two collections which merge independently** (`expenses` and
+`goals.contributions`). Nothing else in the app does that, so the coupling had
+never met a real merge. All three cases passed:
+
+- **the write arrives whole** — Add money on phone A, and phone B showed *both*
+  the higher goal total *and* the matching transaction. Before v1.27.0 the goal
+  would have grown with no money leaving the budget.
+- **the delete travels** — deleting the contribution on one phone removed both
+  halves on the other. The two records cannot drift apart across devices.
+- **the real merge** — with both phones in airplane mode, a contribution added
+  to a *different* goal on each, then reconnected: **both survived on both
+  phones.** Airplane mode is what makes this reachable at all; otherwise
+  `pushImportant` and the 8s autosave upload before the devices can diverge.
+
+The two-collection coupling is therefore confirmed on real hardware, not just in
+`goaltest.cjs`.
 
 ## Pinned transaction shortcuts (2026-08-06, v1.26.0)
 
