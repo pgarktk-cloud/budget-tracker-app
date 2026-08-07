@@ -2049,6 +2049,272 @@ function purchaseHistoryWarning(bucketHistory,fmt){
     +`${rows.length} averaged ${f(actual)}. These projections use the plan.`;
 }
 
+/* ── Purchase Advisor narration (Build B) ──────────────────────────────────
+   Three pure module-scope functions. The model NEVER computes: it receives
+   figures that are already correct and explains them. Build A is the feature;
+   this is commentary on it, and every failure path renders the cards without
+   prose.
+
+   The whole design rests on one property: `buildPurchaseAiContext` BUILDS A
+   FRESH OBJECT and never copies from `data`. That is what makes the allowlist
+   structural rather than a filter someone can forget to update — a field
+   cannot leak by being left in, only by being deliberately written here. The
+   Worker re-checks it against AI_CONTEXT_KEYS on the way out, because a client
+   is code running on a device, not a security boundary. */
+const PURCHASE_AI_MAX_PRODUCT=80;
+const PURCHASE_AI_MAX_HEADLINE=160;
+const PURCHASE_AI_MAX_NOTE=400;
+const PURCHASE_AI_MAX_WATCHOUT=200;
+const PURCHASE_AI_MAX_WATCHOUTS=3;
+
+/* Rounding is not cosmetic here. Every figure the model may quote has to be
+   findable in the context by validatePurchaseNarration, and a raw float like
+   3212.779999999999 can never be quoted back in a form that matches. */
+function purchaseAiNum(v){
+  const n=Number(v);
+  return isFinite(n)?Math.round(n*100)/100:0;
+}
+
+/* The one piece of user-authored text in the request, so the one injection
+   surface. Angle brackets go so it cannot forge the Worker's delimiter — the
+   Worker strips them again, deliberately not a single point of failure. */
+function purchaseAiProduct(s){
+  return String(s==null?"":s)
+    .replace(/[\u0000-\u001F\u007F]/g," ")
+    .replace(/[<>]/g,"")
+    .replace(/\s+/g," ")
+    .slice(0,PURCHASE_AI_MAX_PRODUCT)
+    .trim();
+}
+
+/* Categories are the only place a real name could escape, so they never do:
+   each becomes an opaque {{refN}} token and the map from token to name stays
+   on the device, used only by rehydratePurchaseRefs at render time. Ordered by
+   amount so ref1 is the biggest — the model has no other way to tell them
+   apart, and an arbitrary order would make its suggestions arbitrary too. */
+function buildPurchaseAiRefs(trimCats){
+  const refs={};const list=[];
+  [...(trimCats||[])].filter(c=>c&&Number(c.effAmt)>0)
+    .sort((a,b)=>Number(b.effAmt)-Number(a.effAmt))
+    .slice(0,12)
+    .forEach((c,i)=>{
+      const ref="ref"+(i+1);
+      refs[ref]=String(c.name||"Category");
+      list.push({ref,amount:purchaseAiNum(c.effAmt)});
+    });
+  return{refs,trimCandidates:list};
+}
+
+/* Returns {context, refs}. `context` is what leaves the device; `refs` never
+   does. Absent BY CONSTRUCTION: every record id, every category/goal/bank/
+   owner name, every transaction, every date. Buckets carry an index `n`, never
+   a date — a date is one more identifying fact and the app labels them itself
+   from the same bucketLabel the cards use. */
+function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
+                                 historyWarning,currency,product,payPeriods,owner,
+                                 nowBucket,horizon}){
+  const s=scenarios||{},st=stack||{},i=input||{};
+  const{refs,trimCandidates}=buildPurchaseAiRefs(trimCats);
+  /* A bucket key is a date. Everything crossing the wire is the INDEX of the
+     bucket relative to the one we're standing in, resolved with the same
+     purchaseBucketsBetween the savings plan uses. */
+  const idx=k=>{
+    const n=purchaseBucketsBetween(nowBucket,k,payPeriods,owner);
+    return n==null?null:n;
+  };
+
+  const context={
+    currency:String(currency||"SAR").slice(0,8),
+    product:purchaseAiProduct(product),
+    price:purchaseAiNum(i.price),
+    available:purchaseAiNum(st.available),
+    periodAllocation:purchaseAiNum(thisBucket&&thisBucket.planned),
+    horizonBuckets:PURCHASE_HORIZON_BUCKETS,
+    historyWarning:!!historyWarning,
+    stack:{
+      banks:purchaseAiNum(st.banks),
+      joint:purchaseAiNum(st.joint),
+      withheld:purchaseAiNum(st.withheld),
+      protectedGoals:purchaseAiNum(st.protectedGoals),
+      protectedGoalCount:Number(st.protectedGoalCount)||0,
+      unlinkedProtectedCount:Number(st.unlinkedProtectedCount)||0,
+      notCountedGoals:Number(st.notCountedGoals)||0,
+      /* COUNTS, never the arrays — reserved[] and inaccessible[] carry account
+         names, which must never leave the device. */
+      reservedCount:((st.reserved)||[]).length,
+      inaccessibleCount:((st.inaccessible)||[]).length,
+      unconverted:Number(st.unconverted)||0,
+      available:purchaseAiNum(st.available),
+    },
+    scenarios:{},
+    horizon:(horizon||[]).map(h=>({n:Number(h.n)||0,income:purchaseAiNum(h.income),
+      planned:purchaseAiNum(h.planned),installmentTotal:purchaseAiNum(h.installmentTotal),
+      headroom:purchaseAiNum(h.headroom)})),
+    trimCandidates,
+  };
+
+  if(s.cash)context.scenarios.cash={
+    feasible:!!s.cash.feasible,
+    remainingAfter:purchaseAiNum(s.cash.remainingAfter),
+    verdict:String(s.cash.verdict||""),
+  };
+  if(s.financed){
+    const b=(s.financed.buckets||[]).map(x=>({n:idx(x.key),income:purchaseAiNum(x.income),
+      baseHeadroom:purchaseAiNum(x.baseHeadroom),obligation:purchaseAiNum(x.obligation),
+      headroom:purchaseAiNum(x.headroom)})).filter(x=>x.n!=null);
+    context.scenarios.financed={
+      financedTotal:purchaseAiNum(s.financed.financedTotal),
+      fees:purchaseAiNum(s.financed.fees),
+      count:Number(s.financed.count)||0,
+      perPayment:purchaseAiNum(s.financed.perPayment),
+      upfront:purchaseAiNum(s.financed.upfront),
+      upfrontFeasible:!!s.financed.upfrontFeasible,
+      availableAfterUpfront:purchaseAiNum(s.financed.availableAfterUpfront),
+      deficitCount:((s.financed.deficits)||[]).length,
+      buckets:b,
+      verdict:String(s.financed.verdict||""),
+    };
+  }
+  if(s.earliest)context.scenarios.earliest={
+    n:Number(s.earliest.n)||0,
+    cumulative:purchaseAiNum(s.earliest.cumulative),
+    shortfall:purchaseAiNum(s.earliest.shortfall),
+    requiredPerBucket:purchaseAiNum(s.earliest.requiredPerBucket),
+    verdict:String(s.earliest.verdict||""),
+  };
+  if(s.savings)context.scenarios.savings={
+    mode:String(s.savings.mode||""),
+    n:s.savings.n==null?0:Number(s.savings.n)||0,
+    shortfall:purchaseAiNum(s.savings.shortfall),
+    requiredPerBucket:purchaseAiNum(s.savings.requiredPerBucket),
+    capacity:purchaseAiNum(s.savings.capacity),
+    tightestHeadroom:purchaseAiNum(s.savings.tightest&&s.savings.tightest.headroom),
+    feasible:!!s.savings.feasible,
+    verdict:String(s.savings.verdict||""),
+  };
+  return{context,refs};
+}
+
+/* Every number that appears anywhere in the context, so the validator can ask
+   "did the model invent this figure?". Both the exact value and its integer
+   rounding are admitted — "about SAR 3,213" for 3212.78 is honest reporting,
+   not invention — and nothing else is. */
+function purchaseAiContextNumbers(v,out){
+  const acc=out||new Set();
+  if(v==null)return acc;
+  if(typeof v==="number"&&isFinite(v)){
+    acc.add(Math.round(v*100)/100);
+    acc.add(Math.round(v));
+    return acc;
+  }
+  if(Array.isArray(v)){v.forEach(x=>purchaseAiContextNumbers(x,acc));return acc;}
+  if(typeof v==="object"){Object.keys(v).forEach(k=>purchaseAiContextNumbers(v[k],acc));return acc;}
+  return acc;
+}
+
+/* Currency-SHAPED, deliberately narrower than "any digits". "over 3 periods"
+   and "12 payments" are the model describing structure it was given; "SAR
+   9,999" is a figure. Three forms count as a figure: a thousands-separated
+   group, anything prefixed by the currency code, and a two-decimal number. */
+function purchaseAiFigures(text,currency){
+  const cur=String(currency||"SAR").replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const re=new RegExp(
+    "(?:"+cur+"\\s*)?(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+\\.\\d{2}\\b)"+
+    "|(?:"+cur+"\\s*)\\d+(?:\\.\\d+)?","gi");
+  const found=[];
+  (String(text||"").match(re)||[]).forEach(m=>{
+    const n=Number(String(m).replace(new RegExp(cur,"gi"),"").replace(/,/g,"").trim());
+    if(isFinite(n))found.push(n);
+  });
+  return found;
+}
+
+/* Rejects the WHOLE response rather than repairing it. A partly-trusted
+   narration is the worst outcome available: the reader cannot tell which
+   sentence was the invented one, and the cards alone are already correct and
+   complete. Returns {ok:true,value} or {ok:false,reason}. */
+function validatePurchaseNarration(res,context){
+  const ctx=context||{};
+  const scenarioIds=Object.keys((ctx.scenarios)||{});
+  const allowedRefs=new Set(Object.keys(((ctx.trimCandidates)||[])
+    .reduce((m,c)=>{m[c.ref]=1;return m;},{})));
+  const numbers=purchaseAiContextNumbers(ctx);
+  const cur=ctx.currency||"SAR";
+
+  const figuresOk=t=>purchaseAiFigures(t,cur).every(n=>
+    numbers.has(Math.round(n*100)/100)||numbers.has(Math.round(n)));
+
+  /* Unknown tokens are stripped rather than rejected — one stale ref is a
+     cosmetic slip. A response that is MOSTLY unknown tokens is a different
+     thing: it means the model was not working from the context it was sent. */
+  let refsSeen=0,refsUnknown=0;
+  const scanRefs=t=>String(t||"").replace(/\{\{(ref\d+)\}\}/g,(m,r)=>{
+    refsSeen++;if(!allowedRefs.has(r))refsUnknown++;return m;});
+
+  if(!res||typeof res!=="object"||Array.isArray(res))return{ok:false,reason:"not an object"};
+  const headline=res.headline;
+  if(typeof headline!=="string"||!headline.trim())return{ok:false,reason:"missing headline"};
+  if(headline.length>PURCHASE_AI_MAX_HEADLINE)return{ok:false,reason:"headline too long"};
+
+  const recommended=res.recommended;
+  if(typeof recommended!=="string")return{ok:false,reason:"missing recommended"};
+  if(recommended!=="none"&&!scenarioIds.includes(recommended))
+    return{ok:false,reason:"recommended is not a supplied scenario"};
+
+  const notesIn=res.scenarioNotes;
+  if(!Array.isArray(notesIn))return{ok:false,reason:"scenarioNotes is not a list"};
+  const notes=[];
+  for(const nt of notesIn){
+    if(!nt||typeof nt!=="object")return{ok:false,reason:"malformed note"};
+    if(typeof nt.id!=="string"||!scenarioIds.includes(nt.id))
+      return{ok:false,reason:"note for an unknown scenario"};
+    if(typeof nt.text!=="string")return{ok:false,reason:"malformed note"};
+    if(nt.text.length>PURCHASE_AI_MAX_NOTE)return{ok:false,reason:"note too long"};
+    if(!figuresOk(nt.text))return{ok:false,reason:"note quotes a figure not in the context"};
+    scanRefs(nt.text);
+    notes.push({id:nt.id,text:nt.text});
+  }
+
+  const watchIn=res.watchOuts;
+  if(!Array.isArray(watchIn))return{ok:false,reason:"watchOuts is not a list"};
+  if(watchIn.length>PURCHASE_AI_MAX_WATCHOUTS)return{ok:false,reason:"too many watch-outs"};
+  const watchOuts=[];
+  for(const w of watchIn){
+    if(typeof w!=="string")return{ok:false,reason:"malformed watch-out"};
+    if(w.length>PURCHASE_AI_MAX_WATCHOUT)return{ok:false,reason:"watch-out too long"};
+    if(!figuresOk(w))return{ok:false,reason:"watch-out quotes a figure not in the context"};
+    scanRefs(w);
+    watchOuts.push(w);
+  }
+
+  if(!figuresOk(headline))return{ok:false,reason:"headline quotes a figure not in the context"};
+  scanRefs(headline);
+  if(refsSeen>0&&refsUnknown>refsSeen/2)return{ok:false,reason:"mostly unknown category tokens"};
+
+  return{ok:true,value:{headline,recommended,scenarioNotes:notes,watchOuts}};
+}
+
+/* Returns an ARRAY OF SEGMENTS, never a string:
+     {t:"text",v:"…"}  |  {t:"ref",v:"Groceries"}
+   The view maps that to real React text nodes. There is deliberately no
+   markdown renderer and no dangerouslySetInnerHTML anywhere in this path —
+   the app has neither today, and adding one is the only way to create an XSS
+   in this feature. Segments rather than React elements so the function is a
+   pure, testable unit outside a browser; the caller decides the emphasis. */
+function rehydratePurchaseRefs(text,refs){
+  const map=refs||{};
+  const out=[];
+  String(text==null?"":text).split(/(\{\{ref\d+\}\})/g).forEach(part=>{
+    if(!part)return;
+    const m=part.match(/^\{\{(ref\d+)\}\}$/);
+    if(!m){out.push({t:"text",v:part});return;}
+    const name=map[m[1]];
+    if(name==null)return;                  // unknown token: stripped, not shown
+    out.push({t:"ref",v:String(name)});
+  });
+  return out;
+}
+
 /* ── Installment state transactions ────────────────────────────────────────
    Every installment mutation is a pure (data, args) => data function here, and
    the App-level mutator is one line: setData(d=>applyX(d,args)) plus
@@ -2637,8 +2903,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.35.0";
-const BUILD_ID="2026.08.07.0008";
+const APP_VERSION="1.36.0";
+const BUILD_ID="2026.08.07.0009";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
