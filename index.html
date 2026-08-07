@@ -1768,24 +1768,91 @@ function purchaseHeadroomForBucket(ctx,bucketKey){
    `unconverted` and excluded rather than silently added at face value. The
    Bills Reserve is household-wide and is subtracted in full from one owner's
    cash — deliberate, understates available, and labelled on screen. */
-function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds,todayStr,toBase}){
+function goalSavedTotal(g){
+  return((g&&g.contributions)||[]).filter(c=>c&&!c.deletedAt)
+    .reduce((a,c)=>a+(Number(c.amount)||0),0);
+}
+
+function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds,
+                                 includedBankIds,releasedBankIds,todayStr,toBase}){
   const conv=typeof toBase==="function"?toBase:v=>v;
-  let own=0,joint=0,unconverted=0;
+  const included=new Set(includedBankIds||[]);
+  /* Releasing a reserved account is a per-decision lever, the mirror of
+     unprotecting a goal — "spend the emergency fund on THIS". It does not
+     release a protected goal that lives in the same account: the goal has its
+     own toggle, and the max() below still withholds what that goal claims. */
+  const released=new Set(releasedBankIds||[]);
+  const prot=new Set(protectedGoalIds||[]);
+  const protectedList=(goals||[]).filter(g=>g&&!g.deletedAt&&(g.owner||"me")===owner&&prot.has(g.id));
+
+  /* ── The withholding is computed PER BANK, and that is the whole design ──
+     Goal money lives inside bank balances, so an emergency fund tracked as
+     BOTH a reserved account and a protected goal linked to it would be
+     subtracted twice by two independent totals — 22,000 withheld from an
+     account holding 12,000, driving "available" negative and refusing
+     purchases the household can afford. `max`, never a sum: the goal is
+     already INSIDE the account, so a reserved account withholds its whole
+     balance and the goal it holds costs nothing further. */
+  let own=0,joint=0,unconverted=0,withheld=0;
+  const inaccessible=[],reserved=[];
+  const countedBankIds=new Set();
   (banks||[]).filter(b=>b&&!b.deletedAt).forEach(b=>{
     const mine=b.owner===owner,isJoint=b.owner==="household";
     if(!mine&&!isJoint)return;
     const v=conv(bankValue(b,todayStr),b.currency);
-    if(v==null||!isFinite(Number(v))){unconverted++;return;}
-    if(mine)own+=Number(v);else joint+=Number(v);
+    const value=(v==null||!isFinite(Number(v)))?null:Number(v);
+    if(isJoint){
+      /* Reported, never added. Scope is per-owner and "household" is not a
+         third person; a joint account silently missing from a total is the
+         surprise the greyed line on screen exists to prevent. */
+      if(value==null)unconverted++;else joint+=value;
+      return;
+    }
+    /* An account you cannot reach is excluded whatever it holds — but it can be
+       opted back in for ONE purchase (buying something while in the
+       Philippines), which is a per-decision lever living in the draft, never a
+       change to the account. */
+    if(!bankIsAccessible(b)&&!included.has(b.id)){
+      inaccessible.push({id:b.id,name:b.name||"Account",currency:b.currency,
+        rawValue:bankValue(b,todayStr),value});
+      return;
+    }
+    if(value==null){unconverted++;return;}
+    own+=value;
+    countedBankIds.add(b.id);
+    const claimed=protectedList.filter(g=>g.bankId===b.id).reduce((s,g)=>s+goalSavedTotal(g),0);
+    const isReserved=bankIsReserved(b);
+    const reservedAmt=(isReserved&&!released.has(b.id))?value:0;
+    const hold=Math.max(reservedAmt,claimed);
+    if(hold>0)withheld+=hold;
+    if(isReserved)reserved.push({id:b.id,name:b.name||"Account",value,claimed,held:hold,
+      released:released.has(b.id)});
   });
-  const prot=new Set(protectedGoalIds||[]);
-  const protectedList=(goals||[]).filter(g=>g&&!g.deletedAt&&(g.owner||"me")===owner&&prot.has(g.id));
-  const protectedGoals=protectedList.reduce((s,g)=>
-    s+(g.contributions||[]).filter(c=>c&&!c.deletedAt)
-      .reduce((a,c)=>a+(Number(c.amount)||0),0),0);
+
+  /* Three ways a protected goal's bankId can resolve, and they are NOT the
+     same answer:
+       • a counted bank of this owner → already folded into that bank's max()
+       • a bank that exists but is NOT counted (unreachable, joint, the other
+         person's) → subtract NOTHING. Its money was never added to `own`, so
+         subtracting it would remove money that isn't there.
+       • absent, or pointing at a bank that no longer resolves → subtract from
+         the pool, exactly as before this build. We don't know where the money
+         sits, and conservative is the right failure direction. */
+  const bankById=new Map((banks||[]).filter(b=>b&&!b.deletedAt).map(b=>[b.id,b]));
+  let unlinkedProtected=0,notCountedGoals=0;
+  protectedList.forEach(g=>{
+    if(g.bankId&&countedBankIds.has(g.bankId))return;              // handled per-bank
+    if(g.bankId&&bankById.has(g.bankId)){notCountedGoals++;return;} // money isn't in `own`
+    unlinkedProtected+=goalSavedTotal(g);
+  });
+
   const reserve=Number(billsReserve)||0;
-  return{banks:own,joint,reserve,protectedGoals,protectedGoalCount:protectedList.length,
-    unconverted,available:own-reserve-protectedGoals};
+  return{banks:own,joint,reserve,
+    withheld,reserved,inaccessible,
+    protectedGoals:unlinkedProtected,protectedGoalCount:protectedList.length,
+    unlinkedProtectedCount:protectedList.filter(g=>!g.bankId||!bankById.has(g.bankId)).length,
+    notCountedGoals,unconverted,
+    available:own-reserve-withheld-unlinkedProtected};
 }
 
 /* A hypothetical schedule for a purchase not yet made. The financed total is
@@ -1856,7 +1923,64 @@ function projectPurchaseScenarios(ctx,input){
     cumulative+=Math.max(0,purchaseHeadroomForBucket(c,key).headroom);
   }
 
-  return{cash,financed,earliest};
+  const savings=purchaseSavingsPlan(c,{price,available,desiredDate:i.desiredDate});
+
+  return{cash,financed,earliest,savings};
+}
+
+/* How many buckets forward `toBucket` is from `fromBucket`, or null if it is in
+   the past or beyond the horizon. Stepping with the existing bucketShift rather
+   than doing date arithmetic is what makes this correct for a pay-period owner
+   as well as a calendar-month one — a period is not a month, and counting
+   months between two period keys would quietly drift. */
+function purchaseBucketsBetween(fromBucket,toBucket,payPeriods,owner){
+  if(!fromBucket||!toBucket)return null;
+  if(String(toBucket)===String(fromBucket))return 0;
+  for(let n=1;n<=PURCHASE_HORIZON_BUCKETS;n++){
+    if(String(bucketShift(fromBucket,payPeriods,owner,n))===String(toBucket))return n;
+  }
+  return null;
+}
+
+/* "I want it by this date — what do I set aside, and can I?"
+   The question Build A never answered: it reported the earliest possible date
+   instead, and the date the person typed was used for nothing at all.
+
+   Capacity reuses the SAME max(0, headroom) accumulation the earliest walk
+   above performs — a bucket in deficit contributes nothing and never subtracts,
+   because you cannot save negative money into a purchase. Writing a second
+   per-bucket reduce here is how the two answers would drift apart.
+
+   Feasibility is capacity vs shortfall across the whole window, not
+   requiredPerBucket vs every bucket: saving more in a fat period to cover a
+   lean one is a real plan, and rejecting it would be wrong. The tightest
+   bucket is reported separately so the UI can warn about the front-loading
+   that implies. */
+function purchaseSavingsPlan(ctx,{price,available,desiredDate}){
+  const c=ctx||{};
+  if(!desiredDate)return null;
+  const nowBucket=bucketKeyFor(c.todayStr,c.payPeriods,c.owner);
+  const targetBucket=bucketKeyFor(desiredDate,c.payPeriods,c.owner);
+  const shortfall=Math.max(0,(Number(price)||0)-(Number(available)||0));
+  /* A date already past, or inside the period we are standing in, is not a
+     savings plan — there is nothing left to spread it over. Say so and point at
+     the cash answer rather than dividing by zero. */
+  if(String(targetBucket)<=String(nowBucket))
+    return{id:"savings",mode:"now",targetBucket,n:0,shortfall,
+      requiredPerBucket:shortfall,capacity:0,tightest:null,feasible:shortfall<=0};
+  const n=purchaseBucketsBetween(nowBucket,targetBucket,c.payPeriods,c.owner);
+  if(n==null)return{id:"savings",mode:"beyondHorizon",targetBucket,n:null,shortfall,
+    requiredPerBucket:0,capacity:0,tightest:null,feasible:false};
+  let capacity=0,tightest=null;
+  for(let k=0;k<n;k++){
+    const key=bucketShift(nowBucket,c.payPeriods,c.owner,k);
+    const h=purchaseHeadroomForBucket(c,key);
+    capacity+=Math.max(0,h.headroom);
+    if(!tightest||h.headroom<tightest.headroom)tightest={key,headroom:h.headroom,income:h.income};
+  }
+  return{id:"savings",mode:"plan",targetBucket,n,shortfall,
+    requiredPerBucket:shortfall/n,capacity,tightest,
+    feasible:capacity>=shortfall};
 }
 
 /* Two axes, module-scope thresholds, not a setting: cash-flow risk (does any
@@ -1879,6 +2003,19 @@ function purchaseVerdict(scenario,ctx){
     return"good";
   }
   if(scenario.id==="earliest")return scenario.n<=3?"good":"flat";
+  if(scenario.id==="savings"){
+    /* Nothing left to save for is simply good; a date already gone, or one the
+       plan cannot reach at all, is bad. */
+    if(scenario.shortfall<=0)return"good";
+    if(scenario.mode!=="plan")return"bad";
+    if(!scenario.feasible)return"bad";
+    /* Feasible across the window, but only by putting aside more than the
+       leanest period has spare — a real plan, and one worth flagging, because
+       it means front-loading rather than an even monthly habit. */
+    const t=scenario.tightest;
+    if(t&&scenario.requiredPerBucket>t.headroom)return"warn";
+    return"good";
+  }
   return"flat";
 }
 
@@ -2488,8 +2625,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.32.0";
-const BUILD_ID="2026.08.07.0005";
+const APP_VERSION="1.33.0";
+const BUILD_ID="2026.08.07.0006";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -7238,9 +7375,9 @@ function App(){
             payPeriods:data.payPeriods,focus:installmentFocus,fundingCategoriesFor}}/>}
           {tab==="advisor"&&<PurchaseAdvisorView {...{monthlyPlans,plans,activePlanId,
             installments,installmentPayments,banks,goals,billsReserve,expenses,planForMonth,
-            payPeriods:data.payPeriods,convert,
+            payPeriods:data.payPeriods,convert,ratesStaleDays,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
-            addInstallment,openInstallment}}/>}
+            addInstallment,addGoal,openInstallment,setTab}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -11737,7 +11874,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
             </div>
             <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:-2}}>
               {!bankIsAccessible(b)
-                ?"Left out of the Purchase Advisor's available cash, and shown there as excluded. Still counted in Net Worth."
+                ?"Left out of the Purchase Advisor's available cash, shown there as excluded, and includable for one purchase from that tab. Still counted in Net Worth."
                 :bankIsReserved(b)
                   ?"Held back from the Purchase Advisor's available cash. You can release it for a single purchase from that tab."
                   :"Counted as spendable by the Purchase Advisor."}
@@ -14390,7 +14527,7 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
 function defaultPurchaseDraft(owner){
   return{owner:owner||"me",product:"",price:"",desiredDate:"",method:"cash",
     downPayment:"",count:4,firstDue:"",fees:"",
-    unprotectedGoalIds:[],trims:{}};
+    unprotectedGoalIds:[],includedBankIds:[],releasedBankIds:[],trims:{}};
 }
 
 /* The category-trim lever. "What if I spent 300 less on eating out?" — applied
@@ -14438,8 +14575,8 @@ function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
 }
 
 function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
-  banks,goals,billsReserve,expenses,planForMonth,payPeriods,convert,
-  fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,openInstallment}){
+  banks,goals,billsReserve,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
+  fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab}){
   const todayStr=todayISO();
   const bucket=bucketNow(payPeriods,budgetOwner);
 
@@ -14450,7 +14587,8 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      they would simply never match, which is worse than clearing them because
      the lever would look pulled and do nothing. */
   useEffect(()=>{
-    setDraft(d=>d.owner===budgetOwner?d:{...d,owner:budgetOwner,trims:{},unprotectedGoalIds:[]});
+    setDraft(d=>d.owner===budgetOwner?d
+      :{...d,owner:budgetOwner,trims:{},unprotectedGoalIds:[],includedBankIds:[],releasedBankIds:[]});
   },[budgetOwner]);
   const set=patch=>setDraft(d=>({...d,...patch}));
 
@@ -14476,14 +14614,21 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      document's. A conversion that isn't available yet returns null and the
      account is reported as unconverted rather than added at face value. */
   const toBase=useCallback((v,ccy)=>(!ccy||ccy===cur)?v:convert(v,ccy,cur),[convert,cur]);
+  /* Unreachable accounts opted in for THIS purchase only — a per-decision
+     lever, exactly like unprotectedGoalIds. The account's own flag is a fact
+     about the account and lives on the record; including it once does not. */
+  const includedBankIds=useMemo(()=>draft.includedBankIds||[],[draft.includedBankIds]);
+  const releasedBankIds=useMemo(()=>draft.releasedBankIds||[],[draft.releasedBankIds]);
   const stack=useMemo(()=>purchaseAvailableStack({banks,goals,billsReserve,owner:budgetOwner,
-    protectedGoalIds,todayStr,toBase}),[banks,goals,billsReserve,budgetOwner,protectedGoalIds,todayStr,toBase]);
+    protectedGoalIds,includedBankIds,releasedBankIds,todayStr,toBase}),
+    [banks,goals,billsReserve,budgetOwner,protectedGoalIds,includedBankIds,releasedBankIds,todayStr,toBase]);
 
   const input=useMemo(()=>({price:Number(draft.price)||0,
     financed:financedMode&&(Number(draft.count)||0)>0&&!!draft.firstDue,
     downPayment:draft.downPayment,feesOrInterest:draft.fees,
-    count:draft.count,firstDueDate:draft.firstDue}),
-    [draft.price,draft.count,draft.firstDue,draft.downPayment,draft.fees,financedMode]);
+    count:draft.count,firstDueDate:draft.firstDue,
+    desiredDate:draft.desiredDate}),
+    [draft.price,draft.count,draft.firstDue,draft.downPayment,draft.fees,financedMode,draft.desiredDate]);
 
   const scenarios=useMemo(()=>projectPurchaseScenarios({...engineCtx,stack,todayStr},input),
     [engineCtx,stack,todayStr,input]);
@@ -14536,6 +14681,44 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   const cashVerdict=purchaseVerdict(scenarios.cash,{periodAllocation:thisBucket.planned});
   const financedVerdict=purchaseVerdict(scenarios.financed,{});
   const earliestVerdict=purchaseVerdict(scenarios.earliest,{});
+  /* null when no date was given — that is what switches the savings card back
+     to its earliest-possible mode. */
+  const sav=scenarios.savings;
+  const savingsVerdict=purchaseVerdict(sav,{});
+
+  /* The savings mirror of "Create this plan in Installments". Goals already
+     ARE savings plans — target, monthly, contributions — the deadline is the
+     only thing they lacked, and A2 added it. One write through the existing
+     addGoal, then it is an ordinary goal and the advisor stores nothing:
+     because it belongs to this owner it immediately appears in the protected
+     list above, so the money it holds stops counting as spendable. */
+  const startSaving=()=>{
+    if(!sav||sav.mode!=="plan"||sav.shortfall<=0)return;
+    /* The goal's target is the SHORTFALL, not the price. A goal targeting the
+       full price would be asking you to save money you already have, and would
+       read as 0% and permanently behind from the moment it was created — which
+       is what the first version of this did. This mirrors the card directly:
+       "starting from available X, still to find Y", and Y is the goal.
+
+       `monthly` is computed with the GOAL's own arithmetic rather than reused
+       from the card. The advisor counts pay-period buckets and the goal counts
+       whole calendar months, so the two legitimately differ by one near a
+       boundary; seeding the card's figure produced a goal that called itself
+       behind the instant it appeared. Deriving it through goalDeadlineStatus
+       means the created goal is self-consistent, and if the person edits the
+       monthly afterwards the goal will tell them honestly. */
+    const target=Math.round(sav.shortfall);
+    const probe=goalDeadlineStatus({target,contributions:[],monthly:0,
+      deadline:draft.desiredDate},todayStr);
+    const monthly=Math.ceil(probe?probe.requiredMonthly:sav.requiredPerBucket);
+    const id=addGoal(budgetOwner,{
+      name:product||"Purchase",
+      type:"tech",
+      target,monthly,
+      deadline:draft.desiredDate||null,
+    });
+    if(id&&setTab)setTab("goals");
+  };
 
   const openCreate=()=>{
     const f=scenarios.financed;
@@ -14644,20 +14827,99 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
               label is literally "Me", and "Me's accounts" is not a sentence. */}
           {stackRow(`Accounts · ${owners[budgetOwner]}`,stack.banks)}
           {stackRow("Bills Reserve",stack.reserve,"minus")}
-          {stackRow(stack.protectedGoalCount===1?"1 protected goal"
-            :`${stack.protectedGoalCount} protected goals`,stack.protectedGoals,"minus")}
+          {/* One line per reserved account, naming it. A single "withheld"
+              total would be the bare number this card exists to avoid. */}
+          {stack.reserved.map(r=>
+            <div key={r.id} style={{...rowLine,alignItems:"flex-start"}}>
+              <span style={{flex:1,minWidth:0}}>
+                {r.name} — emergency fund
+                {/* Releasable, because "won't spend it" is a policy, not a
+                    capability. This is what the two-concept split is FOR: you
+                    can ask what raiding it would cost without changing the
+                    account. Releasing does not release a protected goal living
+                    in the same account — that has its own toggle below. */}
+                <button onClick={()=>setDraft(d=>{
+                    const next=new Set(d.releasedBankIds||[]);
+                    if(next.has(r.id))next.delete(r.id);else next.add(r.id);
+                    return{...d,releasedBankIds:[...next]};
+                  })}
+                  style={{display:"block",background:"transparent",border:"none",padding:"4px 0",
+                    minHeight:32,color:r.released?"#E07B2A":P.jade,fontSize:11,fontWeight:600,
+                    textAlign:"left"}}>
+                  {r.released
+                    ?"✓ released for this purchase — tap to protect again"
+                    :"Spend it on this purchase"}
+                </button>
+                {r.released&&r.held>0&&
+                  <span style={{display:"block",fontSize:11,color:P.faint}}>
+                    {fmt(r.held)} still held back by a goal kept in this account.
+                  </span>}
+              </span>
+              <span className="tnum" style={{fontWeight:600,flexShrink:0,
+                color:r.held>0?P.wine:P.faint}}>
+                {r.held>0?`− ${fmt(r.held)}`:`(${fmt(r.value)} freed)`}
+              </span>
+            </div>)}
+          {stack.protectedGoals>0&&
+            stackRow(stack.unlinkedProtectedCount===1?"1 protected goal"
+              :`${stack.unlinkedProtectedCount} protected goals`,stack.protectedGoals,"minus")}
           <div style={{...rowLine,borderTop:`1px solid ${P.line}`,marginTop:6,paddingTop:8,
             fontSize:14,color:P.neuInk}}>
             <span style={{fontWeight:600}}>Available</span>
             <span className="tnum" style={{fontWeight:700,
               color:stack.available>=0?P.neuInk:P.wine}}>{fmt(stack.available)}</span>
           </div>
-          {/* Excluded, and said so. A joint account silently missing from a
-              total is the surprise this line exists to prevent. */}
+
+          {/* ── Excluded, and said so ──
+              An account silently missing from a total is the surprise these
+              lines exist to prevent. The unreachable ones are tappable: a
+              purchase you would genuinely make in that country can count that
+              money, for this purchase only. */}
+          {stack.inaccessible.map(a=>{
+            const on=includedBankIds.indexOf(a.id)>=0;
+            return(
+              <div key={a.id} style={{...rowLine,alignItems:"flex-start",color:P.faint,fontSize:11}}>
+                <span style={{flex:1,minWidth:0}}>
+                  {a.name} — can't reach
+                  {a.value==null
+                    ?<span style={{display:"block"}}>
+                       Can't convert {a.currency} right now, so it can't be included.
+                     </span>
+                    :<button onClick={()=>setDraft(d=>{
+                        const next=new Set(d.includedBankIds||[]);
+                        if(next.has(a.id))next.delete(a.id);else next.add(a.id);
+                        return{...d,includedBankIds:[...next]};
+                      })}
+                      style={{display:"block",background:"transparent",border:"none",padding:"4px 0",
+                        minHeight:32,color:on?P.grD:P.jade,fontSize:11,fontWeight:600,textAlign:"left"}}>
+                      {on?"✓ counted for this purchase — tap to exclude":"Include for this purchase"}
+                    </button>}
+                </span>
+                <span className="tnum" style={{flexShrink:0}}>
+                  {a.currency} {(Number(a.rawValue)||0).toLocaleString("en-US",{maximumFractionDigits:0})}
+                  {a.value!=null&&a.currency!==cur&&
+                    <span style={{display:"block"}}>≈ {fmt(a.value)}</span>}
+                </span>
+              </div>
+            );
+          })}
+          {/* The stale-rate caveat the cached FX makes possible — a converted
+              figure has to say how old the rate behind it is. */}
+          {stack.inaccessible.some(a=>a.value!=null&&a.currency!==cur)&&ratesStaleDays!=null&&ratesStaleDays>0&&
+            <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+              Converted at the last exchange rate this device fetched
+              ({ratesStaleDays} day{ratesStaleDays===1?"":"s"} ago).
+            </div>}
           {stack.joint>0&&
             <div style={{...rowLine,color:P.faint,fontSize:11}}>
               <span>Joint accounts — not counted</span>
               <span className="tnum">{fmt(stack.joint)}</span>
+            </div>}
+          {stack.notCountedGoals>0&&
+            <div style={{fontSize:11,color:P.faint,marginTop:6,lineHeight:1.5}}>
+              {stack.notCountedGoals} protected goal{stack.notCountedGoals===1?"":"s"} sit
+              {stack.notCountedGoals===1?"s":""} in an account not counted above, so
+              {stack.notCountedGoals===1?" it is":" they are"} not subtracted again.
             </div>}
           {stack.unconverted>0&&
             <div style={{fontSize:11,color:P.faint,marginTop:6}}>
@@ -14665,8 +14927,9 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
               couldn't be converted and {stack.unconverted===1?"is":"are"} excluded.
             </div>}
           <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
-            Goal balances sit inside these accounts, so protecting a goal subtracts it here.
-            The Bills Reserve is household-wide and always protected.
+            Goal balances sit inside these accounts, so protecting a goal subtracts it here —
+            once, even when the goal names the account it lives in. The Bills Reserve is
+            household-wide and always protected.
           </div>
         </section>
 
@@ -14751,10 +15014,71 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
               </>}
           </section>
 
-          {/* ── 3 · Earliest affordable ── */}
+          {/* ── 3 · Save up for it ──
+              ONE card with two modes. With a date it answers "can I make it,
+              and what per period?"; without one it falls back to the
+              earliest-possible answer. Two separate cards would say nearly the
+              same thing twice in different words. */}
           <section style={card}>
-            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>Save up for it instead</div>
-            {!scenarios.earliest
+            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>
+              {sav&&sav.mode==="plan"?`Save up for it by ${instShortDate(draft.desiredDate)}`:"Save up for it instead"}
+            </div>
+
+            {sav&&sav.mode==="plan"&&<>
+              <Verdict tone={savingsVerdict}>
+                {sav.shortfall<=0
+                  ?"You can already afford it out of cash"
+                  :!sav.feasible
+                    ?`Not on this plan — ${fmt(sav.capacity)} spare before then, ${fmt(sav.shortfall)} needed`
+                    :savingsVerdict==="warn"
+                      ?`Possible, but one period can't spare ${fmt(sav.requiredPerBucket)}`
+                      :`On track — set aside ${fmt(sav.requiredPerBucket)} per period`}
+              </Verdict>
+              {sav.shortfall>0&&<>
+                <div style={rowLine}><span>Starting from available</span>
+                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(stack.available)}</span></div>
+                <div style={rowLine}><span>Still to find</span>
+                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.shortfall)}</span></div>
+                <div style={rowLine}><span>Periods until then</span>
+                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{sav.n}</span></div>
+                <div style={rowLine}><span>Set aside per period</span>
+                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.requiredPerBucket)}</span></div>
+                <div style={rowLine}><span>Spare per period, tightest</span>
+                  <span className="tnum" style={{fontWeight:600,
+                    color:sav.tightest&&sav.tightest.headroom>=sav.requiredPerBucket?P.neuInk:"#E07B2A"}}>
+                    {sav.tightest?fmt(sav.tightest.headroom):"—"}</span></div>
+              </>}
+              <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                Counts only what each period has left over after the plan and existing
+                instalments. Saving more in one period to cover a leaner one is allowed —
+                the tightest period is shown so you know when that's required.
+              </div>
+            </>}
+
+            {sav&&sav.mode==="now"&&
+              <>
+                <Verdict tone={savingsVerdict}>
+                  {sav.shortfall<=0?"You can already afford it out of cash":"That date is already here"}
+                </Verdict>
+                <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
+                  {sav.shortfall<=0
+                    ?"Nothing left to save for — see the cash answer above."
+                    :`There is no period left to spread ${fmt(sav.shortfall)} over. Either pick a later
+                      date or look at the cash and payment-plan answers above.`}
+                </div>
+              </>}
+
+            {sav&&sav.mode==="beyondHorizon"&&
+              <>
+                <Verdict tone="bad">That date is more than two years out</Verdict>
+                <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
+                  This tab projects {PURCHASE_HORIZON_BUCKETS} periods ahead and won't guess
+                  past that.
+                </div>
+              </>}
+
+            {/* No date given — the original earliest-possible answer. */}
+            {!sav&&(!scenarios.earliest
               ?<>
                 <Verdict tone="bad">Not reachable within two years</Verdict>
                 <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
@@ -14778,11 +15102,21 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                     <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.earliest.requiredPerBucket)}</span></div>
                 </>}
                 <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
-                  Counts only what each period has left over after the plan and existing
-                  instalments — a plan that finishes along the way frees its money up
-                  automatically.
+                  Set a date above and this becomes "can I make it?" instead. Counts only what
+                  each period has left over — a plan that finishes along the way frees its money
+                  up automatically.
                 </div>
-              </>}
+              </>)}
+
+            {/* The savings mirror of "Create this plan in Installments". Goals
+                already ARE savings plans; the deadline is what they lacked. */}
+            {sav&&sav.mode==="plan"&&sav.shortfall>0&&
+              <button onClick={startSaving}
+                style={{width:"100%",borderRadius:12,padding:"12px 0",marginTop:12,
+                  fontSize:13,fontWeight:600,border:`1px solid ${P.line}`,
+                  background:"transparent",color:P.grD}}>
+                Start saving the {fmt(sav.shortfall)}
+              </button>}
           </section>
 
           {/* ── Levers ── */}

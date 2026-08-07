@@ -62,7 +62,8 @@ this.INSTALLMENT_ROUND_TOL=INSTALLMENT_ROUND_TOL;`,ctx);
 const{
   categoryEffectiveAmt,purchaseTrimFor,purchasePlannedTotal,purchaseHeadroomForBucket,
   purchaseAvailableStack,buildPurchaseSchedule,projectPurchaseScenarios,purchaseVerdict,
-  purchaseHistoryWarning,
+  purchaseHistoryWarning,purchaseBucketsBetween,purchaseSavingsPlan,goalSavedTotal,
+  bankIsAccessible,bankIsReserved,
   resolvePlanForMonth,derivedInstallmentRowsFor,bucketKeyFor,bucketShift,
   generateInstallmentSchedule,scheduleDiff,scheduleTotal,roundTo,addMonthsISO,
   PURCHASE_HORIZON_BUCKETS,PURCHASE_THIN_PCT,MIN_TREND_BUCKETS,INSTALLMENT_ROUND_TOL,
@@ -538,6 +539,215 @@ t("10c · trims flow through headroom and move the earliest date",()=>{
   const after=projectPurchaseScenarios({...walkCtx(),trims:{c1:400}},{price:500});
   assert.equal(before.earliest.n,5);
   assert.equal(after.earliest.n,1,"headroom 500 a period reaches 500 in one");
+});
+
+/* ── 11 · account flags and per-bank withholding (A3) ─────────────────────
+   The rule this section exists for: goal money lives INSIDE bank balances, so
+   an emergency fund tracked as both a reserved account AND a protected goal
+   linked to it must be subtracted ONCE. Two independent totals is how it gets
+   subtracted twice, which drives "available" negative and refuses purchases
+   the household can afford. */
+console.log("\n11 · account flags and per-bank withholding\n");
+
+const A3BANKS=[
+  {id:"bSA", owner:"me",       name:"Salary",   currency:"SAR",balance:31000},
+  {id:"bEmg",owner:"me",       name:"Emergency",currency:"SAR",balance:15000,purpose:"emergency"},
+  {id:"bPH", owner:"me",       name:"BDO",      currency:"PHP",balance:150000,accessible:false},
+  {id:"bJt", owner:"household",name:"Joint",    currency:"SAR",balance:18000},
+];
+// The emergency GOAL lives in the emergency ACCOUNT. That is the trap.
+const A3GOALS=[
+  {id:"gEmg",owner:"me",name:"Emergency",bankId:"bEmg",contributions:[{id:"k1",amount:10000}]},
+  {id:"gTrip",owner:"me",name:"Trip",contributions:[{id:"k2",amount:2500}]},   // unlinked
+];
+const fx=(v,c)=>c==="SAR"?v:v*0.065;
+const stackOf=(over={})=>purchaseAvailableStack({banks:A3BANKS,goals:A3GOALS,billsReserve:0,
+  owner:"me",protectedGoalIds:["gEmg","gTrip"],todayStr:TODAY,toBase:fx,...over});
+
+t("11 · a reserved account holding its own goal is withheld ONCE, not twice",()=>{
+  const s=stackOf();
+  /* Counted: Salary 31,000 + Emergency 15,000 = 46,000. BDO is unreachable,
+     Joint is never added. Withheld: max(15,000 reserved, 10,000 claimed) =
+     15,000 — NOT 25,000. Trip is unlinked, so it still comes off the pool. */
+  assert.equal(s.banks,46000);
+  assert.equal(s.withheld,15000,"max(reserved, claimed) — summing would withhold 25,000");
+  assert.equal(s.protectedGoals,2500,"only the unlinked goal comes off the pool");
+  assert.equal(s.available,46000-15000-2500);
+  assert.ok(s.available>0,"the double-subtraction bug drove this negative");
+});
+
+t("11b · a goal claiming MORE than its reserved account holds wins the max()",()=>{
+  const goals=[{id:"gEmg",owner:"me",name:"Emergency",bankId:"bEmg",
+    contributions:[{id:"k1",amount:22000}]}];
+  const s=stackOf({goals,protectedGoalIds:["gEmg"]});
+  assert.equal(s.withheld,22000,"the larger of the two, conservatively");
+  assert.equal(s.protectedGoals,0,"it is linked, so it never doubles onto the pool");
+});
+
+t("11c · an UNRESERVED account still withholds a protected goal kept in it",()=>{
+  /* Linking a goal to an ordinary account must not accidentally free it. */
+  const banks=A3BANKS.map(b=>b.id==="bEmg"?{...b,purpose:null}:b);
+  const s=stackOf({banks});
+  assert.equal(s.withheld,10000,"claimed by the goal, though the account isn't reserved");
+  assert.equal(s.available,46000-10000-2500);
+});
+
+t("11d · the three bankId resolutions are three different answers",()=>{
+  const base={banks:A3BANKS,billsReserve:0,owner:"me",todayStr:TODAY,toBase:fx};
+  // (1) counted bank → folded into that bank's max(), never onto the pool
+  const counted=purchaseAvailableStack({...base,protectedGoalIds:["g"],
+    goals:[{id:"g",owner:"me",bankId:"bEmg",contributions:[{id:"k",amount:9000}]}]});
+  assert.equal(counted.protectedGoals,0);
+  assert.equal(counted.withheld,15000);
+  // (2) a bank that is NOT counted → subtract NOTHING; its money was never added
+  const notCounted=purchaseAvailableStack({...base,protectedGoalIds:["g"],
+    goals:[{id:"g",owner:"me",bankId:"bPH",contributions:[{id:"k",amount:9000}]}]});
+  assert.equal(notCounted.protectedGoals,0,"subtracting would remove money that isn't in the total");
+  assert.equal(notCounted.notCountedGoals,1);
+  assert.equal(notCounted.available,46000-15000);
+  // (3) absent or dangling → comes off the pool, exactly as before this build
+  const dangling=purchaseAvailableStack({...base,protectedGoalIds:["g"],
+    goals:[{id:"g",owner:"me",bankId:"bGONE",contributions:[{id:"k",amount:9000}]}]});
+  assert.equal(dangling.protectedGoals,9000,"a deleted account is not evidence the money moved");
+});
+
+t("11e · an unreachable account is excluded, reported, and includable for one purchase",()=>{
+  const s=stackOf();
+  assert.equal(s.inaccessible.length,1);
+  assert.equal(s.inaccessible[0].id,"bPH");
+  assert.equal(s.inaccessible[0].value,150000*0.065,"reported converted, just not added");
+  const inc=stackOf({includedBankIds:["bPH"]});
+  assert.equal(inc.inaccessible.length,0);
+  assert.equal(inc.banks,46000+150000*0.065);
+  assert.equal(inc.available-s.available,150000*0.065,"including it frees exactly its value");
+});
+
+t("11f · an unreachable account with no FX is reported but cannot be included",()=>{
+  const noFx=stackOf({toBase:(v,c)=>c==="SAR"?v:null});
+  assert.equal(noFx.inaccessible[0].value,null,"the UI keys on this to disable the toggle");
+  const tried=stackOf({toBase:(v,c)=>c==="SAR"?v:null,includedBankIds:["bPH"]});
+  assert.equal(tried.banks,46000,"150,000 PHP must never land in a SAR total");
+  assert.equal(tried.unconverted,1);
+});
+
+t("11g · releasing a reserved account frees it, but not a goal kept inside it",()=>{
+  const s=stackOf({releasedBankIds:["bEmg"]});
+  /* The emergency ACCOUNT is released, so its 15,000 reservation drops — but
+     the emergency GOAL still claims 10,000 and has its own toggle. Releasing
+     the account must not silently spend the goal. */
+  assert.equal(s.withheld,10000);
+  assert.equal(s.reserved[0].released,true);
+  assert.equal(s.reserved[0].held,10000);
+  // unprotecting the goal as well frees the rest
+  const both=stackOf({releasedBankIds:["bEmg"],protectedGoalIds:["gTrip"]});
+  assert.equal(both.withheld,0);
+  assert.equal(both.available,46000-2500);
+});
+
+t("11h · with no flags set anywhere, the arithmetic is exactly what it was",()=>{
+  /* Backward compatibility: every account reachable, none reserved, no goal
+     linked. A2 shipped the fields absent by default, so this is what every
+     existing document actually looks like. */
+  const banks=A3BANKS.map(b=>({id:b.id,owner:b.owner,name:b.name,currency:b.currency,balance:b.balance}));
+  const goals=A3GOALS.map(g=>({id:g.id,owner:g.owner,name:g.name,contributions:g.contributions}));
+  const s=purchaseAvailableStack({banks,goals,billsReserve:6100,owner:"me",
+    protectedGoalIds:["gEmg","gTrip"],todayStr:TODAY,toBase:fx});
+  assert.equal(s.banks,46000+150000*0.065,"nothing is excluded when nothing is flagged");
+  assert.equal(s.withheld,0);
+  assert.equal(s.protectedGoals,12500);
+  assert.equal(s.available,s.banks-6100-12500);
+});
+
+/* ── 12 · the date-driven savings plan (A3) ───────────────────────────────
+   The question Build A never answered: it reported the earliest possible date
+   and used the date the person typed for nothing at all. */
+console.log("\n12 · date-driven savings plan\n");
+
+t("12 · purchaseBucketsBetween counts forward, and refuses the past and the horizon",()=>{
+  assert.equal(purchaseBucketsBetween("2026-08","2026-08",CAL,"me"),0);
+  assert.equal(purchaseBucketsBetween("2026-08","2026-12",CAL,"me"),4);
+  assert.equal(purchaseBucketsBetween("2026-08","2026-07",CAL,"me"),null,"backwards is not a plan");
+  assert.equal(purchaseBucketsBetween("2026-08","2030-01",CAL,"me"),null,"past the horizon");
+  assert.equal(purchaseBucketsBetween("2026-08",null,CAL,"me"),null);
+  // and it steps in PERIODS for a pay-period owner, not months
+  const PP={me:{enabled:true,payday:28,actualStarts:{}},wife:{enabled:false,payday:1,actualStarts:{}}};
+  const from=bucketKeyFor("2026-08-10",PP,"me");
+  assert.equal(purchaseBucketsBetween(from,bucketShift(from,PP,"me",3),PP,"me"),3);
+});
+
+t("12b · it plans from AVAILABLE cash, not from zero",()=>{
+  /* Starting from zero would tell you to save the full price for something
+     your available cash already covers. */
+  const s=purchaseSavingsPlan(walkCtx(),{price:1200,available:1000,desiredDate:"2026-10-15"});
+  assert.equal(s.mode,"plan");
+  assert.equal(s.n,2,"Aug → Oct");
+  assert.equal(s.shortfall,200,"1,200 − 1,000, not 1,200");
+  assert.equal(s.requiredPerBucket,100);
+});
+
+t("12c · feasibility is capacity across the window, not every bucket alone",()=>{
+  /* Saving more in a fat period to cover a lean one is a real plan. 100 spare
+     a period over 4 periods reaches 400 even though no single period could. */
+  const s=purchaseSavingsPlan(walkCtx(),{price:400,available:0,desiredDate:"2026-12-15"});
+  assert.equal(s.n,4);
+  assert.equal(s.capacity,400);
+  assert.equal(s.feasible,true);
+  assert.equal(s.requiredPerBucket,100);
+  const tight=purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:"2026-12-15"});
+  assert.equal(tight.capacity,400);
+  assert.equal(tight.feasible,false,"400 of capacity cannot reach 500");
+});
+
+t("12d · a deficit bucket contributes 0 to capacity and never subtracts",()=>{
+  const sink=instal("i1",{amount:600,count:1,first:"2026-08-15"});
+  const c=walkCtx({installments:[sink.inst],installmentPayments:sink.rows});
+  const s=purchaseSavingsPlan(c,{price:300,available:0,desiredDate:"2026-12-15"});
+  assert.equal(s.n,4);
+  assert.equal(s.capacity,300,"buckets 1–3 give 100 each; the −500 bucket gives 0");
+  assert.equal(s.tightest.headroom,-500,"reported, so the UI can warn — but not summed in");
+});
+
+t("12e · a date already here, or past, is not a savings plan",()=>{
+  const now=purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:"2026-08-20"});
+  assert.equal(now.mode,"now");
+  assert.equal(now.n,0);
+  assert.ok(isFinite(now.requiredPerBucket),"must never divide by zero");
+  assert.equal(now.requiredPerBucket,500);
+  const past=purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:"2020-01-01"});
+  assert.equal(past.mode,"now");
+  // already affordable on that date is simply fine
+  const fine=purchaseSavingsPlan(walkCtx(),{price:500,available:900,desiredDate:"2026-08-20"});
+  assert.equal(fine.feasible,true);
+  assert.equal(fine.shortfall,0);
+});
+
+t("12f · a date beyond the horizon says so rather than guessing",()=>{
+  const s=purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:"2031-01-01"});
+  assert.equal(s.mode,"beyondHorizon");
+  assert.equal(s.n,null);
+  assert.equal(s.feasible,false);
+});
+
+t("12g · no date at all means no savings plan — that is what picks the card mode",()=>{
+  assert.equal(purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:""}),null);
+  assert.equal(purchaseSavingsPlan(walkCtx(),{price:500,available:0}),null);
+  // and projectPurchaseScenarios threads it through
+  const withDate=projectPurchaseScenarios(walkCtx(),{price:400,desiredDate:"2026-12-15"});
+  assert.ok(withDate.savings&&withDate.savings.mode==="plan");
+  assert.equal(projectPurchaseScenarios(walkCtx(),{price:400}).savings,null);
+});
+
+t("12h · the savings verdict, at its boundaries",()=>{
+  const V=s=>purchaseVerdict(s,{});
+  assert.equal(V({id:"savings",shortfall:0,mode:"plan",feasible:true}),"good","nothing to save for");
+  assert.equal(V({id:"savings",shortfall:100,mode:"now"}),"bad","no period left to spread it over");
+  assert.equal(V({id:"savings",shortfall:100,mode:"beyondHorizon"}),"bad");
+  assert.equal(V({id:"savings",shortfall:100,mode:"plan",feasible:false}),"bad");
+  // feasible overall, but the leanest period cannot spare the even share
+  assert.equal(V({id:"savings",shortfall:400,mode:"plan",feasible:true,
+    requiredPerBucket:100,tightest:{headroom:99}}),"warn");
+  assert.equal(V({id:"savings",shortfall:400,mode:"plan",feasible:true,
+    requiredPerBucket:100,tightest:{headroom:100}}),"good","exactly enough is not a warning");
 });
 
 console.log("\nhistory warning\n");

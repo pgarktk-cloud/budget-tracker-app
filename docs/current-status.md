@@ -1,7 +1,124 @@
 # Current Status
 
-_Last updated: 2026-08-07 (Purchase Advisor Build A2 — account flags, goal deadlines, cached FX, v1.32.0)_
+_Last updated: 2026-08-07 (Purchase Advisor Build A3 — the advisor uses the account flags, v1.33.0)_
 
+---
+
+# 📋 SESSION NOTE — 2026-08-07 (v1.33.0) — Purchase Advisor Build A3
+
+Finishes what A2 started. **A2 shipped the account flags with Banks-tab copy
+that described A3's behaviour in the present tense** — "Left out of the Purchase
+Advisor's available cash", "Held back from the Purchase Advisor's available
+cash" — while `purchaseAvailableStack` contained no reference to `accessible`,
+`purpose` or `bankId` at all. Setting a flag correctly stored it and changed
+nothing anyone could see. Reported immediately on testing, and rightly.
+
+The lesson is not "A3 was late". It is that **a control shipped without the
+behaviour it claims is worse than no control**, and the copy should have said
+"will apply once…" or the two builds should not have been split there.
+
+## The stack is now per-bank
+
+```
+for each live bank b where b.owner === owner:
+    counted = (b.accessible !== false) || includedBankIds.has(b.id)
+    if !counted            → reported as inaccessible, contributes nothing
+    value = toBase(bankValue(b, todayStr), b.currency)
+    if value == null       → reported as unconverted, contributes nothing
+    own      += value
+    claimed   = Σ protected goals with bankId === b.id
+    reserved  = (b.purpose === "emergency" && !released) ? value : 0
+    withheld += max(reserved, claimed)          ← max, NEVER a sum
+
+joint             = Σ value for owner "household"   // reported, never added
+unlinkedProtected = Σ protected goals whose bankId is absent or unresolvable
+available = own − billsReserve − withheld − unlinkedProtected
+```
+
+`max` is the whole design. Goal money lives *inside* bank balances, so an
+emergency fund tracked as both a reserved account **and** a protected goal
+linked to it would otherwise be subtracted twice — 25,000 withheld from an
+account holding 15,000, driving available negative and refusing purchases the
+household can afford. Verified live: 46,000 counted, 15,000 withheld (not
+25,000), available 28,500.
+
+Three `bankId` resolutions, three different answers, all load-bearing:
+
+| resolves to | treatment | why |
+|---|---|---|
+| a **counted** bank of this owner | folded into that bank's `max()` | its money is inside `own` |
+| a bank that is **not counted** | subtract **0** | never added to `own`; subtracting removes money that isn't there |
+| **absent** or dangling | subtract from the pool | matches pre-A3 behaviour; a deleted account is not evidence the money moved |
+
+## Two per-decision levers, both draft-only
+
+- `includedBankIds` — count an unreachable account for THIS purchase. Disabled
+  when FX can't convert it, so a PHP balance can never land in a SAR total.
+- `releasedBankIds` — spend the emergency fund on THIS purchase. **Releasing the
+  account does not release a protected goal kept inside it**: the goal has its
+  own toggle and the `max()` still withholds what it claims. Verified live —
+  releasing a 15,000 emergency account holding a 10,000 goal freed exactly
+  5,000 and said "SAR 10,000 still held back by a goal kept in this account".
+
+Neither is stored on the record. The account's flag is a fact about the account
+and syncs; including or releasing it once does not.
+
+## The savings card has two modes
+
+`desiredDate` finally does something. With a date:
+`purchaseSavingsPlan` → periods until then, shortfall from **available** cash
+(not from zero), required per period, and feasibility as **capacity across the
+window** rather than per-bucket — saving more in a fat period to cover a lean
+one is a real plan. The tightest period is reported separately so the UI can
+warn about the front-loading that implies. Without a date it falls back to the
+original earliest-possible answer. One card, because two would say nearly the
+same thing twice.
+
+`purchaseBucketsBetween` steps with the existing `bucketShift` in a bounded
+loop rather than doing date arithmetic — a period is not a month, and counting
+months between two period keys would drift for a pay-period owner. Capacity
+reuses the same `max(0, headroom)` accumulator the earliest walk uses; a second
+per-bucket reduce is how the two answers would diverge.
+
+## The goal handoff, and the bug in its first version
+
+"Start saving the SAR 3,500" creates a Goal — the savings mirror of "Create
+this plan in Installments". The first version set the goal's target to the full
+**price** and its monthly to the advisor's **per-period** figure, and the
+result was a goal that read **"Behind · needs SAR 10,667/mo"** the instant it
+appeared, directly under a card saying "On track — set aside SAR 875 per
+period". Two separate causes:
+
+- A goal targeting the full price asks you to save money you already have. The
+  target is now the **shortfall**, mirroring the card's own "starting from
+  available X, still to find Y".
+- The advisor counts pay-period **buckets**; `goalDeadlineStatus` counts whole
+  calendar **months**. Near a boundary they legitimately differ by one. `monthly`
+  is now derived through `goalDeadlineStatus` itself, so the created goal is
+  self-consistent. Verified: it now reads "On track · Dec 1" at creation.
+
+## Verification
+
+- `node parsecheck.cjs` — PARSE OK. All nineteen runners green;
+  `purchasetest.cjs` **51/51** (was 35). `node stage.cjs` — three sites agree.
+- New cases cover the double-subtraction, both `max()` directions, all three
+  `bankId` rules, both levers, the FX-unavailable path, `purchaseBucketsBetween`
+  in periods as well as months, the savings plan's four modes, and the savings
+  verdict boundaries.
+- **Backward compatibility is asserted**: with no flags set anywhere — which is
+  what every existing document looks like, since A2 shipped the fields absent —
+  the arithmetic is byte-for-byte what it was before A3.
+- Driven in a sandbox on a document with the flags set exactly as reported:
+  the stack reads 46,000 / −15,000 / −2,500 / **28,500 available**, the BDO
+  account is listed as unreachable with its converted value, joint is reported
+  and not added, both levers move the total by exactly the right amount, and
+  the savings card plans 3,500 over 4 periods at 875.
+
+## Carried forward
+
+- Still not checked against the real dataset on a phone. The Budget-vs-advisor
+  headroom cross-check from Build A has never been done on real data.
+- Build B (Gemini narration) still not started.
 ---
 
 # 📋 SESSION NOTE — 2026-08-07 (v1.32.0) — Purchase Advisor Build A2

@@ -190,15 +190,18 @@ Plan for A2/A3 at `~/.claude/plans/greedy-crunching-sprout.md` (grilling session
   owner-scoped account picker and on-track verdict; `rates`/`ratesAt` cached in
   `data` and excluded from `fingerprint()`. Nineteen runners green, sandbox
   sync verification done, **staged not deployed**. See `current-status.md`.
-- **A3 — the advisor consumes them — NEXT, not started.** Rewrite
-  `purchaseAvailableStack` to per-bank withholding with
-  `withheld = max(reserved, claimed)` (the rule that stops an emergency fund
-  tracked as both a bank and a goal being subtracted twice); the three
-  `bankId`-resolution rules; `purchaseBucketsBetween` +
-  `purchaseSavingsPlan` so the "Save up for it" card gains a date-driven mode;
-  `includedBankIds` in the draft for opting a PH account into one purchase;
-  "Start saving for this" creating a Goal via `addGoal(owner, patch)`.
-  **Until A3 ships, the flags set in A2 have no effect on the advisor.**
+- **A3 — the advisor consumes them — DONE**, build `2026.08.07.0006` / v1.33.0.
+  `purchaseAvailableStack` rewritten to per-bank withholding with
+  `withheld = max(reserved, claimed)`; the three `bankId`-resolution rules;
+  `purchaseBucketsBetween` + `purchaseSavingsPlan` giving the "Save up for it"
+  card its date-driven mode; `includedBankIds` and `releasedBankIds` as
+  per-decision levers; "Start saving the X" creating a Goal targeted at the
+  **shortfall** with a monthly derived through `goalDeadlineStatus`.
+  `purchasetest.cjs` 51/51, nineteen runners green. See `current-status.md`.
+
+  A2 shipped its Banks controls with copy describing A3's behaviour in the
+  present tense, so the flags appeared broken until this build. Recorded in
+  `decisions.md` — don't split a feature so the visible half lands first.
 
 ## Purchase Advisor — Build A DONE (2026-08-07, v1.31.0) · Build B NOT built
 

@@ -1,5 +1,99 @@
 # Architectural & Technical Decisions
 
+## Don't ship a control without the behaviour it claims (2026-08-07, v1.33.0)
+
+A2 added "this account is my emergency fund" and "I can't reach this money" to
+the Banks tab, with helper text reading *"Held back from the Purchase Advisor's
+available cash"* — present tense — while `purchaseAvailableStack` contained no
+reference to `accessible`, `purpose` or `bankId`. Setting a flag stored it
+correctly and changed nothing anyone could see. The first thing that happened
+on testing was, correctly, "why is it still showing as cash I could actually
+use?"
+
+The build split itself was defensible: A2 touched synced data and A3 didn't, and
+separating them made the risky half independently verifiable. The mistake was
+the **copy**, which described A3's behaviour as though it already existed. Two
+rules fall out:
+
+- A control whose effect is not yet built must say so, or not ship.
+- When splitting a feature across builds, the split has to be visible from the
+  user's side, not just from the diff's. "Fields now, behaviour later" is a
+  reasonable engineering plan and an unreasonable thing to hand somebody
+  without a word.
+
+## `max`, never a sum — goal money lives inside bank balances (2026-08-07)
+
+The heart of A3. `applyGoalContribution` writes a transfer expense and credits
+the goal; it never touches `banks`. So an emergency fund tracked as **both** a
+reserved account and a protected goal linked to that account is one pile of
+money described twice. Two independently-computed totals subtracted from one
+pool withhold it twice — 25,000 from an account holding 15,000 — which drives
+"available" negative and refuses purchases the household can plainly afford.
+
+So the withholding is computed **per bank**:
+`withheld += max(reserved, claimed)`. A reserved account withholds its whole
+balance and the goal inside it costs nothing further; a goal claiming more than
+its account holds wins the max and is subtracted conservatively.
+
+The corollary is the three ways a protected goal's `bankId` can resolve, which
+are three *different* answers and not variations of one:
+
+- a **counted** bank → already inside that bank's `max()`;
+- a bank that is **not counted** (unreachable, joint, the other person's) →
+  subtract **nothing**, because its money was never added to the total and
+  subtracting would remove money that isn't there;
+- **absent or dangling** → subtract from the pool, as before. A deleted account
+  is not evidence the money moved.
+
+## Releasing an account is not releasing the goal inside it (2026-08-07)
+
+The emergency-fund flag is a *policy*, so it is releasable for a single purchase
+— that is the whole reason it is a separate concept from "can't reach it". But
+releasing the **account** must not silently spend a **goal** kept in it: the
+goal is a separate decision with its own toggle, and the `max()` keeps
+withholding what it claims. Releasing a 15,000 emergency account holding a
+10,000 goal frees exactly 5,000, and the card says so rather than leaving the
+person to work out why the number moved less than they expected.
+
+Both levers (`includedBankIds`, `releasedBankIds`) live in the draft, never on
+the record. The account's flag is a fact about the account and syncs; including
+or releasing it for one purchase is a fact about one decision and doesn't.
+
+## Feasibility is capacity across the window, not every bucket (2026-08-07)
+
+`purchaseSavingsPlan` asks whether the total spare money between now and the
+target date reaches the shortfall — not whether every single period can spare
+the even share. Saving more in a fat period to cover a lean one is a real plan
+and rejecting it would be wrong. The tightest period is reported separately, so
+the card can *warn* that front-loading is required without calling it
+impossible.
+
+It plans from **available cash**, not from zero. Starting from zero would tell
+someone to save the full price for something their available cash already
+covers — and the whole point of the account flags is that "available" is now a
+number worth starting from.
+
+## A handoff has to be self-consistent on arrival (2026-08-07)
+
+"Start saving for this" first created a Goal with the purchase **price** as its
+target and the advisor's **per-period** figure as its monthly. The result read
+*"Behind · needs SAR 10,667/mo"* the instant it appeared, directly beneath a
+card saying *"On track — set aside SAR 875 per period"*. Two distinct causes,
+both worth stating because either alone would have been enough:
+
+- A goal targeting the full price asks you to save money you already have. The
+  target is the **shortfall** — the same figure the card shows as "still to
+  find".
+- The advisor counts pay-period **buckets**; `goalDeadlineStatus` counts whole
+  calendar **months**, deliberately rounding up. Near a boundary these differ by
+  one, so `monthly` is now derived through `goalDeadlineStatus` itself rather
+  than copied across from the card.
+
+The general rule: when one feature creates a record another feature judges,
+compute the seed values with **the judging feature's own arithmetic**. Reusing
+the originating feature's numbers produces a record that is born failing.
+
+
 ## "Can't reach it" and "won't spend it" are two fields, not one (2026-08-07, v1.32.0)
 
 The obvious design is a single "don't count this account" checkbox. It is wrong,
