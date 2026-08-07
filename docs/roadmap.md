@@ -188,6 +188,14 @@ Rollback: revert Pages first (removes all callers instantly), then
 **Never edit the Worker in the dashboard** — the next deploy overwrites it, and a
 DO class can only be created at deploy time.
 
+### Before starting: the engine's arithmetic is now confirmed
+
+The Budget-vs-advisor cross-check is **done** (2026-08-07, `headroomcheck.cjs`,
+48 buckets across both owners, no drift), so Build B is narrating figures that
+have been checked against Budget's own on the real dataset — not merely against
+fixtures. Re-run it if anything in the engine or in `BudgetView`'s totals moves
+while Build B is in progress.
+
 ### Sandbox testing
 
 Extend `sandboxworker.cjs` with a fake `/ai/advice` and drive the 429, timeout,
@@ -437,9 +445,13 @@ Planned in a grilling session 2026-08-07; plan at
 
 **Carried-forward actions from Build A**
 
-- Cross-check the advisor's headroom against the Budget tab, by hand, on the
-  real dataset for the same owner and month before trusting a verdict. If they
-  disagree, the engine is wrong.
+- ~~Cross-check the advisor's headroom against the Budget tab on the real
+  dataset.~~ **DONE 2026-08-07** — `headroomcheck.cjs`, now committed, drives
+  the advisor's `purchaseHeadroomForBucket` and the sliced `BudgetView` "Left"
+  expression over a real backup: **48 buckets, both owners, no drift**. It is
+  tooling rather than a runner (it needs a backup file that may not be
+  committed) — run it by hand whenever either side's arithmetic is touched. See
+  `current-status.md`.
 - The trailing-actuals warning (`purchaseHistoryWarning`) is dark until
   ~Oct 2026. Re-check it the first period it appears — same action the two Home
   trend cards already carry.

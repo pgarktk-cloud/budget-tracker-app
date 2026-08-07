@@ -689,6 +689,21 @@ and an error naming a collection the user has never heard of.
   what the app's *effects* do to the document afterwards. **Anything touching
   sync must be driven against `sandboxworker.cjs` with the network log open,
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
+- **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
+  nobody may commit, so it takes the path as an argument and a "run all
+  nineteen" sweep must not include it. It cross-checks the Purchase Advisor's
+  `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
+  expression over every owner × the full 24-bucket horizon of a REAL document.
+  `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
+  fixture — which cannot exercise 29 plans, an `actualStarts` override, or a
+  plan chain inherited 24 buckets forward. Run it by hand after touching either
+  side's arithmetic. It compares the three **inputs** separately as well as the
+  totals, because two wrongs that cancel leave the totals equal. Verified
+  against injected defects: a fabricated `planned` was caught in 48/48 buckets,
+  and counting a `fundedElsewhere` row again was caught in the **1** bucket that
+  has one — the narrow case a fixture would most easily miss. It proves the two
+  expressions agree with each other, not that either is right: confirm one row
+  against the app's own Budget tab before trusting a clean run.
 - **`samplescan.cjs`** is tooling, not a runner — it finds `sampleData()`
   records inside a real backup. **It never matches on name, and neither should
   anything else**: `defaultData()`'s seed set was authored from this user's

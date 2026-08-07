@@ -30,11 +30,13 @@ Build B is the **only** remaining piece that touches `worker.js`,
 
 ### Open, carried forward — none blocking
 
-1. **Cross-check the advisor's headroom against the Budget tab on REAL data**,
-   same owner and month. Budget's "Left" and the advisor's period figures must
-   be identical. Verified only against fixtures and the sliced `BudgetView`
-   expression — never the real dataset. If they disagree the engine is wrong and
-   Build B would narrate the error more fluently.
+1. ~~**Cross-check the advisor's headroom against the Budget tab on REAL
+   data.**~~ **DONE 2026-08-07** — see the session note below. 48 buckets, both
+   owners, **no drift**. Build A's headline risk is closed and Build B is not
+   building on a wrong number. One cheap confirmation is still outstanding:
+   glance at Budget on a phone for Jastine's current period and check it reads
+   **Left 0.00**, since the check proves the two expressions agree with each
+   other rather than that either matches the UI.
 2. **`purchaseHistoryWarning` is dark until ~Oct 2026** (needs
    `MIN_TREND_BUCKETS` = 3 completed periods). Re-check the first period it
    appears — same carried-forward action Home's two trend cards have.
@@ -51,6 +53,56 @@ Goal↔bank reconciliation warnings · multi-currency purchases · household sco
 chat/history · grounding · automatic discretionary detection · applying a
 recommendation as app changes · stored or synced analyses · a Home card for a
 goal that has fallen behind.
+
+---
+
+# 📋 SESSION NOTE — 2026-08-07 — Budget-vs-advisor cross-check (no code change)
+
+Build A's carried-forward risk, closed. **No change to `index.html`, `sw.js` or
+any served file**, so no version bump: the only new file is `headroomcheck.cjs`,
+which is tooling.
+
+## The result
+
+Driven over a real exported backup (29 plans, 9 `monthlyPlans` mappings, 227
+expenses, 4 installment plans, both owners on pay periods, one `actualStarts`
+override), across the full `PURCHASE_HORIZON_BUCKETS` window:
+
+**48 buckets, 2 owners, zero drift.** Income, planned total, installment total
+and headroom all identical to Budget's own figures.
+
+## Why a fixture wasn't enough to have already answered this
+
+`purchasetest.cjs` case 2 has asserted `headroom === Budget's remaining` since
+Build A, but over a hand-built plan with three categories and one two-payment
+installment. It cannot produce a 24-bucket inheritance chain, a corrected period
+boundary, or a `fundedElsewhere` row in the one month that has one. The value of
+the real document is the shapes nobody thought to write down.
+
+Demonstrated rather than assumed: with `fundedElsewhere` removed from the
+engine's `installmentTotal` — the double-allocation trap the code exists to
+avoid — the real dataset disagrees in **exactly one of 48 buckets**. A fixture
+whose installment happens to fall elsewhere would report that defect as green.
+
+## What the real numbers showed, neither of which is a fault
+
+- **Charlene's plan is over-allocated from September onward** — 13,000 income
+  against 13,277 planned, and −737 in the November bucket where an installment
+  lands. The advisor will refuse every purchase of hers indefinitely, correctly.
+  Worth knowing before reading one of her verdicts as broken.
+- **Jastine's current bucket is exactly 0.00 headroom**, with 3,212.78 freeing
+  up from the October bucket as a plan finishes.
+- One bucket reads **−0.01** from installment rounding (3,212.79 against
+  3,212.78). Both sides agree, and the forward walk clamps with
+  `max(0, headroom)`, so it changes no verdict. Left alone deliberately.
+
+## The gap this method cannot close
+
+It compares two expressions **sliced from the shipped source**, which is what
+makes it a test of the real code rather than of a restatement — but it therefore
+proves they agree with *each other*. If both resolved the wrong plan for a
+bucket they would agree and both be wrong. The one-glance confirmation against
+the app's Budget tab is recorded as carried forward above.
 
 ---
 
