@@ -274,25 +274,37 @@ const GOALS=[
   {id:"g4",owner:"wife",name:"Hers",contributions:[{id:"x5",amount:4000}]},
 ];
 
-t("6 · goals and the reserve are subtracted exactly once; joint is reported, not added",()=>{
-  const s=purchaseAvailableStack({banks:BANKS,goals:GOALS,billsReserve:6100,owner:"me",
+t("6 · goals are subtracted exactly once; joint is reported, not added",()=>{
+  const s=purchaseAvailableStack({banks:BANKS,goals:GOALS,owner:"me",
     protectedGoalIds:["g1","g2"],todayStr:TODAY});
   assert.equal(s.banks,31000,"only this owner's live accounts, and only once");
   assert.equal(s.joint,18000);
-  assert.equal(s.reserve,6100);
   assert.equal(s.protectedGoals,8500,"6,000 + 500 + 2,000");
   assert.equal(s.protectedGoalCount,2);
-  assert.equal(s.available,31000-6100-8500);
+  assert.equal(s.available,31000-8500);
   assert.ok(s.available<s.banks+s.joint,"a joint account must never inflate availability");
 });
 
+t("6-bills · the Bills Reserve is NOT subtracted, and cannot be smuggled back in",()=>{
+  /* Removed v1.34.0: it is a HOUSEHOLD-wide figure and this scope is
+     per-owner, so subtracting it took the whole reserve off each person's cash
+     independently. Passing it must now be inert rather than quietly working —
+     otherwise a caller left over from before would still be subtracting it. */
+  const without=purchaseAvailableStack({banks:BANKS,goals:GOALS,owner:"me",
+    protectedGoalIds:["g1"],todayStr:TODAY});
+  const withIt=purchaseAvailableStack({banks:BANKS,goals:GOALS,billsReserve:6100,owner:"me",
+    protectedGoalIds:["g1"],todayStr:TODAY});
+  assert.equal(withIt.available,without.available,"billsReserve must be inert");
+  assert.equal(without.reserve,undefined,"and the field is gone, not zeroed");
+});
+
 t("6b · a tombstoned goal contributes nothing, even when it is named protected",()=>{
-  const s=purchaseAvailableStack({banks:BANKS,goals:GOALS,billsReserve:0,owner:"me",
+  const s=purchaseAvailableStack({banks:BANKS,goals:GOALS,owner:"me",
     protectedGoalIds:["g1","g3"],todayStr:TODAY});
   assert.equal(s.protectedGoalCount,1);
   assert.equal(s.protectedGoals,6500);
   // and a deleted contribution inside a live goal is ignored too
-  const withDead=purchaseAvailableStack({banks:BANKS,billsReserve:0,owner:"me",
+  const withDead=purchaseAvailableStack({banks:BANKS,owner:"me",
     goals:[{id:"gz",owner:"me",contributions:[{id:"a",amount:100},
       {id:"b",amount:900,deletedAt:"2026-07-01T00:00:00.000Z"}]}],
     protectedGoalIds:["gz"],todayStr:TODAY});
@@ -300,9 +312,9 @@ t("6b · a tombstoned goal contributes nothing, even when it is named protected"
 });
 
 t("6c · an UNPROTECTED goal is not subtracted — that is what the lever does",()=>{
-  const all=purchaseAvailableStack({banks:BANKS,goals:GOALS,billsReserve:0,owner:"me",
+  const all=purchaseAvailableStack({banks:BANKS,goals:GOALS,owner:"me",
     protectedGoalIds:["g1","g2"],todayStr:TODAY});
-  const trip=purchaseAvailableStack({banks:BANKS,goals:GOALS,billsReserve:0,owner:"me",
+  const trip=purchaseAvailableStack({banks:BANKS,goals:GOALS,owner:"me",
     protectedGoalIds:["g1"],todayStr:TODAY});
   assert.equal(trip.available-all.available,2000,
     "unprotecting the 2,000 trip goal must free exactly 2,000");
@@ -310,7 +322,7 @@ t("6c · an UNPROTECTED goal is not subtracted — that is what the lever does",
 });
 
 t("6d · the other person's goal is never subtracted from this person's cash",()=>{
-  const s=purchaseAvailableStack({banks:BANKS,goals:GOALS,billsReserve:0,owner:"me",
+  const s=purchaseAvailableStack({banks:BANKS,goals:GOALS,owner:"me",
     protectedGoalIds:["g1","g4"],todayStr:TODAY});
   assert.equal(s.protectedGoalCount,1,"g4 belongs to wife");
   assert.equal(s.protectedGoals,6500);
@@ -318,18 +330,18 @@ t("6d · the other person's goal is never subtracted from this person's cash",()
 
 t("6e · an account in another currency is excluded and REPORTED, never added raw",()=>{
   const banks=[...BANKS,{id:"b5",owner:"me",name:"Manila",currency:"PHP",balance:200000}];
-  const noFx=purchaseAvailableStack({banks,goals:[],billsReserve:0,owner:"me",
+  const noFx=purchaseAvailableStack({banks,goals:[],owner:"me",
     protectedGoalIds:[],todayStr:TODAY,toBase:(v,c)=>c==="SAR"?v:null});
   assert.equal(noFx.unconverted,1);
   assert.equal(noFx.banks,31000,"200,000 PHP must not be added as 200,000 SAR");
-  const fx=purchaseAvailableStack({banks,goals:[],billsReserve:0,owner:"me",
+  const fx=purchaseAvailableStack({banks,goals:[],owner:"me",
     protectedGoalIds:[],todayStr:TODAY,toBase:(v,c)=>c==="SAR"?v:v*0.065});
   assert.equal(fx.unconverted,0);
   assert.equal(fx.banks,31000+13000);
 });
 
 t("6f · a bank's accrued interest is valued through bankValue, not read raw",()=>{
-  const s=purchaseAvailableStack({billsReserve:0,owner:"me",protectedGoalIds:[],
+  const s=purchaseAvailableStack({owner:"me",protectedGoalIds:[],
     todayStr:"2027-08-10",goals:[],
     banks:[{id:"b1",owner:"me",currency:"SAR",balance:10000,balanceAsOf:"2026-08-10",
       interest:{enabled:true,taxPct:0,crediting:"daily",tiers:[{from:0,rate:5}]}}]});
@@ -561,7 +573,7 @@ const A3GOALS=[
   {id:"gTrip",owner:"me",name:"Trip",contributions:[{id:"k2",amount:2500}]},   // unlinked
 ];
 const fx=(v,c)=>c==="SAR"?v:v*0.065;
-const stackOf=(over={})=>purchaseAvailableStack({banks:A3BANKS,goals:A3GOALS,billsReserve:0,
+const stackOf=(over={})=>purchaseAvailableStack({banks:A3BANKS,goals:A3GOALS,
   owner:"me",protectedGoalIds:["gEmg","gTrip"],todayStr:TODAY,toBase:fx,...over});
 
 t("11 · a reserved account holding its own goal is withheld ONCE, not twice",()=>{
@@ -593,7 +605,7 @@ t("11c · an UNRESERVED account still withholds a protected goal kept in it",()=
 });
 
 t("11d · the three bankId resolutions are three different answers",()=>{
-  const base={banks:A3BANKS,billsReserve:0,owner:"me",todayStr:TODAY,toBase:fx};
+  const base={banks:A3BANKS,owner:"me",todayStr:TODAY,toBase:fx};
   // (1) counted bank → folded into that bank's max(), never onto the pool
   const counted=purchaseAvailableStack({...base,protectedGoalIds:["g"],
     goals:[{id:"g",owner:"me",bankId:"bEmg",contributions:[{id:"k",amount:9000}]}]});
@@ -650,12 +662,12 @@ t("11h · with no flags set anywhere, the arithmetic is exactly what it was",()=
      existing document actually looks like. */
   const banks=A3BANKS.map(b=>({id:b.id,owner:b.owner,name:b.name,currency:b.currency,balance:b.balance}));
   const goals=A3GOALS.map(g=>({id:g.id,owner:g.owner,name:g.name,contributions:g.contributions}));
-  const s=purchaseAvailableStack({banks,goals,billsReserve:6100,owner:"me",
+  const s=purchaseAvailableStack({banks,goals,owner:"me",
     protectedGoalIds:["gEmg","gTrip"],todayStr:TODAY,toBase:fx});
   assert.equal(s.banks,46000+150000*0.065,"nothing is excluded when nothing is flagged");
   assert.equal(s.withheld,0);
   assert.equal(s.protectedGoals,12500);
-  assert.equal(s.available,s.banks-6100-12500);
+  assert.equal(s.available,s.banks-12500);
 });
 
 /* ── 12 · the date-driven savings plan (A3) ───────────────────────────────

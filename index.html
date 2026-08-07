@@ -1765,15 +1765,16 @@ function purchaseHeadroomForBucket(ctx,bucketKey){
 
    `toBase` converts an account's own currency into the document currency and
    may return null when no FX has loaded; such accounts are counted as
-   `unconverted` and excluded rather than silently added at face value. The
-   Bills Reserve is household-wide and is subtracted in full from one owner's
-   cash — deliberate, understates available, and labelled on screen. */
+   `unconverted` and excluded rather than silently added at face value.
+
+   The Bills Reserve used to be subtracted here and no longer is (v1.34.0) —
+   see the note beside the return. */
 function goalSavedTotal(g){
   return((g&&g.contributions)||[]).filter(c=>c&&!c.deletedAt)
     .reduce((a,c)=>a+(Number(c.amount)||0),0);
 }
 
-function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds,
+function purchaseAvailableStack({banks,goals,owner,protectedGoalIds,
                                  includedBankIds,releasedBankIds,todayStr,toBase}){
   const conv=typeof toBase==="function"?toBase:v=>v;
   const included=new Set(includedBankIds||[]);
@@ -1846,8 +1847,14 @@ function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds
     unlinkedProtected+=goalSavedTotal(g);
   });
 
-  const reserve=Number(billsReserve)||0;
-  return{banks:own,joint,reserve,
+  /* The Bills Reserve is deliberately NOT subtracted here (removed v1.34.0).
+     It is a HOUSEHOLD-wide figure and this scope is per-owner, so subtracting
+     it took the whole reserve off each person's cash independently — the
+     weakest point in the original stack, flagged at design time as "revisit
+     only alongside a household-scope conversation". Protecting money that is
+     genuinely set aside is now the account flags' job: they are per-owner,
+     visible, and releasable per purchase, which the reserve never was. */
+  return{banks:own,joint,
     withheld,reserved,inaccessible,
     /* Two counts that are NOT interchangeable, and rendering the wrong one is
        an easy mistake: `protectedGoalCount` is every protected goal, including
@@ -1857,7 +1864,7 @@ function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds
     protectedGoals:unlinkedProtected,protectedGoalCount:protectedList.length,
     unlinkedProtectedCount:protectedList.filter(g=>!g.bankId||!bankById.has(g.bankId)).length,
     notCountedGoals,unconverted,
-    available:own-reserve-withheld-unlinkedProtected};
+    available:own-withheld-unlinkedProtected};
 }
 
 /* A hypothetical schedule for a purchase not yet made. The financed total is
@@ -2630,8 +2637,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.33.0";
-const BUILD_ID="2026.08.07.0006";
+const APP_VERSION="1.34.0";
+const BUILD_ID="2026.08.07.0007";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -7379,7 +7386,7 @@ function App(){
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
             payPeriods:data.payPeriods,focus:installmentFocus,fundingCategoriesFor}}/>}
           {tab==="advisor"&&<PurchaseAdvisorView {...{monthlyPlans,plans,activePlanId,
-            installments,installmentPayments,banks,goals,billsReserve,expenses,planForMonth,
+            installments,installmentPayments,banks,goals,expenses,planForMonth,
             payPeriods:data.payPeriods,convert,ratesStaleDays,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
             addInstallment,addGoal,openInstallment,setTab}}/>}
@@ -14580,7 +14587,7 @@ function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
 }
 
 function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
-  banks,goals,billsReserve,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
+  banks,goals,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
   fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab}){
   const todayStr=todayISO();
   const bucket=bucketNow(payPeriods,budgetOwner);
@@ -14624,9 +14631,9 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      about the account and lives on the record; including it once does not. */
   const includedBankIds=useMemo(()=>draft.includedBankIds||[],[draft.includedBankIds]);
   const releasedBankIds=useMemo(()=>draft.releasedBankIds||[],[draft.releasedBankIds]);
-  const stack=useMemo(()=>purchaseAvailableStack({banks,goals,billsReserve,owner:budgetOwner,
+  const stack=useMemo(()=>purchaseAvailableStack({banks,goals,owner:budgetOwner,
     protectedGoalIds,includedBankIds,releasedBankIds,todayStr,toBase}),
-    [banks,goals,billsReserve,budgetOwner,protectedGoalIds,includedBankIds,releasedBankIds,todayStr,toBase]);
+    [banks,goals,budgetOwner,protectedGoalIds,includedBankIds,releasedBankIds,todayStr,toBase]);
 
   const input=useMemo(()=>({price:Number(draft.price)||0,
     financed:financedMode&&(Number(draft.count)||0)>0&&!!draft.firstDue,
@@ -14831,7 +14838,6 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
           {/* "Accounts · Me" rather than a possessive — the default owner
               label is literally "Me", and "Me's accounts" is not a sentence. */}
           {stackRow(`Accounts · ${owners[budgetOwner]}`,stack.banks)}
-          {stackRow("Bills Reserve",stack.reserve,"minus")}
           {/* One line per reserved account, naming it. A single "withheld"
               total would be the bare number this card exists to avoid. */}
           {stack.reserved.map(r=>
@@ -14933,8 +14939,8 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
             </div>}
           <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
             Goal balances sit inside these accounts, so protecting a goal subtracts it here —
-            once, even when the goal names the account it lives in. The Bills Reserve is
-            household-wide and always protected.
+            once, even when the goal names the account it lives in. Money set aside for bills
+            isn't taken off automatically: mark the account it sits in on the Banks tab.
           </div>
         </section>
 

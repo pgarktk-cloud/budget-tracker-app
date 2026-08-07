@@ -1,5 +1,29 @@
 # Architectural & Technical Decisions
 
+## The Bills Reserve is not the advisor's business (2026-08-07, v1.34.0)
+
+Removed from `purchaseAvailableStack`. Two reasons, and the second is the one
+that settles it.
+
+It was always the weakest line in the stack: the reserve is a **household-wide**
+figure and the advisor's scope is strictly **per-owner**, so it was subtracted
+in full from *each* person's available cash independently. Two people looking at
+the same household reserve each lost the whole of it. That was flagged at design
+time as conservative-and-deliberate, "revisit only alongside a household-scope
+conversation" — which is a polite way of saying it was known to be wrong and
+tolerated.
+
+And it was subtracting a figure that is itself unreliable (see the bill-row
+identity bug), so the advisor was propagating someone else's arithmetic error
+into a buy/don't-buy verdict.
+
+Protecting money genuinely set aside for bills is now the **account flags'**
+job. They are per-owner, visible in the stack, releasable for a single purchase,
+and they name the account rather than asserting a total — everything the
+reserve subtraction was not. `purchasetest.cjs` asserts that passing
+`billsReserve` is now **inert**, so a caller left over from before cannot
+quietly reinstate it.
+
 ## Don't ship a control without the behaviour it claims (2026-08-07, v1.33.0)
 
 A2 added "this account is my emergency fund" and "I can't reach this money" to
