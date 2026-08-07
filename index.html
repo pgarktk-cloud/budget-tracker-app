@@ -596,7 +596,7 @@ function useDialogA11y(onClose,active=true){
    CONFLICT_COLLECTIONS for no user-visible gain. Note this does make the
    Forecast view unreachable from the UI; that was the explicit ask. */
 const PRIMARY_TABS=["home","budget","expenses","banks","investments"];
-const MORE_TABS=["networth","goals","installments","bills","household","currency"];
+const MORE_TABS=["networth","goals","installments","advisor","bills","household","currency"];
 const HIDDEN_TABS=["targets"];
 /* Tab direction tracker so we can slide left or right.
    Every tab must appear here, including "home" — it was missing, so
@@ -787,6 +787,7 @@ const I={
      (no remote dependency, no scraped branding). */
   Package:Ic([<path key="a" d="M21 8.5 12 3.5 3 8.5v7L12 20.5l9-5z"/>,<path key="b" d="m3 8.5 9 5 9-5"/>,<path key="c" d="M12 13.5v7"/>,<path key="d" d="m7.5 6 9 5"/>]),
   Card:Ic([<rect key="a" x="2" y="5" width="20" height="14" rx="2"/>,<line key="b" x1="2" y1="10" x2="22" y2="10"/>,<line key="c" x1="6" y1="15" x2="10" y2="15"/>]),
+  Cart:Ic([<circle key="a" cx="9" cy="21" r="1"/>,<circle key="b" cx="19" cy="21" r="1"/>,<path key="c" d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>]),
 };
 
 /* ── Goal-type icons (minimalist line icons) ── */
@@ -1666,6 +1667,239 @@ function installmentSummary(insts,pays,owner,{bucketKey,payPeriods,todayStr}={})
     overdueCount:mine.filter(p=>installmentPaymentDerivedStatus(p,todayStr)==="overdue").length};
 }
 
+/* ── Purchase Advisor engine ───────────────────────────────────────────────
+   "Should I buy this, and how?" — answered by walking the existing plan chain
+   forward, never by inventing a second model of the budget.
+
+   Everything here is module scope, pure, and takes `todayStr` rather than
+   reading the clock, for the same three reasons the installments block above
+   is: purchasetest.cjs slices and runs the SHIPPED functions instead of a
+   copy; a projection that moves at midnight can't be reasoned about; and the
+   advisor must be able to render without materialising anything.
+
+   The load-bearing rules:
+
+   • It DERIVES, it never writes. Nothing below takes `data`, returns `data`,
+     or can reach editPlanForMonth — viewing a future month in the advisor must
+     not clone a plan into it, exactly as the derived Budget rows must not.
+     That is also why the whole feature stores its draft in localStorage and
+     touches no synced collection: no migrate() entry, no fingerprint touch
+     point, no merge, no KV write, no effect on the other phone.
+
+   • Headroom is Budget's own arithmetic, not a second opinion.
+     purchaseHeadroomForBucket is income − Σ categoryEffectiveAmt −
+     installmentTotal, which is byte-identical to what BudgetView computes for
+     the viewed month once `trims` is empty. If the two ever disagree the
+     advisor is wrong, and purchasetest.cjs asserts the equality against the
+     sliced Budget expression rather than against a restatement of it.
+
+   • Funded installment rows are excluded from the obligation, the same way
+     BudgetView excludes them: their money is already inside a category's
+     allocation, so counting them again reserves the same riyal twice.
+
+   • Scope is per-owner. Joint ("household") accounts are REPORTED by
+     purchaseAvailableStack and deliberately not added, so the exclusion is
+     visible on screen instead of being a silent surprise. ─────────────────── */
+
+/* 24 buckets ≈ two years. A bounded walk, and the horizon is also the honest
+   answer: past it the engine returns null and the UI says "not reachable
+   within two years" rather than extrapolating a plan nobody has made. */
+const PURCHASE_HORIZON_BUCKETS=24;
+/* Headroom below this share of a bucket's income is "thin" — technically
+   affordable, but with nothing left for the month to go wrong in. */
+const PURCHASE_THIN_PCT=5;
+
+/* A category's real monthly figure. Extracted verbatim from BudgetView, which
+   held the only copy while ExpenseTrackerView carried a second inline one — a
+   category's `amount` is a manual figure ONLY while it has no subs, and that
+   rule has to be stated once. Both call sites now read this. */
+function categoryEffectiveAmt(c){
+  const subs=(c&&c.subs)||[];
+  if(subs.length>0)return subs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
+  return Number(c&&c.amount)||0;
+}
+
+/* One trim, clamped. A negative trim would be a raise, and a trim larger than
+   the category would be free money — both clamp to the range the lever can
+   actually offer. A trim naming a category that no longer exists simply never
+   gets looked up, because the walk is over live categories. */
+function purchaseTrimFor(trims,catId,effAmt){
+  const raw=Number((trims||{})[catId])||0;
+  return Math.max(0,Math.min(effAmt,raw));
+}
+
+/* Σ of a plan's categories after trims. livePlanView is applied again here
+   rather than assumed: resolvePlanForMonth already returns the live view (and
+   the call is free — it returns the identical object when there is nothing to
+   do), but a caller handing in a raw plan record must not silently get
+   tombstoned categories counted. */
+function purchasePlannedTotal(plan,trims){
+  const view=livePlanView(plan);
+  return((view&&view.categories)||[]).reduce((s,c)=>{
+    const eff=categoryEffectiveAmt(c);
+    return s+eff-purchaseTrimFor(trims,c.id,eff);
+  },0);
+}
+
+/* What is left over in ONE bucket after the plan and the installment schedule
+   have taken their share. The bucket may be in the future and may have no
+   monthlyPlans row of its own — resolvePlanForMonth walks the chain backwards
+   for us, which is exactly the same inheritance Budget displays. */
+function purchaseHeadroomForBucket(ctx,bucketKey){
+  const c=ctx||{};
+  const plan=resolvePlanForMonth(c.monthlyPlans,bucketKey,c.owner,c.activePlanId,c.plans).plan;
+  const income=Number(plan&&plan.income)||0;
+  const planned=plan?purchasePlannedTotal(plan,c.trims):0;
+  const rows=derivedInstallmentRowsFor(c.installments,c.installmentPayments,c.owner,bucketKey,c.payPeriods);
+  const installmentTotal=rows.reduce((s,r)=>s+(r.fundedElsewhere?0:r.amount),0);
+  return{bucketKey,income,planned,installmentTotal,headroom:income-planned-installmentTotal};
+}
+
+/* The itemised subtraction stack, never a bare "cash available" number.
+
+   Goal money lives INSIDE bank balances — applyGoalContribution writes a
+   transfer expense and credits the goal, it never touches `banks` — so Σ
+   bankValue already contains every goal pot and the Bills Reserve. Subtracting
+   them is not conservatism, it is removing a double count of money that is
+   already spoken for.
+
+   `toBase` converts an account's own currency into the document currency and
+   may return null when no FX has loaded; such accounts are counted as
+   `unconverted` and excluded rather than silently added at face value. The
+   Bills Reserve is household-wide and is subtracted in full from one owner's
+   cash — deliberate, understates available, and labelled on screen. */
+function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds,todayStr,toBase}){
+  const conv=typeof toBase==="function"?toBase:v=>v;
+  let own=0,joint=0,unconverted=0;
+  (banks||[]).filter(b=>b&&!b.deletedAt).forEach(b=>{
+    const mine=b.owner===owner,isJoint=b.owner==="household";
+    if(!mine&&!isJoint)return;
+    const v=conv(bankValue(b,todayStr),b.currency);
+    if(v==null||!isFinite(Number(v))){unconverted++;return;}
+    if(mine)own+=Number(v);else joint+=Number(v);
+  });
+  const prot=new Set(protectedGoalIds||[]);
+  const protectedList=(goals||[]).filter(g=>g&&!g.deletedAt&&(g.owner||"me")===owner&&prot.has(g.id));
+  const protectedGoals=protectedList.reduce((s,g)=>
+    s+(g.contributions||[]).filter(c=>c&&!c.deletedAt)
+      .reduce((a,c)=>a+(Number(c.amount)||0),0),0);
+  const reserve=Number(billsReserve)||0;
+  return{banks:own,joint,reserve,protectedGoals,protectedGoalCount:protectedList.length,
+    unconverted,available:own-reserve-protectedGoals};
+}
+
+/* A hypothetical schedule for a purchase not yet made. The financed total is
+   price − downPayment + fees, and the split itself delegates to the SAME
+   generateInstallmentSchedule real installments use, so the last-row rounding
+   rule is shared rather than reimplemented a cent off. */
+function buildPurchaseSchedule({price,downPayment,feesOrInterest,count,firstDueDate}){
+  const p=Number(price)||0;
+  const dp=Math.max(0,Math.min(p,Number(downPayment)||0));
+  const fee=Number(feesOrInterest)||0;
+  const financed=roundTo(p-dp+fee,2);
+  const rows=generateInstallmentSchedule({firstDueDate,count,total:financed});
+  return{financed,downPayment:dp,fees:fee,rows,check:scheduleDiff(financed,rows)};
+}
+
+/* The three scenarios. `ctx` is whatever purchaseHeadroomForBucket needs plus
+   the already-computed availability stack and `todayStr`; `input` is only what
+   the person typed.
+
+   earliest walks forward accumulating max(0, headroom) — a bucket already in
+   deficit contributes nothing and never subtracts, because you cannot save
+   negative money into a purchase. An existing installment ending inside the
+   horizon raises headroom from that bucket on automatically, which is why
+   "wait until the Tabby plan finishes" needs no scenario of its own. */
+function projectPurchaseScenarios(ctx,input){
+  const c=ctx||{},i=input||{};
+  const stack=c.stack||{};
+  const available=Number(stack.available)||0;
+  const price=Number(i.price)||0;
+  const nowBucket=bucketKeyFor(c.todayStr,c.payPeriods,c.owner);
+
+  const cash={id:"cash",price,available,feasible:available>=price,
+    remainingAfter:available-price};
+
+  let financed=null;
+  if(i.financed){
+    const sched=buildPurchaseSchedule(i);
+    const byBucket=new Map();
+    sched.rows.forEach(r=>{
+      const k=bucketKeyFor(r.dueDate,c.payPeriods,c.owner);
+      byBucket.set(k,(byBucket.get(k)||0)+(Number(r.scheduledAmount)||0));
+    });
+    const buckets=[...byBucket.keys()].sort().map(k=>{
+      const h=purchaseHeadroomForBucket(c,k);
+      const obligation=byBucket.get(k);
+      return{key:k,income:h.income,baseHeadroom:h.headroom,obligation,
+        headroom:h.headroom-obligation};
+    });
+    financed={id:"financed",financedTotal:sched.financed,fees:sched.fees,
+      rows:sched.rows,check:sched.check,buckets,
+      deficits:buckets.filter(b=>b.headroom<0),
+      upfront:sched.downPayment,
+      upfrontFeasible:available>=sched.downPayment,
+      availableAfterUpfront:available-sched.downPayment,
+      count:sched.rows.length,
+      perPayment:sched.rows.length?Number(sched.rows[0].scheduledAmount)||0:0};
+  }
+
+  let earliest=null,cumulative=0;
+  for(let n=0;n<=PURCHASE_HORIZON_BUCKETS;n++){
+    const key=bucketShift(nowBucket,c.payPeriods,c.owner,n);
+    if(available+cumulative>=price){
+      const shortfall=Math.max(0,price-available);
+      earliest={id:"earliest",bucketKey:key,n,cumulative,shortfall,
+        requiredPerBucket:n>0?shortfall/n:0};
+      break;
+    }
+    cumulative+=Math.max(0,purchaseHeadroomForBucket(c,key).headroom);
+  }
+
+  return{cash,financed,earliest};
+}
+
+/* Two axes, module-scope thresholds, not a setting: cash-flow risk (does any
+   month go negative, or nearly) and depletion risk (does paying cash leave
+   nothing behind). Boundaries are deliberately non-strict on the good side —
+   a headroom of exactly zero is not yet a deficit, and headroom at exactly
+   PURCHASE_THIN_PCT of income is not yet thin. */
+function purchaseVerdict(scenario,ctx){
+  const c=ctx||{};
+  if(!scenario)return"flat";
+  if(scenario.id==="cash"){
+    if(!scenario.feasible)return"bad";
+    return scenario.remainingAfter<(Number(c.periodAllocation)||0)?"warn":"good";
+  }
+  if(scenario.id==="financed"){
+    if(!scenario.upfrontFeasible)return"bad";
+    const b=scenario.buckets||[];
+    if(b.some(x=>x.headroom<0))return"bad";
+    if(b.some(x=>x.income>0&&x.headroom<x.income*(PURCHASE_THIN_PCT/100)))return"warn";
+    return"good";
+  }
+  if(scenario.id==="earliest")return scenario.n<=3?"good":"flat";
+  return"flat";
+}
+
+/* Trailing actuals as a WARNING, never as arithmetic. The projection is
+   plan-based on purpose — a plan is a decision, a trailing average is a
+   description — but a plan the last three periods consistently overran is
+   worth saying out loud before someone commits to 12 payments against it.
+   Gated on MIN_TREND_BUCKETS, the same bar Home's trend cards use, so it stays
+   dark until there is enough history to be honest. Built on bucketHistoryFor's
+   rows rather than a second per-period reduce. */
+function purchaseHistoryWarning(bucketHistory,fmt){
+  const f=typeof fmt==="function"?fmt:n=>String(Math.round(Number(n)||0));
+  const rows=(bucketHistory||[]).filter(r=>r&&Number(r.budget)>0);
+  if(rows.length<MIN_TREND_BUCKETS)return null;
+  const planned=rows.reduce((s,r)=>s+(Number(r.budget)||0),0)/rows.length;
+  const actual=rows.reduce((s,r)=>s+(Number(r.spent)||0),0)/rows.length;
+  if(!(planned>0)||actual<=planned*1.1)return null;
+  return`Your plan allows ${f(planned)} a period for tracked spending; the last `
+    +`${rows.length} averaged ${f(actual)}. These projections use the plan.`;
+}
+
 /* ── Installment state transactions ────────────────────────────────────────
    Every installment mutation is a pure (data, args) => data function here, and
    the App-level mutator is one line: setData(d=>applyX(d,args)) plus
@@ -2211,8 +2445,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.30.0";
-const BUILD_ID="2026.08.07.0003";
+const APP_VERSION="1.31.0";
+const BUILD_ID="2026.08.07.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3513,6 +3747,33 @@ const PROFILE_KEY="allocation:preferredProfile";
    Separate from PROFILE_KEY, which is the remembered default *person*. */
 const VIEW_PROFILE_KEY="allocation:viewProfile";
 
+/* ── Purchase Advisor draft ───────────────────────────────────────────────
+   The thing being considered, so reopening the tab doesn't mean retyping it.
+
+   Per-device localStorage and NOT a field on `data`, for exactly the reasons
+   VIEW_PROFILE_KEY and PROVENANCE_KEY are: a half-finished thought is not a
+   household record, syncing it would dirty the document (a KV write per
+   keystroke-ish) and would change what the other phone is looking at, and a
+   new `data` field costs every existing device a migrate()/fingerprint touch
+   point on first open.
+
+   INPUTS ONLY — the product, the price, the terms, which levers are pulled.
+   Never a computed figure: a stored headroom or verdict would be a snapshot of
+   a budget that has since moved, and the whole engine is cheap enough to
+   recompute on open. Anything added here must stay on the input side. */
+const PURCHASE_DRAFT_KEY="allocation:purchaseDraft";
+function loadPurchaseDraft(){
+  try{
+    const raw=localStorage.getItem(PURCHASE_DRAFT_KEY);
+    if(!raw)return null;
+    const d=JSON.parse(raw);
+    return(d&&typeof d==="object"&&!Array.isArray(d))?d:null;
+  }catch(e){return null;}
+}
+function savePurchaseDraft(d){
+  try{localStorage.setItem(PURCHASE_DRAFT_KEY,JSON.stringify(d||{}));}catch(e){}
+}
+
 /* ── Provenance of THIS device's document ─────────────────────────────────────
    "sample" only while the document is the untouched demo dataset loaded from
    Settings → Load sample data. Anything else — including absent — is "user".
@@ -4226,6 +4487,7 @@ const TAB_META={
   networth:{label:"Net Worth",short:"Net Worth",icon:I.Gem},
   goals:{label:"Goals",short:"Goals",icon:I.Target},
   installments:{label:"Installments",short:"Instal",icon:I.Layers},
+  advisor:{label:"Purchase Advisor",short:"Advisor",icon:I.Cart},
   bills:{label:"Bills",short:"Bills",icon:I.PiggyBank},
   household:{label:"Household",short:"Household",icon:I.Users},
   currency:{label:"Currency",short:"Currency",icon:I.Swap},
@@ -6829,6 +7091,11 @@ function App(){
             cancelInstallment,removeInstallment,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
             payPeriods:data.payPeriods,focus:installmentFocus,fundingCategoriesFor}}/>}
+          {tab==="advisor"&&<PurchaseAdvisorView {...{monthlyPlans,plans,activePlanId,
+            installments,installmentPayments,banks,goals,billsReserve,expenses,planForMonth,
+            payPeriods:data.payPeriods,convert,
+            fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
+            addInstallment,openInstallment}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -8242,11 +8509,10 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
   const handleSubChange=(catId,subId,patch)=>updateSub(catId,subId,patch);
   const handleRemoveSub=(catId,subId)=>removeSub(catId,subId);
 
-  const effectiveAmt=c=>{
-    const subs=c.subs||[];
-    if(subs.length>0)return subs.reduce((s,sub)=>s+(Number(sub.amount)||0),0);
-    return Number(c.amount)||0;
-  };
+  /* Module scope now (categoryEffectiveAmt, in the Purchase Advisor engine
+     block) — ExpenseTrackerView carried a second inline copy and the advisor
+     needed a third. Same rule, one statement of it. */
+  const effectiveAmt=categoryEffectiveAmt;
 
   /* ── move categories between groups ─────────────────────────────────────
      Groups are the fixed frame of a budget; the categories under them are what
@@ -9232,9 +9498,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     const env=[],untracked=[];
     (monthPlan.groups||[]).forEach(g=>{
       (monthPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
-        const effAmt=(c.subs||[]).length>0
-          ?(c.subs||[]).reduce((s,sub)=>s+(Number(sub.amount)||0),0)
-          :Number(c.amount)||0;
+        const effAmt=categoryEffectiveAmt(c);
         if(effAmt<=0)return;
         const item={id:c.id,name:c.name,group:g.name,budget:effAmt,color:c.color};
         if(c.trackExpenses===false)untracked.push(item);
@@ -13051,24 +13315,32 @@ const INSTALLMENT_SECTIONS=[
    of plans are 250.00 / 250.00 / 249.25. Save is gated on the rows summing to
    the original amount within INSTALLMENT_ROUND_TOL, so a typo can't create a
    plan whose schedule quietly disagrees with what was bought. ─────────────── */
-function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose,onSave}){
+/* `prefill` seeds a NEW plan's fields (the Purchase Advisor's "Create this
+   plan" exit) without making the sheet think it is editing an existing record.
+   Kept distinct from `initial` deliberately: `editing` decides whether Save
+   updates or creates, whether the schedule starts hand-edited, and whether the
+   first-due/count row is offered at all — a prefill needs none of that, it
+   just wants the boxes filled in. From the moment it saves it is an ordinary
+   installment and the advisor has no further relationship with it. */
+function InstallmentEditSheet({initial,prefill,payments,owner,ownerLabel,cur,fmt,onClose,onSave}){
   const editing=!!initial;
+  const seed=initial||prefill||null;
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
   const[f,setF]=useState(()=>({
-    name:(initial&&initial.name)||"",
-    provider:(initial&&initial.provider)||"tabby",
-    customProviderName:(initial&&initial.customProviderName)||"",
-    purchaseDate:(initial&&initial.purchaseDate)||todayISO(),
-    originalAmount:initial?initial.originalAmount:"",
-    includeInBudget:initial?initial.includeInBudget!==false:true,
-    notes:(initial&&initial.notes)||"",
+    name:(seed&&seed.name)||"",
+    provider:(seed&&seed.provider)||"tabby",
+    customProviderName:(seed&&seed.customProviderName)||"",
+    purchaseDate:(seed&&seed.purchaseDate)||todayISO(),
+    originalAmount:seed?seed.originalAmount:"",
+    includeInBudget:seed?seed.includeInBudget!==false:true,
+    notes:(seed&&seed.notes)||"",
   }));
   /* A BNPL plan's first payment is a downpayment taken AT purchase, so
      defaulting it a month out made the common case wrong and needed correcting
      by hand every time. Only a default: `dueTouched` stops it moving under
      someone who has already set a date. */
-  const[dueTouched,setDueTouched]=useState(false);
+  const[dueTouched,setDueTouched]=useState(()=>!!(prefill&&prefill.firstDueDate));
   const defaultFirstDue=key=>installmentProvider(key).bnpl?todayISO():addMonthsISO(todayISO(),1);
   const set=patch=>setF(x=>{
     const next={...x,...patch};
@@ -13079,9 +13351,9 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
     return next;
   });
   const[firstDue,setFirstDue]=useState(()=>
-    editing?((payments[0]&&payments[0].dueDate)||todayISO()):defaultFirstDue(
-      (initial&&initial.provider)||"tabby"));
-  const[count,setCount]=useState(()=>editing?payments.length:4);
+    editing?((payments[0]&&payments[0].dueDate)||todayISO())
+      :((prefill&&prefill.firstDueDate)||defaultFirstDue((seed&&seed.provider)||"tabby")));
+  const[count,setCount]=useState(()=>editing?payments.length:((prefill&&prefill.count)||4));
   const[rows,setRows]=useState(()=>editing
     ?payments.map(p=>({id:p.id,sequence:p.sequence,dueDate:p.dueDate,
         scheduledAmount:p.scheduledAmount,status:p.status}))
@@ -13838,6 +14110,492 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
           else removeInstallment(confirm.id);
           setConfirm(null);
         }}/>
+    </div>
+  );
+}
+
+/* ── PURCHASE ADVISOR VIEW ─────────────────────────────────────────────────
+   Renders the engine block near installmentSummary and nothing else. Every
+   figure on screen is derived at render time from live data; the only thing
+   that survives a reload is what the person typed (PURCHASE_DRAFT_KEY).
+
+   Nothing here can write to `data` except the one explicit exit — "Create this
+   plan" — which hands a prefill to the ordinary InstallmentEditSheet. In
+   particular no path from here reaches editPlanForMonth: the advisor projects
+   across up to 24 future buckets, and materialising a plan into each one just
+   because it was looked at is the exact trap the derived Budget rows avoid.
+   purchasetest.cjs asserts that as a source-structure property. ───────────── */
+
+/* Every field the draft holds, so a stored draft from an older build merges
+   forward with defaults rather than rendering undefined into an input. */
+function defaultPurchaseDraft(owner){
+  return{owner:owner||"me",product:"",price:"",desiredDate:"",method:"cash",
+    downPayment:"",count:4,firstDue:"",fees:"",
+    unprotectedGoalIds:[],trims:{}};
+}
+
+/* The category-trim lever. "What if I spent 300 less on eating out?" — applied
+   to every projected bucket, clamped to the category by purchaseTrimFor, and
+   held only in the draft. It never touches the plan. */
+function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const box={width:"100%",borderRadius:10,padding:"6px 8px",fontSize:13,fontFamily:"inherit",
+    height:32,background:"rgba(0,0,0,.05)",border:"none",color:P.ink,textAlign:"right"};
+  return(
+    <Portal>
+      <div className="sheet-bg" onClick={onClose}>
+        <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" aria-label="Trim categories"
+          tabIndex={-1} style={{maxWidth:460,maxHeight:"84dvh",overflowY:"auto"}}
+          onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Trim categories</h3>
+            <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
+              style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+          </div>
+          <div style={{fontSize:12,color:P.sub,marginBottom:14,lineHeight:1.5}}>
+            A what-if only. Nothing below changes your budget — it changes what these
+            projections assume you spend, in {cur}, every period.
+          </div>
+          {categories.length===0
+            ?<div style={{fontSize:12,color:P.faint,padding:"12px 0"}}>This plan has no categories yet.</div>
+            :<div style={{...neuInset(12),padding:"4px 0"}}>
+              {categories.map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
+                  <span style={{flex:1,minWidth:0,fontSize:13,color:P.ink,overflow:"hidden",
+                    textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name||"Untitled"}</span>
+                  <span className="tnum" style={{fontSize:11,color:P.faint,flexShrink:0}}>{fmt(c.effAmt)}</span>
+                  <NumField value={trims[c.id]||0} onCommit={v=>setTrim(c.id,v)}
+                    min={0} max={c.effAmt} live className="tnum"
+                    aria-label={`Reduce ${c.name||"category"} by`}
+                    style={{...box,width:84,flexShrink:0}}/>
+                </div>
+              ))}
+            </div>}
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
+  banks,goals,billsReserve,expenses,planForMonth,payPeriods,convert,
+  fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,openInstallment}){
+  const todayStr=todayISO();
+  const bucket=bucketNow(payPeriods,budgetOwner);
+
+  const[draft,setDraft]=useState(()=>({...defaultPurchaseDraft(budgetOwner),...(loadPurchaseDraft()||{})}));
+  useEffect(()=>{savePurchaseDraft(draft);},[draft]);
+  /* Trims and unprotected goals name records belonging to ONE person. Carrying
+     them across an owner switch would apply Jastine's ids to Charlene's plan —
+     they would simply never match, which is worse than clearing them because
+     the lever would look pulled and do nothing. */
+  useEffect(()=>{
+    setDraft(d=>d.owner===budgetOwner?d:{...d,owner:budgetOwner,trims:{},unprotectedGoalIds:[]});
+  },[budgetOwner]);
+  const set=patch=>setDraft(d=>({...d,...patch}));
+
+  const[showTrims,setShowTrims]=useState(false);
+  const[createSheet,setCreateSheet]=useState(null);   // the prefill, or null
+
+  const financedMode=draft.method!=="cash";
+  const trims=draft.trims||{};
+
+  const engineCtx=useMemo(()=>({monthlyPlans,plans,activePlanId,installments,installmentPayments,
+    payPeriods,owner:budgetOwner,trims}),
+    [monthlyPlans,plans,activePlanId,installments,installmentPayments,payPeriods,budgetOwner,trims]);
+
+  const thisBucket=useMemo(()=>purchaseHeadroomForBucket(engineCtx,bucket),[engineCtx,bucket]);
+
+  const myGoals=useMemo(()=>(goals||[]).filter(g=>g&&!g.deletedAt&&(g.owner||"me")===budgetOwner),
+    [goals,budgetOwner]);
+  const unprotected=useMemo(()=>new Set(draft.unprotectedGoalIds||[]),[draft.unprotectedGoalIds]);
+  const protectedGoalIds=useMemo(()=>myGoals.filter(g=>!unprotected.has(g.id)).map(g=>g.id),
+    [myGoals,unprotected]);
+
+  /* Accounts are stored in their own currency; the advisor speaks one, the
+     document's. A conversion that isn't available yet returns null and the
+     account is reported as unconverted rather than added at face value. */
+  const toBase=useCallback((v,ccy)=>(!ccy||ccy===cur)?v:convert(v,ccy,cur),[convert,cur]);
+  const stack=useMemo(()=>purchaseAvailableStack({banks,goals,billsReserve,owner:budgetOwner,
+    protectedGoalIds,todayStr,toBase}),[banks,goals,billsReserve,budgetOwner,protectedGoalIds,todayStr,toBase]);
+
+  const input=useMemo(()=>({price:Number(draft.price)||0,
+    financed:financedMode&&(Number(draft.count)||0)>0&&!!draft.firstDue,
+    downPayment:draft.downPayment,feesOrInterest:draft.fees,
+    count:draft.count,firstDueDate:draft.firstDue}),
+    [draft.price,draft.count,draft.firstDue,draft.downPayment,draft.fees,financedMode]);
+
+  const scenarios=useMemo(()=>projectPurchaseScenarios({...engineCtx,stack,todayStr},input),
+    [engineCtx,stack,todayStr,input]);
+
+  const historyWarning=useMemo(()=>purchaseHistoryWarning(
+    bucketHistoryFor(budgetOwner,{planForMonth,expenses,payPeriods},[],[],6),fmt),
+    [budgetOwner,planForMonth,expenses,payPeriods,fmt]);
+
+  const trimCats=useMemo(()=>{
+    const plan=resolvePlanForMonth(monthlyPlans,bucket,budgetOwner,activePlanId,plans).plan;
+    return((plan&&plan.categories)||[]).map(c=>({id:c.id,name:c.name,effAmt:categoryEffectiveAmt(c)}))
+      .filter(c=>c.effAmt>0);
+  },[monthlyPlans,bucket,budgetOwner,activePlanId,plans]);
+  const trimTotal=trimCats.reduce((s,c)=>s+purchaseTrimFor(trims,c.id,c.effAmt),0);
+
+  const price=Number(draft.price)||0;
+  const noIncome=thisBucket.income<=0;
+  const ready=price>0;
+  const product=String(draft.product||"").trim();
+  const label=k=>bucketLabel(k,payPeriods,budgetOwner);
+
+  /* ── shared field styling ──
+     The date inputs need all three corrections or they will not line up with
+     the NumField beside them: `fontFamily:"inherit"` (a bare date input renders
+     in the UA font), an explicit height (its shadow-DOM -webkit-datetime-edit
+     adds content height no padding reaches), and appearance:none in all three
+     prefixes (Safari gives that shadow tree a min-content width that ignores
+     width:100% and spills over the neighbour). The two-up rows wrap so they
+     stack on a narrow phone rather than colliding. */
+  const lab={fontSize:12,color:P.sub,marginBottom:4};
+  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
+    height:38,background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  const dateBox={...box,minWidth:0,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"};
+  const twoUp={display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"};
+  const cell={flex:"1 1 150px",minWidth:0};
+  const card={...neu(16),padding:14,marginBottom:16};
+  const rowLine={display:"flex",justifyContent:"space-between",gap:10,fontSize:12,
+    color:P.neuSub,padding:"4px 0"};
+
+  const stackRow=(name,value,tone)=>(
+    <div style={rowLine}>
+      <span style={{color:tone==="muted"?P.faint:P.neuSub}}>{name}</span>
+      <span className="tnum" style={{fontWeight:600,
+        color:tone==="muted"?P.faint:(tone==="minus"?P.wine:P.neuInk)}}>
+        {tone==="minus"?`− ${fmt(value)}`:fmt(value)}
+      </span>
+    </div>
+  );
+
+  const cashVerdict=purchaseVerdict(scenarios.cash,{periodAllocation:thisBucket.planned});
+  const financedVerdict=purchaseVerdict(scenarios.financed,{});
+  const earliestVerdict=purchaseVerdict(scenarios.earliest,{});
+
+  const openCreate=()=>{
+    const f=scenarios.financed;
+    setCreateSheet({
+      name:product||"Purchase",
+      provider:(draft.method==="cash"?"other":draft.method),
+      purchaseDate:draft.desiredDate||todayStr,
+      originalAmount:f?f.financedTotal:price,
+      includeInBudget:true,
+      notes:f&&f.upfront>0?`Down payment ${fmt(f.upfront)} paid up front`:"",
+      firstDueDate:draft.firstDue||"",
+      count:Number(draft.count)||4,
+    });
+  };
+
+  return(
+    <div>
+      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+
+      {/* ── What are you buying? ── */}
+      <section style={card}>
+        <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:12}}>What are you thinking of buying?</div>
+
+        <div style={{marginBottom:12}}>
+          <div style={lab}>Product</div>
+          <input value={draft.product} onChange={e=>set({product:e.target.value})}
+            placeholder="e.g. MacBook Air" style={box}/>
+        </div>
+
+        <div style={twoUp}>
+          <div style={cell}>
+            <div style={lab}>Price ({cur})</div>
+            <NumField value={draft.price} onCommit={v=>set({price:v})}
+              allowEmpty min={0} live className="tnum" style={box}/>
+          </div>
+          <div style={cell}>
+            <div style={lab}>When would you want it?</div>
+            <input type="date" value={draft.desiredDate||""}
+              onChange={e=>set({desiredDate:e.target.value})}
+              aria-label="Desired purchase date" style={dateBox}/>
+          </div>
+        </div>
+
+        <div style={twoUp}>
+          <div style={cell}>
+            <div style={lab}>How would you pay?</div>
+            <select value={draft.method} onChange={e=>{
+                const m=e.target.value;
+                set({method:m,firstDue:draft.firstDue
+                  ||(m!=="cash"?(installmentProvider(m).bnpl?todayStr:addMonthsISO(todayStr,1)):"")});
+              }} style={box}>
+              <option value="cash">Cash — pay in full</option>
+              {INSTALLMENT_PROVIDERS.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+          </div>
+          {financedMode&&
+            <div style={cell}>
+              <div style={lab}>Down payment ({cur})</div>
+              <NumField value={draft.downPayment} onCommit={v=>set({downPayment:v})}
+                allowEmpty min={0} max={price||undefined} live className="tnum" style={box}/>
+            </div>}
+        </div>
+
+        {financedMode&&
+          <div style={twoUp}>
+            <div style={cell}>
+              <div style={lab}>Number of payments</div>
+              <NumField value={draft.count} onCommit={v=>set({count:v})}
+                integer min={1} max={60} live className="tnum" style={box}/>
+            </div>
+            <div style={cell}>
+              <div style={lab}>First payment due</div>
+              <input type="date" value={draft.firstDue||""}
+                onChange={e=>set({firstDue:e.target.value})}
+                aria-label="First payment due date" style={dateBox}/>
+            </div>
+          </div>}
+
+        {financedMode&&
+          <div style={twoUp}>
+            <div style={cell}>
+              <div style={lab}>Fees or interest ({cur})</div>
+              <NumField value={draft.fees} onCommit={v=>set({fees:v})}
+                allowEmpty min={0} live className="tnum" style={box}/>
+            </div>
+          </div>}
+      </section>
+
+      {/* Income of zero is the fresh-device skeleton, not a budget. Every
+          scenario would divide a purchase into a plan with no money in it. */}
+      {noIncome&&
+        <section style={card}>
+          <Verdict tone="flat">Nothing to project against yet</Verdict>
+          <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
+            The plan {owners[budgetOwner]} has for {label(bucket)} carries no income, so there is
+            no headroom to project against. Set an income in Budget and this tab will
+            work from it.
+          </div>
+        </section>}
+
+      {!noIncome&&<>
+        {/* ── Available cash, itemised ── */}
+        <section style={card}>
+          <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>Cash you could actually use</div>
+          {/* "Accounts · Me" rather than a possessive — the default owner
+              label is literally "Me", and "Me's accounts" is not a sentence. */}
+          {stackRow(`Accounts · ${owners[budgetOwner]}`,stack.banks)}
+          {stackRow("Bills Reserve",stack.reserve,"minus")}
+          {stackRow(stack.protectedGoalCount===1?"1 protected goal"
+            :`${stack.protectedGoalCount} protected goals`,stack.protectedGoals,"minus")}
+          <div style={{...rowLine,borderTop:`1px solid ${P.line}`,marginTop:6,paddingTop:8,
+            fontSize:14,color:P.neuInk}}>
+            <span style={{fontWeight:600}}>Available</span>
+            <span className="tnum" style={{fontWeight:700,
+              color:stack.available>=0?P.neuInk:P.wine}}>{fmt(stack.available)}</span>
+          </div>
+          {/* Excluded, and said so. A joint account silently missing from a
+              total is the surprise this line exists to prevent. */}
+          {stack.joint>0&&
+            <div style={{...rowLine,color:P.faint,fontSize:11}}>
+              <span>Joint accounts — not counted</span>
+              <span className="tnum">{fmt(stack.joint)}</span>
+            </div>}
+          {stack.unconverted>0&&
+            <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+              {stack.unconverted} account{stack.unconverted===1?"":"s"} in another currency
+              couldn't be converted and {stack.unconverted===1?"is":"are"} excluded.
+            </div>}
+          <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+            Goal balances sit inside these accounts, so protecting a goal subtracts it here.
+            The Bills Reserve is household-wide and always protected.
+          </div>
+        </section>
+
+        {!ready&&
+          <section style={card}>
+            <div style={{fontSize:12,color:P.neuSub}}>Enter a price above and the three
+              scenarios appear here.</div>
+          </section>}
+
+        {ready&&<>
+          {historyWarning&&
+            <section style={{...card,padding:"12px 14px"}}>
+              <div style={{fontSize:12,color:"#E07B2A",lineHeight:1.6}}>{historyWarning}</div>
+            </section>}
+
+          {/* ── 1 · Cash ── */}
+          <section style={card}>
+            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>Buy it now, in cash</div>
+            <Verdict tone={cashVerdict}>
+              {!scenarios.cash.feasible
+                ?`Short by ${fmt(price-stack.available)}`
+                :cashVerdict==="warn"
+                  ?`Affordable, but it leaves less than one period's spending behind`
+                  :`Affordable — ${fmt(scenarios.cash.remainingAfter)} still available afterwards`}
+            </Verdict>
+            <div style={rowLine}><span>Price</span>
+              <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(price)}</span></div>
+            <div style={rowLine}><span>Available now</span>
+              <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(stack.available)}</span></div>
+            <div style={rowLine}><span>Left afterwards</span>
+              <span className="tnum" style={{fontWeight:600,
+                color:scenarios.cash.remainingAfter>=0?P.neuInk:P.wine}}>
+                {fmt(scenarios.cash.remainingAfter)}</span></div>
+          </section>
+
+          {/* ── 2 · The entered plan ── */}
+          <section style={card}>
+            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>
+              Buy it now, on {financedMode?installmentProvider(draft.method).label:"a payment plan"}
+            </div>
+            {!scenarios.financed
+              ?<div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
+                 Pick a provider, a number of payments and a first due date above to see what
+                 the instalments would do to each period.
+               </div>
+              :<>
+                <Verdict tone={financedVerdict}>
+                  {!scenarios.financed.upfrontFeasible
+                    ?`The ${fmt(scenarios.financed.upfront)} down payment is more than you have available`
+                    :scenarios.financed.deficits.length>0
+                      ?`${scenarios.financed.deficits.length} period${scenarios.financed.deficits.length===1?"":"s"} would go over budget`
+                      :financedVerdict==="warn"
+                        ?"It fits, but one period is left with almost nothing spare"
+                        :"Every affected period still balances"}
+                </Verdict>
+                <div style={rowLine}><span>Up front today</span>
+                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.financed.upfront)}</span></div>
+                <div style={rowLine}><span>{scenarios.financed.count} payments of about</span>
+                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.financed.perPayment)}</span></div>
+                {scenarios.financed.fees>0&&
+                  <div style={rowLine}><span>Fees or interest</span>
+                    <span className="tnum" style={{fontWeight:600,color:P.wine}}>{fmt(scenarios.financed.fees)}</span></div>}
+                <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".08em",
+                  margin:"12px 0 4px"}}>Each affected period</div>
+                <div style={{...neuInset(12),padding:"4px 0"}}>
+                  {scenarios.financed.buckets.map(b=>(
+                    <div key={b.key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
+                      <span style={{flex:1,minWidth:0,fontSize:12,color:P.neuSub,overflow:"hidden",
+                        textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label(b.key)}</span>
+                      <span className="tnum" style={{fontSize:11,color:P.faint,flexShrink:0}}>
+                        −{fmt(b.obligation)}</span>
+                      <span className="tnum" style={{fontSize:13,fontWeight:600,flexShrink:0,minWidth:88,
+                        textAlign:"right",color:b.headroom<0?P.wine
+                          :(b.income>0&&b.headroom<b.income*(PURCHASE_THIN_PCT/100)?"#E07B2A":P.neuInk)}}>
+                        {fmt(b.headroom)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+                  Headroom left in each period after the plan, existing instalments and this one.
+                </div>
+              </>}
+          </section>
+
+          {/* ── 3 · Earliest affordable ── */}
+          <section style={card}>
+            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>Save up for it instead</div>
+            {!scenarios.earliest
+              ?<>
+                <Verdict tone="bad">Not reachable within two years</Verdict>
+                <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
+                  At the current plan, {PURCHASE_HORIZON_BUCKETS} periods of leftover money still
+                  don't reach {fmt(price)}. Trimming a category below, or a bigger change to the
+                  plan, is what would move this.
+                </div>
+              </>
+              :<>
+                <Verdict tone={earliestVerdict}>
+                  {scenarios.earliest.n===0
+                    ?"You can already afford it out of cash"
+                    :`Affordable by ${label(scenarios.earliest.bucketKey)}`}
+                </Verdict>
+                {scenarios.earliest.n>0&&<>
+                  <div style={rowLine}><span>Periods to wait</span>
+                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{scenarios.earliest.n}</span></div>
+                  <div style={rowLine}><span>Still to find</span>
+                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.earliest.shortfall)}</span></div>
+                  <div style={rowLine}><span>Per period</span>
+                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.earliest.requiredPerBucket)}</span></div>
+                </>}
+                <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                  Counts only what each period has left over after the plan and existing
+                  instalments — a plan that finishes along the way frees its money up
+                  automatically.
+                </div>
+              </>}
+          </section>
+
+          {/* ── Levers ── */}
+          <section style={card}>
+            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:4}}>What if…</div>
+            <div style={{fontSize:11,color:P.faint,marginBottom:12,lineHeight:1.5}}>
+              These change the projections only. Nothing here edits your budget or your goals.
+            </div>
+
+            {myGoals.length>0&&<>
+              <div style={{fontSize:12,color:P.neuSub,marginBottom:6}}>Goals available to spend</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+                {myGoals.map(g=>{
+                  const on=!unprotected.has(g.id);
+                  return(
+                    <button key={g.id} aria-pressed={!on} className="status-pill"
+                      onClick={()=>setDraft(d=>{
+                        const next=new Set(d.unprotectedGoalIds||[]);
+                        if(next.has(g.id))next.delete(g.id);else next.add(g.id);
+                        return{...d,unprotectedGoalIds:[...next]};
+                      })}
+                      style={{border:`1px solid ${on?P.line:P.gr}`,cursor:"pointer",
+                        background:on?"transparent":P.grS,color:on?P.sub:P.grD}}>
+                      {on?"Protected":"Spendable"} · {g.name||"Goal"}
+                    </button>
+                  );
+                })}
+              </div>
+            </>}
+
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <button onClick={()=>setShowTrims(true)}
+                style={{borderRadius:999,padding:"8px 14px",minHeight:40,fontSize:12,fontWeight:600,
+                  border:`1px solid ${P.line}`,background:"transparent",color:P.sub}}>
+                Trim categories
+              </button>
+              {trimTotal>0&&
+                <span className="tnum" style={{fontSize:12,color:P.grD,fontWeight:600}}>
+                  −{fmt(trimTotal)} per period assumed
+                </span>}
+              {trimTotal>0&&
+                <button onClick={()=>set({trims:{}})}
+                  style={{background:"transparent",border:"none",color:P.wine,fontSize:12,
+                    fontWeight:600,padding:"8px 4px",minHeight:40}}>Clear</button>}
+            </div>
+          </section>
+
+          {/* ── The one durable exit ── */}
+          {financedMode&&
+            <button onClick={openCreate}
+              style={{width:"100%",borderRadius:14,padding:"14px 0",fontSize:14,fontWeight:600,
+                border:"none",background:P.gr,color:"#fff",marginBottom:24}}>
+              Create this plan in Installments
+            </button>}
+        </>}
+      </>}
+
+      {showTrims&&
+        <PurchaseTrimSheet categories={trimCats} trims={trims} cur={cur} fmt={fmt}
+          setTrim={(id,v)=>setDraft(d=>({...d,trims:{...(d.trims||{}),[id]:Number(v)||0}}))}
+          onClose={()=>setShowTrims(false)}/>}
+
+      {createSheet&&
+        <InstallmentEditSheet prefill={createSheet} payments={[]}
+          owner={budgetOwner} ownerLabel={owners[budgetOwner]||budgetOwner}
+          cur={cur} fmt={fmt}
+          onClose={()=>setCreateSheet(null)}
+          onSave={({plan,rows})=>{
+            const id=addInstallment(plan,rows);
+            setCreateSheet(null);
+            openInstallment(id);
+          }}/>}
     </div>
   );
 }

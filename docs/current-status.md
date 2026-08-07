@@ -1,7 +1,118 @@
 # Current Status
 
-_Last updated: 2026-08-07 (installment payments can be funded from a budget
-category, v1.30.0)_
+_Last updated: 2026-08-07 (Purchase Advisor — Build A, v1.31.0)_
+
+---
+
+# 📋 SESSION NOTE — 2026-08-07 (v1.31.0) — Purchase Advisor, Build A
+
+**Built, tested and staged; NOT deployed and not yet verified against the real
+dataset on a phone.** Build B (Gemini narration) is deliberately not in this
+build — `worker.js`, `wrangler.jsonc` and every secret are untouched.
+
+## What it is
+
+A new More-sheet tab, `advisor`, answering "should I buy this, and how?" three
+ways: **cash now**, **on the payment plan you entered**, and **the earliest
+period you could afford it**. It is a deterministic scenario engine over data
+the app already holds — plans, pay periods, installments, banks, goals, the
+Bills Reserve — combined *forward in time* for the first time. `projectSeries`
+and `computeTargetForecast` are investment compounding only and answer a
+different question; none of this could reuse them.
+
+## The property that shaped everything
+
+**It touches no synced data.** No new collection, and no entry in
+`defaultData` / `migrate` / `fingerprint` / `tryAutoMergeAll` /
+`CONFLICT_COLLECTIONS` / `countPendingChanges` / `purgeOldTombstones` / either
+`BACKUP_*_KEYS` list. It cannot cause a KV write, cannot change a fingerprint
+and cannot reach the other phone. The draft lives in `localStorage` under
+`PURCHASE_DRAFT_KEY` and holds **inputs only, never a computed figure** — a
+stored headroom or verdict would be a snapshot of a budget that has since
+moved. Same reasoning as `VIEW_PROFILE_KEY` and `PROVENANCE_KEY`.
+`purchasetest.cjs` pins that as a source-structure assertion, so a later edit
+has to delete a test to break it.
+
+## Engine
+
+One contiguous module-scope block immediately after `installmentSummary`, all
+pure, all taking `todayStr` rather than reading the clock: `categoryEffectiveAmt`
+· `purchaseTrimFor` · `purchasePlannedTotal` · `purchaseHeadroomForBucket` ·
+`purchaseAvailableStack` · `buildPurchaseSchedule` · `projectPurchaseScenarios`
+· `purchaseVerdict` · `purchaseHistoryWarning`, plus `PURCHASE_HORIZON_BUCKETS`
+(24) and `PURCHASE_THIN_PCT` (5).
+
+- `categoryEffectiveAmt` is `BudgetView`'s `effectiveAmt` extracted verbatim.
+  `BudgetView` now aliases it and `ExpenseTrackerView`'s second inline copy is
+  gone. Pure refactor; asserted equivalent to the old expression case for case.
+- **Headroom is Budget's own arithmetic, not a second opinion.**
+  `purchaseHeadroomForBucket` is `income − Σ categoryEffectiveAmt −
+  installmentTotal`. The anti-drift test drives the *sliced* `BudgetView`
+  expression over the same fixture and demands equality, rather than restating
+  it. Checked by hand in the browser too: Budget showed `Left SAR 4,100.00` for
+  August and the advisor computed 4,100 for the same owner and bucket.
+- Funded installment rows (`fundedElsewhere`) leave the obligation, exactly as
+  `BudgetView.installmentTotal` drops them — their money is already inside a
+  category's allocation.
+- `purchaseAvailableStack` renders a subtraction, never a bare number. Goal
+  balances live *inside* bank balances (`applyGoalContribution` writes a
+  transfer and credits the goal; it never touches `banks`), so protecting a goal
+  subtracts it here. The Bills Reserve is always protected. Joint
+  (`household`) accounts are **reported and never added**, on a greyed line, so
+  the exclusion can never be a silent surprise. An account in another currency
+  that FX cannot yet convert is excluded and counted as `unconverted`, never
+  added at face value.
+- `earliest` accumulates `max(0, headroom)` — a bucket in deficit contributes
+  nothing and never subtracts — and returns `null` past 24 buckets rather than
+  extrapolating. An existing installment ending inside the horizon raises
+  headroom on its own, which is why "wait until the Tabby plan finishes" needed
+  no scenario of its own.
+
+## UI
+
+`PurchaseAdvisorView` + `PurchaseTrimSheet`, following `InstallmentsView`.
+Cards through `neu(16)`, each leading with a `<Verdict>` line and demoting the
+figures beneath it; every numeric field a `NumField`; both `<input type="date">`
+carrying `fontFamily:"inherit"`, an explicit `height:38` and `appearance:none`
+in all three prefixes, inside `flexWrap:"wrap"` rows of `flex:"1 1 150px"`
+cells; both sheets `<Portal>`-wrapped with `useScrollLock` + `useDialogA11y` and
+sized in `dvh`.
+
+Levers (protected-goal toggles, per-category trims) are transient draft state
+and recompute all three scenarios live. Switching owner clears them, because
+they name that person's records. The one durable exit is "Create this plan in
+Installments", which opens the ordinary `InstallmentEditSheet` through a new
+`prefill` prop — kept distinct from `initial`, which is what decides whether
+Save updates or creates. From that moment it is an ordinary installment and the
+advisor has no further relationship with it.
+
+## Verification
+
+- `node parsecheck.cjs` — PARSE OK.
+- All **nineteen** runners green, including the new `purchasetest.cjs` (35/35):
+  the ten unit cases from the plan plus three source-structure assertions.
+- Driven in a sandbox copy at `localhost:8791` on a seeded document. The tab
+  opens, all three scenarios compute, both sheets portal to `document.body` and
+  anchor to the viewport, the prefill lands correctly (3,900 financed over
+  4 × 975 after a 1,300 down payment), and the two date inputs measure
+  **exactly 38px tall, same width, same top** as the `NumField` beside them via
+  `getBoundingClientRect` with the fields mounted.
+- `node stage.cjs` — all three version sites agree (1.31.0 / 2026.08.07.0004).
+
+## Known gaps, all deliberate
+
+- Projection is **plan-based**. Trailing actuals appear only as a
+  non-authoritative warning gated on `MIN_TREND_BUCKETS`, so it stays dark until
+  ~Oct 2026. Re-check it the first period it appears — the same carried-forward
+  action Home's two trend cards already have.
+- The Bills Reserve is household-wide but scope is per-owner, so it is
+  subtracted in full from one owner's cash. Conservative (understates
+  available), and labelled in the stack.
+- Single currency, no picker. No goal deadlines, no household scope, no Home
+  card, no stored analyses.
+- **Not yet checked against the real dataset on a phone.** Cross-check the
+  headroom figure against the Budget tab for the same owner and month before
+  trusting a verdict.
 
 ---
 

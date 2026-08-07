@@ -1,5 +1,125 @@
 # Architectural & Technical Decisions
 
+## The Purchase Advisor is two builds, and Build A is the feature (2026-08-07, v1.31.0)
+
+"Should I buy this MacBook, and how?" reads like an AI question. It isn't. The
+expensive, risky and interesting part is the forward cash-flow model, which the
+app had never had — and once that exists, the answer is already on screen. So
+the work was split: **Build A**, a deterministic scenario engine plus a tab,
+shipping alone; **Build B**, a one-shot Gemini narration of Build A's output
+behind a new Worker endpoint with hard spend caps, shipping separately or never.
+
+The split is not tidiness. Build A changes no synced data, needs no Worker
+change, no secret, no CSP work and no rate limiting, so it is independently
+rollback-able and cannot break sync. It is also permanently the offline,
+quota-exhausted and model-down fallback: if Build B is never built, or is built
+and later removed, nothing is lost. Splitting the other way round — narration
+first, over figures computed ad hoc — would have made the model the load-bearing
+part of a financial recommendation, which is exactly what it must never be.
+
+## Availability is a subtraction, never a number (2026-08-07, v1.31.0)
+
+The naive "cash available" figure is `Σ bankValue()`, and it recommends spending
+the emergency fund. `applyGoalContribution` writes an `isTransfer:true` expense
+and credits the goal — **it never touches `banks`** — so every goal pot and the
+whole Bills Reserve is already inside that sum. Subtracting them is not
+conservatism; it is removing a double count.
+
+Hence `purchaseAvailableStack` returns every component rather than a total, and
+the UI renders the stack:
+
+    Accounts · Me            SAR 31,000
+    Bills Reserve          − SAR  6,100
+    3 protected goals      − SAR 12,500
+    Available                SAR 12,400
+    Joint accounts — not counted  SAR 18,000   (greyed)
+
+Three consequences worth naming:
+
+- **Every goal is protected by default**, with per-goal unprotect toggles that
+  live in the draft and never in `data`. The safe default is the one where a
+  recommendation cannot quietly spend the emergency fund.
+- **Joint accounts are reported and never added.** Scope is strictly per-owner
+  (following `budgetOwner`), and `"household"` is not a third person. A joint
+  account silently missing from a total is the surprise the greyed line exists
+  to prevent — an exclusion the user can see is a decision; one they cannot is
+  a bug.
+- **The Bills Reserve is household-wide but is subtracted in full** from one
+  owner's cash. That understates availability, deliberately, and is labelled.
+  Revisit only alongside a household-scope design conversation.
+
+An account in a currency FX cannot yet convert is **excluded and counted**, not
+added at face value — 200,000 PHP silently landing in a SAR total would be the
+worst possible failure shape for a spending recommendation.
+
+## The advisor must never be able to disagree with the Budget tab (2026-08-07)
+
+The projection is only credible if its "headroom" is the same number Budget
+already shows as "Left". Two devices for that, both structural rather than
+disciplinary:
+
+1. `purchaseHeadroomForBucket` is literally `income − Σ categoryEffectiveAmt −
+   installmentTotal`, and `categoryEffectiveAmt` is `BudgetView`'s own
+   `effectiveAmt` extracted to module scope (with `ExpenseTrackerView`'s second
+   inline copy deleted in the same change — three copies of "a category's
+   `amount` is manual only while it has no subs" was two too many).
+2. `purchasetest.cjs` slices the **shipped `BudgetView` expression** out of
+   `index.html`, runs it over the same fixture, and asserts equality. A
+   restatement of the arithmetic in the test would only ever test the
+   restatement; slicing means a future edit to either side fails the runner.
+
+The funded-installment rule falls out of the same discipline: a payment with
+`fundedCatId` is already inside a category's allocation, so it leaves the
+obligation exactly as it leaves `BudgetView.installmentTotal`. Counting it in
+both places reserves the same riyal twice.
+
+## Plan-based, with actuals as a warning and never as arithmetic (2026-08-07)
+
+The engine projects from the plan, not from a trailing average. A plan is a
+decision; a trailing average is a description, and projecting from it quietly
+tells someone their overspending is a law of nature. But a plan the last three
+periods consistently overran is worth saying out loud before committing to
+twelve payments against it — so `purchaseHistoryWarning` returns a sentence,
+gated on `MIN_TREND_BUCKETS` (the same bar Home's trend cards use) and on the
+mean exceeding plan by more than 10%. It never feeds a figure. It is dark until
+roughly Oct 2026, which is a carried-forward action, not a finished one.
+
+## Nothing derivable is stored, and nothing at all is synced (2026-08-07)
+
+The whole feature adds no field to the document: no collection, no
+`migrate()` default, no `fingerprint()` touch point, no merge entry, no backup
+key. It cannot cause a KV write and cannot reach the other phone — which is
+precisely why it could ship without the sync-testing discipline every previous
+build needed.
+
+The draft is per-device `localStorage` (`PURCHASE_DRAFT_KEY`) for the same
+reasons as `VIEW_PROFILE_KEY` and `PROVENANCE_KEY`, plus one of its own: a
+half-finished thought is not a household record, and syncing it would change
+what the other phone is looking at. It stores **inputs only** — a stored
+headroom or verdict would be a snapshot of a budget that has since moved, and
+recomputing on open is free.
+
+The render path also never reaches `editPlanForMonth`. The advisor resolves up
+to 24 future buckets; one write on that path would clone a plan into every
+month somebody merely glanced at. It is the same rule the derived Budget rows
+follow, and `purchasetest.cjs` asserts it as a property of the source rather
+than trusting it to stay true.
+
+## `prefill` is not `initial` (2026-08-07)
+
+"Create this plan" hands `InstallmentEditSheet` a **`prefill`**, not an
+`initial`. They look interchangeable and are not: `editing = !!initial` decides
+whether Save updates or creates, whether the schedule starts hand-edited, and
+whether the first-due/count row is offered at all. A prefill wants none of that
+— it only wants the boxes filled in. Reusing `initial` would have produced a
+sheet that edited a record which does not exist yet.
+
+From the moment it saves it is an ordinary installment. The advisor stores
+nothing about it and has no further relationship with it — which is what keeps
+"the advisor is read-only" true with exactly one explicit exception the user
+performs themselves.
+
+
 ## Cleaning up demo records can't match on name (2026-08-07)
 
 `samplescan.cjs` deliberately never matches a record by its name, which looks

@@ -178,6 +178,42 @@ Two things learned worth reusing:
   (a newer build's unknown collections must pass) is asserted in
   `cloudguardtest.cjs` — keep it green.
 
+## Purchase Advisor — Build A DONE (2026-08-07, v1.31.0) · Build B NOT built
+
+Planned in a grilling session 2026-08-07; plan at
+`C:\Users\arjas\.claude\plans\i-want-to-plan-majestic-pancake.md`.
+
+- **Build A — the engine + tab — DONE**, build `2026.08.07.0004` / v1.31.0.
+  Module-scope pure engine after `installmentSummary`, `PurchaseAdvisorView` +
+  `PurchaseTrimSheet`, the `advisor` tab in all four places,
+  `PURCHASE_DRAFT_KEY` in `localStorage`. Touches no synced data at all.
+  `purchasetest.cjs` 35/35, all nineteen runners green, staged, **not
+  deployed**. See `current-status.md` / `decisions.md`.
+- **Build B — Gemini narration — NOT built and not started.** `POST /ai/advice`
+  in `worker.js` behind the existing `authOk()`, spend caps as methods on the
+  existing `SyncRoom` DO under their **own** storage key (never mixed into the
+  document key), `AbortController` at 20s, no retries, `tools` omitted so
+  grounding cannot be prompt-enabled, and an app-side
+  `validatePurchaseNarration` whose load-bearing rule is *any currency-shaped
+  number in the prose must be present in the context*. The free Gemini tier is
+  disqualified on privacy (free-tier content is used to improve Google
+  products; paid explicitly is not). No markdown renderer — the app has no
+  `dangerouslySetInnerHTML` or `innerHTML` anywhere, and adding one is the only
+  way to create an XSS in this feature.
+
+**Carried-forward actions from Build A**
+
+- Cross-check the advisor's headroom against the Budget tab, by hand, on the
+  real dataset for the same owner and month before trusting a verdict. If they
+  disagree, the engine is wrong.
+- The trailing-actuals warning (`purchaseHistoryWarning`) is dark until
+  ~Oct 2026. Re-check it the first period it appears — same action the two Home
+  trend cards already carry.
+
+**Consciously deferred:** goal deadlines · multi-currency · household scope ·
+chat and history · grounding · automatic discretionary detection · applying a
+recommendation as app changes · stored or synced analyses · a Home card.
+
 ## Next up — reconcile plan vs actual in the Expenses unaccounted sheet (scoped 2026-08-01, NOT built)
 
 Surfaced by the user trying to check the unaccounted figure by hand after
