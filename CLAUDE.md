@@ -313,6 +313,38 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   *calculation* behavior (currently just `includeMp2EstimateInNetWorth`) —
   put future calculation-affecting toggles here, not as ad hoc top-level
   `data` fields.
+- **A DERIVED record's identity must itself be derived** (2026-08-07). Anything
+  two devices generate independently — bill rows, the derived Budget
+  installment rows — must build its id from what makes it unique, because
+  `tryAutoMergeAll` unions **by id**. Bill rows used `id:uid()`, so both phones
+  minted different ids for the same (month, item), nothing collided, the union
+  kept both, and the Bills Reserve read exactly **double**. Now
+  `billRowId(monthKey,itemId)` → `bill:<monthKey>:<itemId>`, the same shape
+  `installmentRowId` already used. Three follow-ons, all load-bearing:
+  `dedupeBillRows` picks its survivor **deterministically** (greatest `paid` →
+  canonical id → oldest `createdAt` → smallest id) or two devices each tombstone
+  the other's pick and the record vanishes; the survivor rung preferring the
+  canonical id is what makes it **converge** instead of churning on every sync;
+  and the reconciler must **not revive a row marked `dedupedAt`** — it used to
+  revive every tombstoned row for a tracked item, which undid the repair on the
+  next app open. The repair lives in `migrate()` as well as the reconciler,
+  because the reconciler only ever touches the CURRENT month.
+- **A field added to an existing record type is NOT defaulted in `migrate()`**
+  unless absence would be ambiguous. `banks[].accessible`/`.purpose`,
+  `goals[].bankId`/`.deadline`, `installmentPayments[].fundedCatId`, a
+  category's `goalId` and an expense's `ord` all read as absent-means-default.
+  Defaulting rewrites every record on every device's first open, which changes
+  the document, changes the fingerprint, and buys a KV write per device for
+  information nobody entered. (`bills`' dedupe is the deliberate exception: it
+  is a *repair*, so it is meant to change the document — once, idempotently.)
+- **Cached market data lives in `data` and is excluded from `fingerprint()`.**
+  `livePrice`/`livePriceAt`/`prevClose` were joined by `rates`/`ratesAt`
+  (v1.32.0). Two rules: add any new one to the destructure at the top of
+  `fingerprint`, or a background refresh marks the doc dirty and costs a KV
+  write on every app open; and **an effect that reads persisted state must wait
+  for `loaded`** — App's initial state is an EMPTY document and the stored one
+  arrives later, so a bare `[]` mount effect never sees the cache and refetches
+  every time.
 
 ## Styling conventions
 
@@ -459,7 +491,8 @@ the user's next step is a `<select>` buries the list behind the keyboard.
 ## Navigation
 
 Tabs live in three module-scope lists — `PRIMARY_TABS` (bottom bar),
-`MORE_TABS` (More sheet), `HIDDEN_TABS` (reachable by code only; Forecast
+`MORE_TABS` (More sheet — Net Worth, Goals, Installments, Purchase Advisor,
+Bills, Household, Currency), `HIDDEN_TABS` (reachable by code only; Forecast
 sits here). `TAB_ORDER` is derived from all three, so a new tab cannot be
 added without landing in the slide-direction tracker. Labels/icons come from
 the single `TAB_META` registry (`short` is bar-only). z-index ladder:
@@ -616,7 +649,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are eighteen, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are nineteen, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -638,7 +671,11 @@ and an error naming a collection the user has never heard of.
   `synconnecttest.cjs` (a device's FIRST contact with the cloud:
   `syncConnectDecision`, the record/settings distinction, sample provenance,
   and three source-structure assertions pinning the `cloudConfirmedRef` and
-  no-baseline guards that live in `App()` effects rather than a pure function).
+  no-baseline guards that live in `App()` effects rather than a pure function),
+  and `purchasetest.cjs` (the Purchase Advisor engine: headroom vs the SLICED
+  BudgetView expression, per-bank withholding, the savings plan, and three
+  source-structure assertions pinning "touches no synced data" and "never
+  materialises a plan").
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -736,8 +773,14 @@ and an error naming a collection the user has never heard of.
 ## Docs
 
 - `docs/current-status.md` — what's implemented, known gaps, verification notes.
+  **Starts with a "State of play — read this first" block**: what is live, what
+  the next session is, and the open carried-forward items. Read that before
+  anything else.
 - `docs/decisions.md` — why things were built the way they were.
-- `docs/roadmap.md` — recommended next phases.
+- `docs/roadmap.md` — recommended next phases. The **next build's full spec sits
+  at the top**, self-contained, because planning sessions write their plan to
+  `~/.claude/plans/`, which is machine-local and NOT in the repo. Anything a
+  future session must be able to execute from has to be copied into these docs.
 
 Keep these updated at the end of any substantial session (see prior handover
 in git history / conversation, not duplicated here).

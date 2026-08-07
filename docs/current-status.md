@@ -2,6 +2,56 @@
 
 _Last updated: 2026-08-07 (Bills Reserve double-count repaired, v1.35.0)_
 
+## State of play — read this first
+
+**Live and verified: v1.35.0 / build `2026.08.07.0008`** at
+https://whered-it-go.pages.dev. Deployed and pushed; `main` is clean.
+All **nineteen** runners green.
+
+**Next session: Purchase Advisor Build B (Gemini narration).** The full spec is
+at the top of `docs/roadmap.md` — self-contained, because the original plan
+file lives in `~/.claude/plans/` outside the repo. Read the "What changed in the
+engine since the plan was written" subsection before writing
+`buildPurchaseAiContext`: `purchaseAvailableStack` no longer has a `reserve`,
+and there is now a fourth `savings` scenario.
+
+Build B is the **only** remaining piece that touches `worker.js`,
+`wrangler.jsonc` or a secret. Deploy the Worker FIRST, then Pages.
+
+### Shipped this session (2026-08-07)
+
+| Build | Version | What |
+|---|---|---|
+| A  | 1.31.0 | Purchase Advisor engine + tab, three scenarios |
+| A2 | 1.32.0 | Bank `accessible`/`purpose`, goal `bankId`/`deadline`, FX cached in `data` |
+| A3 | 1.33.0 | The advisor uses the flags; per-bank `max(reserved, claimed)`; date-driven savings; goal handoff |
+| —  | 1.34.0 | Bills Reserve removed from the advisor |
+| —  | 1.35.0 | Bills Reserve double-count repaired (`billRowId` + `dedupeBillRows`) |
+
+### Open, carried forward — none blocking
+
+1. **Cross-check the advisor's headroom against the Budget tab on REAL data**,
+   same owner and month. Budget's "Left" and the advisor's period figures must
+   be identical. Verified only against fixtures and the sliced `BudgetView`
+   expression — never the real dataset. If they disagree the engine is wrong and
+   Build B would narrate the error more fluently.
+2. **`purchaseHistoryWarning` is dark until ~Oct 2026** (needs
+   `MIN_TREND_BUCKETS` = 3 completed periods). Re-check the first period it
+   appears — same carried-forward action Home's two trend cards have.
+3. **Open the app on both phones on ≥ v1.35.0** so each repairs its own bill
+   rows and the canonical ids converge. Until then the un-upgraded phone keeps
+   minting random-id rows; the reconciler collapses them on arrival, so the
+   reserve stays correct either way.
+4. **5b — salary reconciliation** in the Expenses unaccounted sheet. Predates
+   this work, still open, see `roadmap.md`.
+
+### Deliberately deferred
+
+Goal↔bank reconciliation warnings · multi-currency purchases · household scope ·
+chat/history · grounding · automatic discretionary detection · applying a
+recommendation as app changes · stored or synced analyses · a Home card for a
+goal that has fallen behind.
+
 ---
 
 # 📋 SESSION NOTE — 2026-08-07 (v1.34.0 + v1.35.0) — Bills Reserve
