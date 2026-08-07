@@ -1,5 +1,51 @@
 # Architectural & Technical Decisions
 
+## A derived record's identity must itself be derived (2026-08-07, v1.35.0)
+
+The Bills Reserve was reading exactly double, and the cause is worth stating in
+general terms because it will recur.
+
+Bill rows are **generated**, not entered: one per (month, tracked household
+item), created by an effect on whichever device happens to be open. They were
+given `id: uid()` — a fresh random id. But `tryAutoMergeAll` merges bills with
+`mergeArrayById`, a union **by id**. Two phones each generating a row for the
+same month and item therefore minted DIFFERENT ids, nothing collided, the union
+kept both, and `computeBillsReserve` counted every tracked bill twice. It
+compounded per item, per month both devices were open, and again for every new
+device.
+
+**The rule: anything two devices will independently generate must derive its id
+from what makes it unique**, so the two generations collide and merge into one
+instead of stacking. The derived Budget installment rows already do this
+(`inst:<paymentId>`); bills did not. Now `billRowId(monthKey,itemId)` →
+`bill:<monthKey>:<itemId>`, prefixed so it can never collide with a `uid()`.
+
+Three things the repair needed beyond the id itself:
+
+- **`migrate()` has to do it, not just the reconciler.** The reconciler only
+  ever touches the CURRENT month — past months are frozen history and would
+  keep their duplicates forever. This is the rare migrate() rule that is *meant*
+  to change the document: it is a repair, so it moves the fingerprint and costs
+  one KV write per device. It is idempotent, so it costs exactly one.
+- **The reconciler had to stop reviving what the dedupe collapsed.** It revived
+  *every* tombstoned row for a tracked item, so a collapsed duplicate came back
+  on the next app open and the reserve doubled again. A row tombstoned as a
+  duplicate is marked `dedupedAt` and stays collapsed; only a row that would
+  otherwise have to be recreated is revived.
+- **The survivor must be chosen deterministically**, or two devices would each
+  tombstone the other's pick and the bill would vanish from the reserve
+  entirely. Order: greatest `paid` (payment history is never what gets
+  discarded) → the canonical id → oldest `createdAt` → smallest id.
+
+That second rung was added after watching the browser: with a purely
+alphabetical tie-break, a stray row from a phone still on the old build
+displaced the incumbent, tombstoning a good row and reviving a different one on
+every sync. Preferring the canonical id makes the survivor **converge** so the
+churn stops once every device is upgraded.
+
+Losers are tombstoned, never spliced — a hard delete cannot survive a merge, and
+a soft delete means a row collapsed in error is still in the document.
+
 ## The Bills Reserve is not the advisor's business (2026-08-07, v1.34.0)
 
 Removed from `purchaseAvailableStack`. Two reasons, and the second is the one

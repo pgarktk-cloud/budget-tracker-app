@@ -33,11 +33,15 @@ const t=(name,fn)=>{n++;try{fn();console.log("  ok   "+name);}catch(e){fails++;c
 const effect=slice("      const items=((d.household||{}).expenses||[]).filter(e=>!e.deletedAt&&e.trackInBills);",
                    "  },[loaded,currentBillMonthKey,trackedHhKey]);");
 const body=effect.replace(/\s*\}\);\s*$/,"");
+/* billRowId + dedupeBillRows are sliced in rather than stubbed: "which rows are
+   duplicates of each other" is now half of what the reconciler does, and a stub
+   would test the stub. */
+const helpers=slice("function billRowId(monthKey,itemId){","/* Bills Reserve = opening baseline");
 let seq=0;
 const reconcile=(d,monthKey="2026-07")=>{
   const ctx={currentBillMonthKey:monthKey,uid:()=>"b"+(++seq)};
   vm.createContext(ctx);
-  vm.runInContext("var __run=function(d){"+body+"\n};",ctx);
+  vm.runInContext(helpers+"\nvar __run=function(d){"+body+"\n};",ctx);
   return ctx.__run(d);
 };
 const doc=(exp,bills)=>({household:{expenses:exp},bills});
@@ -117,6 +121,144 @@ t("handles a mix: create + retire + resync in one pass",()=>{
   assert.ok(by("i2").deletedAt,"retired");
   assert.strictEqual(by("i3").allocated,2000,"created");
   assert.strictEqual(out.bills.length,3);
+});
+
+/* ── Duplicate bill rows (the reserve-is-double bug, v1.35.0) ─────────────
+   Rows are GENERATED, once per (month, tracked item), by whichever device is
+   open. They used to get `id: uid()`, and tryAutoMergeAll merges bills with
+   mergeArrayById — a union by id. Two phones each generating a row for the
+   same month and item minted different ids, nothing collided, the union kept
+   both, and computeBillsReserve counted every tracked bill twice. */
+console.log("\nduplicate rows");
+
+const hctx={};
+vm.createContext(hctx);
+vm.runInContext(slice("function billRowId(monthKey,itemId){","function computeBillsReserve(d){")
+  +slice("function computeBillsReserve(d){","const billMonthKeyOf="),hctx);
+const{billRowId,dedupeBillRows,computeBillsReserve}=hctx;
+const NOW="2026-07-15T00:00:00.000Z";
+
+t("a generated row's id is derived from what makes it unique",()=>{
+  /* The fix at its root: two devices generating the same row must produce the
+     same id, so the merge collapses them instead of stacking them. */
+  assert.strictEqual(billRowId("2026-07","i1"),billRowId("2026-07","i1"));
+  assert.notStrictEqual(billRowId("2026-07","i1"),billRowId("2026-08","i1"));
+  assert.notStrictEqual(billRowId("2026-07","i1"),billRowId("2026-07","i2"));
+  assert.ok(/^bill:/.test(billRowId("2026-07","i1")),
+    "prefixed so it can never collide with a uid()");
+  const out=reconcile(doc([item("i1","Rent",5000,true)],[]));
+  assert.strictEqual(out.bills[0].id,billRowId("2026-07","i1"),
+    "the reconciler must stop minting uid()s");
+});
+
+t("the reserve is exactly doubled by duplicates, and the dedupe repairs it",()=>{
+  const dup=[bill("randomA","i1",{allocated:5000,paid:0}),
+             bill("randomB","i1",{allocated:5000,paid:0})];
+  assert.strictEqual(computeBillsReserve({bills:dup}),10000,"the bug, reproduced");
+  const{rows,removed}=dedupeBillRows(dup,NOW);
+  assert.strictEqual(removed,1);
+  assert.strictEqual(computeBillsReserve({bills:rows}),5000,"one bill, counted once");
+});
+
+t("the survivor is deterministic, so two devices never disagree",()=>{
+  /* If each device kept a different copy, each would tombstone the other's and
+     the bill would vanish from the reserve entirely. */
+  const a=[bill("zzz","i1"),bill("aaa","i1")];
+  const b=[bill("aaa","i1"),bill("zzz","i1")];   // same rows, other order
+  const keptA=dedupeBillRows(a,NOW).rows.filter(r=>!r.deletedAt).map(r=>r.id);
+  const keptB=dedupeBillRows(b,NOW).rows.filter(r=>!r.deletedAt).map(r=>r.id);
+  assert.deepStrictEqual(keptA,keptB);
+  assert.deepStrictEqual(keptA,["aaa"],"ties break on id, which depends on nothing else");
+});
+
+t("the canonical row wins, so the survivor converges instead of churning",()=>{
+  /* Without this rung a stray row from a phone still on an older build could
+     displace the incumbent purely on alphabetical order — tombstoning a good
+     row and reviving a different one on every sync. Measured in the browser
+     before the fix: "oldPhone-x" beat "phoneA-0" and took over the Rent row. */
+  const canon=billRowId("2026-07","i1");
+  const rows=[bill(canon,"i1"),bill("aaaa-from-old-phone","i1")];
+  const live=dedupeBillRows(rows,NOW).rows.filter(r=>!r.deletedAt);
+  assert.strictEqual(live.length,1);
+  assert.strictEqual(live[0].id,canon,"the derived id beats a lower random one");
+  // and it is stable: running again keeps the same survivor
+  const again=dedupeBillRows(dedupeBillRows(rows,NOW).rows,NOW);
+  assert.strictEqual(again.removed,0);
+});
+
+t("an older original still beats a newer copy when neither is canonical",()=>{
+  const rows=[bill("zzz","i1",{createdAt:"2026-07-01T00:00:00.000Z"}),
+              bill("aaa","i1",{createdAt:"2026-07-09T00:00:00.000Z"})];
+  const live=dedupeBillRows(rows,NOW).rows.filter(r=>!r.deletedAt);
+  assert.strictEqual(live[0].id,"zzz","oldest createdAt outranks the lower id");
+});
+
+t("payment history is never what gets discarded",()=>{
+  const rows=[bill("aaa","i1",{paid:0}),bill("zzz","i1",{paid:5000,status:"paid"})];
+  const live=dedupeBillRows(rows,NOW).rows.filter(r=>!r.deletedAt);
+  assert.strictEqual(live.length,1);
+  assert.strictEqual(live[0].id,"zzz","the paid copy wins over the lower id");
+});
+
+t("losers are tombstoned, never spliced, and are marked as deduped",()=>{
+  /* A hard delete cannot survive a merge — the other device's copy would
+     resurrect it — and a soft delete means a row collapsed in error is still
+     in the document rather than gone. */
+  const{rows}=dedupeBillRows([bill("aaa","i1"),bill("zzz","i1")],NOW);
+  assert.strictEqual(rows.length,2,"nothing is removed from the array");
+  const dead=rows.find(r=>r.deletedAt);
+  assert.strictEqual(dead.id,"zzz");
+  assert.strictEqual(dead.dedupedAt,NOW,"marked, so the reconciler won't revive it");
+});
+
+t("it is idempotent and identity-preserving when there is nothing to collapse",()=>{
+  /* It runs inside migrate() and inside the reconciler effect, so returning a
+     fresh array every pass would dirty the document on every app open. */
+  const clean=[bill("aaa","i1"),bill("bbb","i2")];
+  const first=dedupeBillRows(clean,NOW);
+  assert.strictEqual(first.removed,0);
+  assert.strictEqual(first.rows,clean,"same reference — no churn");
+  const{rows}=dedupeBillRows([bill("aaa","i1"),bill("zzz","i1")],NOW);
+  assert.strictEqual(dedupeBillRows(rows,NOW).removed,0,"already collapsed stays collapsed");
+});
+
+t("rows in different months are not duplicates of each other",()=>{
+  const rows=[bill("aaa","i1"),Object.assign(bill("bbb","i1"),{monthKey:"2026-08"})];
+  assert.strictEqual(dedupeBillRows(rows,NOW).removed,0);
+});
+
+t("a tombstoned duplicate is NOT revived on the next pass",()=>{
+  /* The bug that would have made the repair useless: the reconciler revived
+     every tombstoned row for a tracked item, so a collapsed duplicate came
+     back on the next app open and the reserve doubled again. */
+  const{rows}=dedupeBillRows([bill("aaa","i1",{itemName:"Rent",allocated:5000}),
+                              bill("zzz","i1",{itemName:"Rent",allocated:5000})],NOW);
+  const out=reconcile(doc([item("i1","Rent",5000,true)],rows));
+  const live=(out.bills||[]).filter(b=>!b.deletedAt);
+  assert.strictEqual(live.length,1,"still exactly one live row");
+  assert.strictEqual(computeBillsReserve({bills:out.bills}),5000);
+});
+
+t("the reconciler collapses duplicates that arrive from an older device",()=>{
+  /* migrate() repairs what is stored, but a phone still on an older build
+     keeps minting random ids, so its rows arrive on the next merge. */
+  const d=doc([item("i1","Rent",5000,true)],
+    [bill("bill:2026-07:i1","i1",{itemName:"Rent",allocated:5000}),
+     bill("fromOldPhone","i1",{itemName:"Rent",allocated:5000})]);
+  const out=reconcile(d);
+  const live=(out.bills||[]).filter(b=>!b.deletedAt);
+  assert.strictEqual(live.length,1);
+  assert.strictEqual(computeBillsReserve({bills:out.bills}),5000);
+});
+
+t("a genuinely re-tracked item still revives rather than duplicating",()=>{
+  /* The dedupe must not break the existing revive path — an item untracked and
+     then re-tracked has ONE tombstoned row, which is not a duplicate. */
+  const d=doc([item("i1","Rent",5000,true)],
+    [bill("bill:2026-07:i1","i1",{itemName:"Rent",allocated:5000,deletedAt:"2026-07-02T00:00:00.000Z"})]);
+  const out=reconcile(d);
+  assert.strictEqual(out.bills.length,1,"revived, not recreated alongside");
+  assert.strictEqual(out.bills[0].deletedAt,null);
 });
 
 console.log("\n"+(n-fails)+"/"+n+" passed");

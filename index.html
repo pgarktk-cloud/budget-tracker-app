@@ -2637,8 +2637,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.34.0";
-const BUILD_ID="2026.08.07.0007";
+const APP_VERSION="1.35.0";
+const BUILD_ID="2026.08.07.0008";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3533,6 +3533,18 @@ function migrate(d){
     if(b.paymentDate===undefined)b.paymentDate=null;
     if(!b.updatedAt)b.updatedAt="2000-01-01T00:00:00.000Z";
   });
+  /* One-time repair for the duplicated bill rows (v1.35.0). Rows generated on
+     two devices carried different random ids, so mergeArrayById kept both and
+     every tracked bill was counted twice in the reserve.
+
+     This runs here rather than only in the reconciler because the reconciler
+     deliberately touches ONLY the current month — past months are frozen
+     history and would keep their duplicates forever. Unlike every other rule
+     in migrate(), this one is MEANT to change the document: it is a repair,
+     so it will move the fingerprint and cost one KV write on each device's
+     first open. That is the point. It is idempotent, so it costs exactly one. */
+  const billDedupe=dedupeBillRows(d.bills,new Date().toISOString());
+  d.bills=billDedupe.rows;
   if(!d.billAdjustments)d.billAdjustments=[];
   d.billAdjustments.forEach(a=>{if(!a.updatedAt)a.updatedAt="2000-01-01T00:00:00.000Z";});
   if(!d.billsSettings)d.billsSettings={openingReserve:0};
@@ -3763,6 +3775,73 @@ function cloudDocProblem(raw){
   const n=report.errors.length;
   const first=report.errors[0]||"unrecognised shape";
   return `Cloud copy rejected (${n} problem${n===1?"":"s"}): ${first}`;
+}
+
+/* ── A bill row's identity is DERIVED, not minted ──────────────────────────
+   Bill rows are generated, not entered: one per (month, tracked household
+   item), created by an effect on whichever device happens to be open. They
+   used to get `id: uid()`, and `tryAutoMergeAll` merges them with
+   mergeArrayById — which unions by id. Two phones each generating a row for
+   the same month and item therefore minted DIFFERENT ids, nothing collided,
+   the union kept both, and computeBillsReserve counted every tracked bill
+   twice. It compounded: per item, per month both devices were open, and again
+   for every new device.
+
+   The rule, which the derived Budget installment rows (`inst:<paymentId>`)
+   already follow: anything two devices will independently generate must derive
+   its id from what makes it unique, so the two generations collide and merge
+   into one instead of piling up.
+
+   Prefixed so it can never collide with a uid(), and so a stray write against
+   an old random id fails to find a target rather than corrupting a row. */
+function billRowId(monthKey,itemId){return`bill:${monthKey}:${itemId}`;}
+
+/* Collapse rows that duplicate a (monthKey, itemId) pair, keeping ONE.
+
+   Deterministic on purpose: two devices running this over the same rows must
+   choose the same survivor, or each would tombstone the other's pick and the
+   bill would vanish from the reserve entirely.
+
+   The order of preference matters, and each rung earns its place:
+     1. greatest `paid` — payment history is never what gets discarded;
+     2. the CANONICAL id — so the survivor converges on billRowId() and the
+        churn stops once every device is upgraded. Without this rung a stray
+        row from an older phone could displace the incumbent purely on
+        alphabetical order, tombstoning a perfectly good row and reviving a
+        different one on every sync;
+     3. oldest `createdAt` — the original beats a later copy of it;
+     4. smallest id — a final tie-break that depends on nothing else.
+
+   Losers are TOMBSTONED, never spliced — a hard delete cannot survive a merge
+   (the other device's copy would resurrect it), and a soft delete means a row
+   collapsed in error is still in the document rather than gone. */
+function dedupeBillRows(rows,now){
+  const live=(rows||[]).filter(b=>b&&!b.deletedAt);
+  const canonical=b=>String(b.id)===billRowId(b.monthKey,b.itemId)?1:0;
+  /* > 0 when `b` should displace `cur`. */
+  const better=(b,cur)=>{
+    const bp=Number(b.paid)||0,cp=Number(cur.paid)||0;
+    if(bp!==cp)return bp-cp;
+    const bc=canonical(b),cc=canonical(cur);
+    if(bc!==cc)return bc-cc;
+    const bt=String(b.createdAt||""),ct=String(cur.createdAt||"");
+    if(bt!==ct)return bt<ct?1:-1;
+    return String(b.id)<String(cur.id)?1:-1;
+  };
+  const byKey=new Map();
+  live.forEach(b=>{
+    const k=`${b.monthKey}|${b.itemId}`;
+    const cur=byKey.get(k);
+    if(!cur||better(b,cur)>0)byKey.set(k,b);
+  });
+  const keep=new Set([...byKey.values()].map(b=>b.id));
+  let removed=0;
+  const out=(rows||[]).map(b=>{
+    if(!b||b.deletedAt||keep.has(b.id))return b;
+    removed++;
+    return{...b,deletedAt:now,updatedAt:now,dedupedAt:now};
+  });
+  return{rows:removed?out:rows,removed};
 }
 
 /* Bills Reserve = opening baseline + every month's (allocated-paid) +
@@ -7146,8 +7225,21 @@ function App(){
       const tracked=new Map(items.map(it=>[it.id,it]));
       const now=new Date().toISOString();
       let changed=false;
+
+      /* Collapse duplicates first. migrate() repairs what is already stored,
+         but a device still on an older build keeps minting random ids, so its
+         rows arrive on the next merge and have to be collapsed here too. */
+      const ded=dedupeBillRows(d.bills,now);
+      const base=ded.rows;
+      if(ded.removed)changed=true;
+
+      /* After the dedupe there is at most one live row per item this month.
+         Tracking it is what stops a tombstone being revived alongside it. */
+      const liveByItem=new Map();
+      base.forEach(b=>{if(b&&!b.deletedAt&&b.monthKey===currentBillMonthKey)liveByItem.set(b.itemId,b.id);});
+
       const seen=new Set();
-      const next=(d.bills||[]).map(b=>{
+      const next=base.map(b=>{
         if(b.monthKey!==currentBillMonthKey)return b;
         const it=tracked.get(b.itemId);
         const paid=Number(b.paid)||0;
@@ -7157,18 +7249,37 @@ function App(){
           changed=true;
           return{...b,deletedAt:now,updatedAt:now};
         }
-        seen.add(b.itemId);
-        const patch={};
-        if(b.deletedAt)patch.deletedAt=null;               // re-tracked → revive, don't duplicate
-        if(b.itemName!==it.name)patch.itemName=it.name;
         const amt=Number(it.amount)||0;
+        const patch={};
+        if(b.deletedAt){
+          /* Revive ONLY the row we would otherwise have to recreate. Reviving
+             every tombstoned copy is precisely what used to undo the dedupe on
+             the next app open, and a row collapsed as a duplicate must stay
+             collapsed no matter how many times this runs. */
+          if(b.dedupedAt||liveByItem.has(b.itemId))return b;
+          liveByItem.set(b.itemId,b.id);
+          patch.deletedAt=null;
+        }
+        seen.add(b.itemId);
+        if(b.itemName!==it.name)patch.itemName=it.name;
         if(paid===0&&(Number(b.allocated)||0)!==amt)patch.allocated=amt;
         if(Object.keys(patch).length===0)return b;
         changed=true;
         return{...b,...patch,updatedAt:now};
       });
-      const created=items.filter(it=>!seen.has(it.id)).map(it=>({id:uid(),monthKey:currentBillMonthKey,itemId:it.id,itemName:it.name,
-        allocated:Number(it.amount)||0,paid:0,paymentDate:null,status:"unpaid",createdAt:now,updatedAt:now}));
+
+      /* Deterministic ids from here on, so the other phone generating the same
+         row produces the same id and the merge collapses them into one instead
+         of stacking. The taken-id guard is belt-and-braces: `seen` should
+         already prevent it, and producing two array entries with one id would
+         be far worse than skipping a create. */
+      const takenIds=new Set(base.map(b=>b&&b.id).filter(Boolean));
+      const created=items
+        .filter(it=>!seen.has(it.id)&&!takenIds.has(billRowId(currentBillMonthKey,it.id)))
+        .map(it=>({id:billRowId(currentBillMonthKey,it.id),
+          monthKey:currentBillMonthKey,itemId:it.id,itemName:it.name,
+          allocated:Number(it.amount)||0,paid:0,paymentDate:null,status:"unpaid",
+          createdAt:now,updatedAt:now}));
       if(!changed&&created.length===0)return d;
       return{...d,bills:[...next,...created]};
     });

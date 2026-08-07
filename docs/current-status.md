@@ -1,6 +1,76 @@
 # Current Status
 
-_Last updated: 2026-08-07 (Purchase Advisor Build A3 — the advisor uses the account flags, v1.33.0)_
+_Last updated: 2026-08-07 (Bills Reserve double-count repaired, v1.35.0)_
+
+---
+
+# 📋 SESSION NOTE — 2026-08-07 (v1.34.0 + v1.35.0) — Bills Reserve
+
+Two changes, both prompted by the reserve being visibly wrong on real data.
+
+## v1.34.0 — the advisor stops subtracting it
+
+Removed from `purchaseAvailableStack` entirely, not zeroed. It was the weakest
+line in that stack: a **household-wide** figure subtracted in full from **each**
+owner's cash independently, so both people lost the whole reserve. Flagged at
+design time as "revisit only alongside a household-scope conversation".
+
+Protecting money genuinely set aside is now the account flags' job — per-owner,
+visible, releasable per purchase, naming the account rather than asserting a
+total. `purchasetest.cjs` asserts passing `billsReserve` is now **inert** and
+that the `reserve` field is gone rather than zeroed, so a stale caller cannot
+quietly reinstate it.
+
+## v1.35.0 — the reserve itself was double-counting
+
+Confirmed on the real dataset: every tracked bill appeared twice.
+
+Bill rows are generated per (month, tracked item) by whichever device is open,
+and were given `id: uid()`. `tryAutoMergeAll` merges bills with
+`mergeArrayById` — a union **by id** — so two phones generating the same row
+minted different ids, nothing collided, the union kept both, and
+`computeBillsReserve` summed both. Full reasoning in `decisions.md` →
+"A derived record's identity must itself be derived".
+
+The fix has four parts:
+
+- `billRowId(monthKey,itemId)` → `bill:<monthKey>:<itemId>`. Both devices now
+  generate the **same** id, so the merge collapses them.
+- `dedupeBillRows` collapses existing duplicates, keeping one by a
+  deterministic order: greatest `paid` → canonical id → oldest `createdAt` →
+  smallest id. Losers are tombstoned and marked `dedupedAt`, never spliced.
+- `migrate()` runs it over ALL months, because the reconciler only ever touches
+  the current one and past months would keep their duplicates forever. **This is
+  a repair, so it deliberately changes the document** — it moves the fingerprint
+  and costs one KV write per device on first open. Idempotent, so exactly one.
+- The reconciler runs it too (an un-upgraded phone keeps sending random-id rows)
+  and no longer revives a row marked `dedupedAt` — it used to revive *every*
+  tombstoned row for a tracked item, which would have undone the repair on the
+  very next app open.
+
+### What the browser caught that the tests didn't
+
+With a purely alphabetical tie-break, a stray row from an older phone
+**displaced the incumbent** — tombstoning a good row and reviving a different one
+on every sync. The reserve stayed correct, so no assertion failed; it was
+visible only by watching the ids across reloads. Preferring the canonical id
+makes the survivor converge and the churn stop. Both rungs now have tests.
+
+### Verification
+
+- `node parsecheck.cjs` OK; nineteen runners green, `billstest.cjs` 11 → 23.
+- Sandbox, on a document shaped exactly as reported (3 items × 2 devices,
+  no payments): 6 rows → **3 live, reserve SAR 6,300 instead of 12,600**, the
+  three duplicates tombstoned and recoverable. Stable across repeated opens,
+  and a stray old-device row injected mid-run is collapsed rather than
+  displacing the incumbent.
+
+### Carried forward
+
+- Existing duplicates are **soft-deleted**, so if a collapse ever picks wrong
+  the row is still in the document.
+- Both phones should be opened on v1.35.0 so each repairs its own copy and the
+  canonical ids converge.
 
 ---
 
