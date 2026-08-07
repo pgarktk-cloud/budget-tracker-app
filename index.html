@@ -1849,6 +1849,11 @@ function purchaseAvailableStack({banks,goals,billsReserve,owner,protectedGoalIds
   const reserve=Number(billsReserve)||0;
   return{banks:own,joint,reserve,
     withheld,reserved,inaccessible,
+    /* Two counts that are NOT interchangeable, and rendering the wrong one is
+       an easy mistake: `protectedGoalCount` is every protected goal, including
+       those already withheld via their bank's max(); `unlinkedProtectedCount`
+       is only the ones subtracted from the pool, which is what the stack line
+       beside `protectedGoals` is describing. */
     protectedGoals:unlinkedProtected,protectedGoalCount:protectedList.length,
     unlinkedProtectedCount:protectedList.filter(g=>!g.bankId||!bankById.has(g.bankId)).length,
     notCountedGoals,unconverted,

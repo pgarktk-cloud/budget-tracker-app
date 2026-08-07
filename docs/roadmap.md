@@ -178,7 +178,7 @@ Two things learned worth reusing:
   (a newer build's unknown collections must pass) is asserted in
   `cloudguardtest.cjs` — keep it green.
 
-## Purchase Advisor — A DONE, A2 DONE, A3 NEXT, B NOT built
+## Purchase Advisor — A, A2, A3 all DONE · B NOT built
 
 Plan for A2/A3 at `~/.claude/plans/greedy-crunching-sprout.md` (grilling session
 2026-08-07, prompted by testing v1.31.0).
