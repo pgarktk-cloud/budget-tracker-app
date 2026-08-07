@@ -2112,8 +2112,8 @@ function buildPurchaseAiRefs(trimCats){
    from the same bucketLabel the cards use. */
 function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
                                  historyWarning,currency,product,payPeriods,owner,
-                                 nowBucket,horizon}){
-  const s=scenarios||{},st=stack||{},i=input||{};
+                                 nowBucket,horizon,verdicts}){
+  const s=scenarios||{},st=stack||{},i=input||{},vd=verdicts||{};
   const{refs,trimCandidates}=buildPurchaseAiRefs(trimCats);
   /* A bucket key is a date. Everything crossing the wire is the INDEX of the
      bucket relative to the one we're standing in, resolved with the same
@@ -2156,7 +2156,7 @@ function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
   if(s.cash)context.scenarios.cash={
     feasible:!!s.cash.feasible,
     remainingAfter:purchaseAiNum(s.cash.remainingAfter),
-    verdict:String(s.cash.verdict||""),
+    verdict:String(vd.cash||s.cash.verdict||""),
   };
   if(s.financed){
     const b=(s.financed.buckets||[]).map(x=>({n:idx(x.key),income:purchaseAiNum(x.income),
@@ -2172,7 +2172,7 @@ function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
       availableAfterUpfront:purchaseAiNum(s.financed.availableAfterUpfront),
       deficitCount:((s.financed.deficits)||[]).length,
       buckets:b,
-      verdict:String(s.financed.verdict||""),
+      verdict:String(vd.financed||s.financed.verdict||""),
     };
   }
   if(s.earliest)context.scenarios.earliest={
@@ -2180,7 +2180,7 @@ function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
     cumulative:purchaseAiNum(s.earliest.cumulative),
     shortfall:purchaseAiNum(s.earliest.shortfall),
     requiredPerBucket:purchaseAiNum(s.earliest.requiredPerBucket),
-    verdict:String(s.earliest.verdict||""),
+    verdict:String(vd.earliest||s.earliest.verdict||""),
   };
   if(s.savings)context.scenarios.savings={
     mode:String(s.savings.mode||""),
@@ -2190,7 +2190,7 @@ function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
     capacity:purchaseAiNum(s.savings.capacity),
     tightestHeadroom:purchaseAiNum(s.savings.tightest&&s.savings.tightest.headroom),
     feasible:!!s.savings.feasible,
-    verdict:String(s.savings.verdict||""),
+    verdict:String(vd.savings||s.savings.verdict||""),
   };
   return{context,refs};
 }
@@ -2989,6 +2989,49 @@ async function fetchQuotes(tickers){
 
   if(Object.keys(out).length===0)throw new Error("no quotes");
   return out;
+}
+
+/* ── Purchase Advisor narration (Build B) ──
+   Asks the Worker to explain figures the app already computed. Returns a
+   discriminated result rather than throwing, because every failure here is
+   ordinary and the caller's job is to render the cards anyway:
+
+     {ok:true, narration}                  — still unvalidated; the caller runs
+                                             validatePurchaseNarration on it
+     {ok:false, kind:"limit", scope}       — 429, a cap was reached
+     {ok:false, kind:"unavailable"}        — no key configured on the Worker
+     {ok:false, kind:"failed"}             — timeout, 5xx, malformed, offline
+
+   Gated on KVSync._ready() for the same reason fetchQuotes is: every Worker
+   endpoint requires the passphrase, so a device without one cannot call this
+   and the button that triggers it is hidden rather than left to fail. */
+/* Longer than the Worker's own 20s abort, deliberately: in the normal case the
+   Worker times out first and answers 504, which is a better error than a
+   client-side cancel because it means the request definitely ended. This one
+   only fires when the connection to the Worker is itself stuck — which the
+   Worker's timeout cannot help with, and which otherwise leaves "Writing an
+   explanation…" on screen with no way out. Found in the sandbox. */
+const PURCHASE_AI_CLIENT_TIMEOUT_MS=25000;
+
+async function fetchPurchaseNarration(context){
+  if(!KVSync._ready())return{ok:false,kind:"unavailable"};
+  let r;
+  const ctl=typeof AbortController!=="undefined"?new AbortController():null;
+  const timer=ctl?setTimeout(()=>ctl.abort(),PURCHASE_AI_CLIENT_TIMEOUT_MS):null;
+  try{
+    r=await fetch(`${PROXY_URL}/ai/advice`,{
+      method:"POST",headers:KVSync._headers(),
+      body:JSON.stringify({context}),
+      ...(ctl?{signal:ctl.signal}:{}),
+    });
+  }catch(e){return{ok:false,kind:"failed"};}
+  finally{if(timer)clearTimeout(timer);}
+  let j=null;
+  try{j=await r.json();}catch(e){j=null;}
+  if(r.status===429)return{ok:false,kind:"limit",scope:(j&&j.scope)||"day"};
+  if(r.status===503)return{ok:false,kind:"unavailable"};
+  if(!r.ok||!j||!j.narration)return{ok:false,kind:"failed"};
+  return{ok:true,narration:j.narration};
 }
 
 /* ── Projection helper ── */
@@ -7766,7 +7809,7 @@ function App(){
             installments,installmentPayments,banks,goals,expenses,planForMonth,
             payPeriods:data.payPeriods,convert,ratesStaleDays,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
-            addInstallment,addGoal,openInstallment,setTab}}/>}
+            addInstallment,addGoal,openInstallment,setTab,isOnline}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -14963,9 +15006,103 @@ function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
   );
 }
 
+/* ── The narration panel (Build B) ────────────────────────────────────────
+   Commentary on the cards above, never a replacement for them. Three rules
+   this component exists to keep:
+
+   • EVERY number the reader sees comes from the engine's render path. Nothing
+     here formats a figure — the model's text is rendered verbatim, and it only
+     got that far because validatePurchaseNarration confirmed each figure in it
+     exists in the context.
+   • Refs become real TEXT NODES via rehydratePurchaseRefs' segments. There is
+     no markdown renderer and no dangerouslySetInnerHTML, so a category called
+     `<img onerror=…>` renders as those characters, which is the whole point.
+   • It says who wrote it, permanently, not behind a tooltip. */
+function PurchaseNarrationText({text,refs}){
+  return(<>{rehydratePurchaseRefs(text,refs).map((seg,i)=>
+    seg.t==="ref"
+      ? <strong key={i} style={{fontWeight:600,color:P.neuInk}}>{seg.v}</strong>
+      : <React.Fragment key={i}>{seg.v}</React.Fragment>)}</>);
+}
+
+function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
+  const card={...neu(16),padding:14,marginBottom:16};
+  const note={fontSize:12,color:P.neuSub,lineHeight:1.65};
+
+  if(!canAsk)return null;
+
+  if(state.status==="idle")
+    return(
+      <section style={card}>
+        <button onClick={onAsk}
+          style={{width:"100%",borderRadius:12,padding:"12px 0",fontSize:13,fontWeight:600,
+            border:"none",background:"rgba(0,0,0,.05)",color:P.neuInk,minHeight:44}}>
+          Explain this in words
+        </button>
+      </section>);
+
+  if(state.status==="loading")
+    return(<section style={card}><div style={note}>Writing an explanation…</div></section>);
+
+  if(state.status!=="ok"){
+    /* Each failure says only what the reader can act on. A limit is temporary
+       and needs no button; everything else gets one retry, by hand. */
+    const msg=state.kind==="limit"
+      ? (state.scope==="minute"
+          ? "Explanations paused for a moment — too many in the last minute."
+          : "Explanations paused — daily limit reached.")
+      : state.kind==="rejected"
+        ? "Explanation unavailable — the wording didn't check out against the figures."
+        : "Couldn't generate an explanation.";
+    return(
+      <section style={card}>
+        <div style={note}>{msg}</div>
+        {state.kind!=="limit"&&
+          <button onClick={onAsk}
+            style={{marginTop:10,borderRadius:10,padding:"9px 14px",fontSize:12,fontWeight:600,
+              border:"none",background:"rgba(0,0,0,.05)",color:P.neuInk,minHeight:40}}>
+            Try again
+          </button>}
+      </section>);
+  }
+
+  const v=state.value;
+  return(
+    <section style={card}>
+      <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginBottom:10}}>
+        Explanation — written by AI from the figures above. The figures
+        themselves are calculated by the app.
+      </div>
+      <div style={{fontSize:14,fontWeight:600,color:P.neuInk,lineHeight:1.5,marginBottom:10}}>
+        <PurchaseNarrationText text={v.headline} refs={refs}/>
+      </div>
+      {v.scenarioNotes.map((nt,i)=>(
+        <div key={i} style={{marginBottom:8}}>
+          <div style={{fontSize:11,color:P.faint,fontWeight:600,marginBottom:2}}>
+            {scenarioLabels[nt.id]||nt.id}
+          </div>
+          <div style={note}><PurchaseNarrationText text={nt.text} refs={refs}/></div>
+        </div>))}
+      {v.watchOuts.length>0&&
+        <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(0,0,0,.06)"}}>
+          {v.watchOuts.map((w,i)=>(
+            <div key={i} style={{...note,display:"flex",gap:7,marginBottom:5}}>
+              <span style={{color:"#E07B2A",flexShrink:0}}>•</span>
+              <span><PurchaseNarrationText text={w} refs={refs}/></span>
+            </div>))}
+        </div>}
+      <button onClick={onAsk}
+        style={{marginTop:12,borderRadius:10,padding:"8px 0",fontSize:11,fontWeight:600,
+          border:"none",background:"transparent",color:P.faint,minHeight:40}}>
+        Rewrite
+      </button>
+    </section>);
+}
+
 function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
   banks,goals,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
-  fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab}){
+  fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab,
+  isOnline}){
   const todayStr=todayISO();
   const bucket=bucketNow(payPeriods,budgetOwner);
 
@@ -15039,6 +15176,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   const product=String(draft.product||"").trim();
   const label=k=>bucketLabel(k,payPeriods,budgetOwner);
 
+
   /* ── shared field styling ──
      The date inputs need all three corrections or they will not line up with
      the NumField beside them: `fontFamily:"inherit"` (a bare date input renders
@@ -15074,6 +15212,66 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      to its earliest-possible mode. */
   const sav=scenarios.savings;
   const savingsVerdict=purchaseVerdict(sav,{});
+  /* ── Narration (Build B) ──
+     The horizon is capped at six buckets on purpose: the model needs the SHAPE
+     of the next few periods, and sending twenty-four is more identifying data
+     for no more insight. */
+  const horizon=useMemo(()=>{
+    const out=[];
+    for(let k=0;k<6;k++){
+      const key=bucketShift(bucket,payPeriods,budgetOwner,k);
+      const h=purchaseHeadroomForBucket(engineCtx,key);
+      out.push({n:k,income:h.income,planned:h.planned,
+        installmentTotal:h.installmentTotal,headroom:h.headroom});
+    }
+    return out;
+  },[engineCtx,bucket,payPeriods,budgetOwner]);
+
+  /* The engine's OWN judgement of each scenario, handed over explicitly.
+     purchaseVerdict runs in the view rather than on the scenario objects, so
+     without this the model would be told the figures and left to decide what
+     counts as "thin" — which is exactly the kind of computing it must never
+     do. The sandbox caught this: every verdict crossed the wire as "". */
+  const aiVerdicts=useMemo(()=>({cash:cashVerdict,financed:financedVerdict,
+    earliest:earliestVerdict,savings:savingsVerdict}),
+    [cashVerdict,financedVerdict,earliestVerdict,savingsVerdict]);
+
+  const aiPayload=useMemo(()=>buildPurchaseAiContext({
+    scenarios,stack,input,thisBucket,trimCats,historyWarning,currency:cur,
+    product:draft.product,payPeriods,owner:budgetOwner,nowBucket:bucket,horizon,
+    verdicts:aiVerdicts,
+  }),[scenarios,stack,input,thisBucket,trimCats,historyWarning,cur,draft.product,
+      payPeriods,budgetOwner,bucket,horizon,aiVerdicts]);
+
+  const[ai,setAi]=useState({status:"idle"});
+  /* A stale explanation beside changed figures is the one genuinely misleading
+     outcome available here, so any change to what would be sent resets it to
+     the button. Keyed on the serialized context, which is exactly "what would
+     be sent" — deriving it from the individual inputs would miss one. */
+  const aiKey=useMemo(()=>JSON.stringify(aiPayload.context),[aiPayload]);
+  const askedKey=useRef(null);
+  useEffect(()=>{
+    if(askedKey.current!==null&&askedKey.current!==aiKey)setAi({status:"idle"});
+  },[aiKey]);
+
+  /* The button is hidden, not disabled, when it cannot work: offline, or no
+     passphrase on this device (every Worker endpoint needs one — the same gate
+     fetchQuotes uses). A disabled button invites a tap that explains nothing. */
+  const canAsk=ready&&!!isOnline&&KVSync._ready();
+  const askAi=useCallback(async()=>{
+    askedKey.current=aiKey;
+    setAi({status:"loading"});
+    const res=await fetchPurchaseNarration(aiPayload.context);
+    /* Ignore an answer to a question that is no longer on screen. */
+    if(askedKey.current!==aiKey)return;
+    if(!res.ok){setAi({status:"error",kind:res.kind,scope:res.scope});return;}
+    const check=validatePurchaseNarration(res.narration,aiPayload.context);
+    if(!check.ok){setAi({status:"error",kind:"rejected",reason:check.reason});return;}
+    setAi({status:"ok",value:check.value});
+  },[aiKey,aiPayload]);
+
+  const scenarioLabels={cash:"Buy it now, in cash",financed:"On the payment plan",
+    earliest:"The earliest you could",savings:"Saving up for it"};
 
   /* The savings mirror of "Create this plan in Installments". Goals already
      ARE savings plans — target, monthly, contributions — the deadline is the
@@ -15551,6 +15749,12 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                     fontWeight:600,padding:"8px 4px",minHeight:40}}>Clear</button>}
             </div>
           </section>
+
+          {/* ── The explanation, last: it is commentary on everything above,
+                 and it is the only part that can be absent without the tab
+                 losing anything it promised. ── */}
+          <PurchaseNarrationPanel state={ai} refs={aiPayload.refs} canAsk={canAsk}
+            scenarioLabels={scenarioLabels} onAsk={askAi}/>
 
           {/* ── The one durable exit ── */}
           {financedMode&&

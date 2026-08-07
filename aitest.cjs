@@ -208,6 +208,19 @@ t("1f · account arrays become counts — reserved[] and inaccessible[] carry na
   assert.ok(!("reserved" in context.stack)&&!("inaccessible" in context.stack));
 });
 
+t("1f2 · the engine's own verdict is sent, so the model never judges for itself",()=>{
+  /* purchaseVerdict runs in the VIEW, not on the scenario objects, so without
+     an explicit hand-over every verdict crossed the wire as "" and the model
+     was left to decide what counts as "thin" — which is computing, the one
+     thing it must not do. Found in the sandbox, not by any pure test. */
+  const{context}=buildCtx({verdicts:{cash:"good",financed:"warn",
+    earliest:"good",savings:"warn"}});
+  assert.equal(context.scenarios.cash.verdict,"good");
+  assert.equal(context.scenarios.financed.verdict,"warn");
+  assert.equal(context.scenarios.savings.verdict,"warn");
+  assert.ok(AI_CONTEXT_KEYS.has("verdict"),"and the Worker must still accept it");
+});
+
 t("1g · floats are rounded so a quoted figure can be found again",()=>{
   const{context}=buildCtx({thisBucket:{...THIS_BUCKET,planned:18787.219999999999}});
   assert.equal(context.periodAllocation,18787.22);
@@ -436,6 +449,39 @@ t("7b · the Worker never logs, and rejects everything cheap before the paid cal
   ["too_large","JSON.parse(raw)","aiContextProblem(context)","room.aiCheck("]
     .forEach(step=>assert.ok(at(step)<fetchAt,`${step} must happen before the paid call`));
   assert.ok(!/retry|for \(let attempt/i.test(span),"no retries");
+});
+
+t("7b2 · the narration block sits after every value it reads",()=>{
+  /* `const` in a component body is block-scoped, so reading cashVerdict above
+     its declaration is a temporal-dead-zone throw at RENDER time — the app
+     blanks into its error boundary and no test notices, because every pure
+     function still passes. This cost two rounds in the sandbox; pin the order.
+     Positions, not prose: comments naming these are stripped first. */
+  const view=stripComments(html);
+  const after=(a,b)=>{
+    const ia=view.indexOf(a),ib=view.indexOf(b);
+    assert.ok(ia>=0,"missing: "+a);assert.ok(ib>=0,"missing: "+b);
+    assert.ok(ia>ib,`${a} must come after ${b} or it is a TDZ throw at render`);
+  };
+  after("const aiVerdicts=","const savingsVerdict=");
+  after("const aiVerdicts=","const cashVerdict=");
+  after("const canAsk=","const ready=");
+  after("const aiPayload=","const aiVerdicts=");
+  after("const horizon=","const engineCtx=");
+});
+
+t("7b3 · the client has its own timeout, longer than the Worker's",()=>{
+  /* Without it a stalled connection leaves "Writing an explanation…" on screen
+     forever — the Worker's 20s abort cannot help, because the request never
+     reached it. Longer than 20s on purpose: a real 504 is a better error than
+     a client-side cancel, so the Worker should win whenever it can answer. */
+  const fn=stripComments(slice("async function fetchPurchaseNarration(context){","/* ── Projection helper ── */"));
+  assert.ok(/AbortController/.test(fn),"no client-side abort");
+  assert.ok(/signal:\s*ctl\.signal/.test(fn),"the signal must actually be passed to fetch");
+  assert.ok(/clearTimeout/.test(fn),"the timer must be cleared or it leaks per call");
+  const ms=Number((stripComments(html).match(/PURCHASE_AI_CLIENT_TIMEOUT_MS\s*=\s*(\d+)/)||[])[1]);
+  const workerMs=Number((stripComments(wsrc).match(/AI_TIMEOUT_MS\s*=\s*(\d+)/)||[])[1]);
+  assert.ok(ms>workerMs,`client ${ms}ms must exceed the Worker's ${workerMs}ms`);
 });
 
 t("7c · wrangler.jsonc still declares exactly the two existing bindings",()=>{

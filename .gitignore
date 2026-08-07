@@ -61,6 +61,11 @@ sandbox/
 sandbox*/
 tmp/
 *.log
+# sandboxworker.cjs switches behaviour from these, and dumps the last AI
+# request body for a leak scan. Local knobs and captured payloads, not source.
+mode.txt
+aimode.txt
+lastaictx.json
 
 # ── Deploy staging ────────────────────────────────────────────────────────
 # `node stage.cjs` rebuilds this from the seven served files on every deploy.
