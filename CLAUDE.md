@@ -42,6 +42,17 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   single place that upgrades old saved shapes — **any new field added to an
   existing record type must get a default in `migrate()`**, not just in
   `defaultData()`, or existing users' saved data will be missing it.
+- **A fresh device opens EMPTY, not on sample data** (2026-08-07).
+  `defaultData()` is now `sampleData(structuralDefaults())`: the first is the
+  shape of an empty document (settings, plus one income-0 plan per owner as a
+  *skeleton*, so `activePlanId` still resolves and Budget renders its existing
+  zero state), the second layers the demo records on. `App`'s `useState`,
+  `continueOffline()` and `migrate`'s not-an-object fallback all use
+  `structuralDefaults()`; only Settings → "Load sample data" produces the demo
+  set. All three functions must stay in one span — `importtest.cjs` and
+  `cloudguardtest.cjs` slice `function structuralDefaults(){` →
+  `/* Bills Reserve = opening baseline` and would silently test nothing if one
+  moved out. See "Connecting a device" below for why this changed.
 - Owners: the two named people are stored under fixed keys `"me"` / `"wife"`
   (labels customizable via `data.owners.me`/`.wife` — in this user's data
   they're "Jastine"/"Charlene"). **`"household"` is never a third person.**
@@ -467,6 +478,56 @@ idle autosave — a Cloudflare KV write per app open, for data nobody touched.
 Any new background-derived data should be stamped `auto:true` and added to
 `stripAutoRows`' reach, not left to dirty the document.
 
+## Connecting a device — merging needs a shared ancestor
+
+**A merge is only meaningful against a baseline.** Until 2026-08-07 a
+first-time connection ran `tryAutoMergeAll(local, cloud)` like any other, and
+that merge *succeeded* — it is id-keyed, and a fresh device's ids are all
+novel, so nothing collides and every local record survives into the union,
+which was then auto-pushed. A brand-new Safari origin therefore booted on the
+sample dataset and, on entering the passphrase, published 15 demo categories,
+3 goals and 3 investments to both real phones. Without a shared ancestor the
+union of two documents is not a reconciliation; it is contamination wearing a
+merge's clothes.
+
+One pure module-scope function, **`syncConnectDecision(ctx)`**, now answers
+this for all three paths that used to decide it independently — the startup
+`reconcile`, `pullFromCloud`, and `saveToCloud`'s conflict retry (that third
+one is a real door: a rev rejection hands back the server's document and the
+reflex is to merge into it). `hasBaseline` (`meta.lastCloudSnapshot != null`)
+is its first and most important input and must stay the first branch: an
+established device merges exactly as before, and if anything could override
+that, a normal two-phone merge could silently drop one side's offline edits.
+The other outcomes are `adopt` (take the cloud document exactly, zero POST),
+`ask` (the `FirstConnectSheet` chooser), and `onboard` (empty cloud).
+
+- **`cloudConfirmedRef` may only be set by a validated full `/sync` read.**
+  `/sync/meta` accepting the passphrase is an *authentication* fact and says
+  nothing about the document; the connect effect used to set the flag on it,
+  which cleared a device to push over a document it had never seen.
+- **Records decide whether a person is interrupted; settings never do.**
+  `countLocalRecords` counts live records (and plan *categories*, never plans —
+  the skeleton would make every fresh device look occupied). A settings-only
+  difference adopts silently and leaves a dismissible line.
+- **`FirstConnectSheet` is not `ConflictModal`** and must not be merged into
+  it. The conflict modal describes two devices that diverged from a shared
+  baseline and offers an overwrite; from a device that has never synced, that
+  button would destroy the other phone's entire dataset while being unable to
+  show what it was destroying. The chooser offers merge-with-counts instead.
+- **Sample-data provenance is per-device `localStorage`** (`PROVENANCE_KEY`),
+  never a field in `data` — same reasoning as `VIEW_PROFILE_KEY`, plus: a
+  synced `provenance` would travel and make the receiving phone distrust its
+  own records. The mark is **sticky**, cleared only by an explicit Save to
+  Cloud, Reset to empty, or adopting/merging a cloud document. An earlier
+  version anchored it to the document's fingerprint so edits would clear it
+  automatically; the bills reconciler, daily snapshot and quote refresh all
+  mutate the document within seconds of load, so it cleared itself and the
+  demo dataset auto-pushed exactly as before. Do not reintroduce that.
+- `migrate()` now defaults `goals`/`investments`/`banks`/`assets` to `[]`.
+  Without that, adopting a sparse cloud document left the device differing
+  from the baseline just recorded for it, and it pushed a normalised copy
+  straight back — "adopted exactly, without issuing a POST" was not true.
+
 **Every document arriving from the cloud goes through `cloudDocProblem(raw)`**
 before `migrate()` sees it — startup reconcile, the inline copy a rev-rejected
 save hands back, and manual Pull. It delegates to `validateBackup` but ignores
@@ -503,7 +564,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are seventeen, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are eighteen, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -520,8 +581,12 @@ and an error naming a collection the user has never heard of.
   `importtest.cjs` (`validateBackup` accept/refuse cases), `backupslottest.cjs`
   (rotating pre-import safety slots + quota degradation), `mergetest.cjs`
   (two-device merge: per-category plans, `monthlyPlans`, `household.expenses`),
-  `devicetagtest.cjs` (`headerSafe` against Node's real `Headers`), and
-  `cloudguardtest.cjs` (the gate on documents arriving from the cloud).
+  `devicetagtest.cjs` (`headerSafe` against Node's real `Headers`),
+  `cloudguardtest.cjs` (the gate on documents arriving from the cloud), and
+  `synconnecttest.cjs` (a device's FIRST contact with the cloud:
+  `syncConnectDecision`, the record/settings distinction, sample provenance,
+  and three source-structure assertions pinning the `cloudConfirmedRef` and
+  no-baseline guards that live in `App()` effects rather than a pure function).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **`sandboxworker.cjs`** serves a sandbox copy *and* impersonates the Worker's
@@ -553,8 +618,12 @@ and an error naming a collection the user has never heard of.
   still describe the workaround (a `"PASTE_"`-prefixed dummy value). Since
   2026-08-01 the passphrase lives per-device in `localStorage`
   (`SYNC_TOKEN_KEY`), so a copy served on a fresh port has a clean
-  `localStorage`, is unconnected, and starts from `defaultData()` — just don't
-  type the real passphrase into it. Nothing needs editing out of the file.
+  `localStorage`, is unconnected, and starts from `structuralDefaults()` (an
+  empty document — since 2026-08-07 it is no longer seeded with sample data)
+  — just don't type the real passphrase into it. Nothing needs editing out of
+  the file. **An old localhost port keeps its own `localStorage`**, so verify a
+  "fresh device" really is fresh (`localStorage.clear()` then reload) before
+  concluding anything from what it shows.
 - **The five CDN `<script>` tags are pinned with SRI hashes.** Bumping a
   library version WITHOUT regenerating its `integrity` value blanks the app
   (the browser refuses the file; the error is in the console, not on screen).

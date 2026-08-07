@@ -46,9 +46,11 @@ const t=(name,fn)=>{n++;try{fn();console.log("  ok   "+name);}catch(e){fails++;c
 
 const ctx={console};
 vm.createContext(ctx);
-/* defaultData() -> migrate() -> validateBackup() -> cloudDocProblem() are
-   contiguous in the source; the same span importtest.cjs takes. */
-const src=slice("function defaultData(){","/* Bills Reserve = opening baseline");
+/* structuralDefaults() -> sampleData() -> defaultData() -> migrate() ->
+   validateBackup() -> cloudDocProblem() are contiguous in the source; the same
+   span importtest.cjs takes. Starts at structuralDefaults because defaultData
+   is now just the composition of the two helpers above it. */
+const src=slice("function structuralDefaults(){","/* Bills Reserve = opening baseline");
 vm.runInContext(`
 function uid(){return Math.random().toString(36).slice(2,9);}
 var SEG=["#2C5FA8","#6FA0D6","#1B3E73","#2E8BB0","#4C6E9C","#8FB4DD","#173B5E","#5BA7C2"];
@@ -56,10 +58,12 @@ var monthLabel=function(){return "August 2026";};
 var P={gr:"#2f9e6d",br:"#8a6a3d",amber:"#c98a12"};
 `+src+`
 this.defaultData=defaultData; this.migrate=migrate;
+this.structuralDefaults=structuralDefaults; this.sampleData=sampleData;
 this.validateBackup=validateBackup; this.cloudDocProblem=cloudDocProblem;`,ctx);
-const{defaultData,migrate,validateBackup,cloudDocProblem}=ctx;
+const{defaultData,migrate,structuralDefaults,sampleData,validateBackup,cloudDocProblem}=ctx;
 
 assert.ok(typeof cloudDocProblem==="function","cloudDocProblem was not sliced out");
+assert.ok(typeof structuralDefaults==="function","structuralDefaults was not sliced out");
 
 /* A minimal document that is genuinely usable: one plan with a category and a
    group, one placeable transaction. Built by hand rather than from
@@ -217,6 +221,30 @@ t("every document defaultData() produces is acceptable to the gate",()=>{
   /* A fresh device's own document must never be one this gate would refuse —
      otherwise the first device to save would lock the other one out. */
   assert.equal(cloudDocProblem(migrate(defaultData())),null);
+});
+
+t("the EMPTY document a fresh device now opens on is acceptable to the gate",()=>{
+  /* Since 2026-08-07 a brand-new device boots on structuralDefaults(), not
+     defaultData() — so this, not the sample document, is what an onboarding
+     device would push to an empty cloud. An empty plan list of empty plans is
+     still a valid document; if this ever fails, first-run sync is broken. */
+  assert.equal(cloudDocProblem(migrate(structuralDefaults())),null);
+});
+
+t("structuralDefaults() carries no sample records",()=>{
+  /* The whole point of the split. If a sample record leaks back into the
+     empty shape, the fresh-device contamination bug returns silently. */
+  const d=migrate(structuralDefaults());
+  ["goals","investments","banks","assets"].forEach(k=>
+    assert.equal((d[k]||[]).length,0,`${k} should be empty on a fresh device`));
+  assert.equal((d.household&&d.household.expenses||[]).length,0,"household.expenses should be empty");
+  assert.equal(d.plans.reduce((s,p)=>s+p.categories.length,0),0,"no seeded categories");
+  assert.equal(d.plans.reduce((s,p)=>s+p.income,0),0,"no seeded income");
+  // ...while the sample document still has all of them.
+  const s=migrate(defaultData());
+  assert.ok(s.goals.length&&s.investments.length&&s.banks.length&&s.assets.length,
+    "defaultData() must still produce the sample records");
+  assert.ok(s.plans.reduce((a,p)=>a+p.categories.length,0)>0,"sample categories still present");
 });
 
 console.log(`\n${n-fails}/${n} passed`);

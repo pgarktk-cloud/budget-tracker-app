@@ -1,5 +1,71 @@
 # Architectural & Technical Decisions
 
+## A merge needs a shared ancestor (2026-08-07)
+
+A new Safari/PWA origin booted on the **sample dataset**, and entering the sync
+passphrase published it: 15 demo categories, 3 goals, 3 investments, arriving
+on both real phones.
+
+The instructive part is that nothing malfunctioned. `tryAutoMergeAll` is
+id-keyed; a fresh device's ids are all newly minted, so nothing collided and
+every demo record survived into the union, which the post-merge auto-push then
+sent. Each step did exactly what it was written to do. The defect was a missing
+question: **merging is only meaningful against a shared ancestor.** Two
+documents with no common history don't have a divergence to reconcile, so their
+union isn't a merge at all — it is one device's contents added to somebody
+else's document.
+
+So `syncConnectDecision(ctx)` is a pure function whose first input is
+`hasBaseline`, and every path that previously decided this on its own now calls
+it: the startup `reconcile`, `pullFromCloud`, and `saveToCloud`'s conflict
+retry. That third one mattered — a rev rejection hands back the server's
+document, and the reflex is to merge into it, which is the same bug through a
+different door. Three independent copies of a rule is how they came to disagree
+in the first place.
+
+Three supporting choices, each of which could plausibly have gone the other way:
+
+**A fresh device now opens empty.** Sample data was a genuinely good
+first-run experience, and it is still one tap away in Settings — but as the
+*default* it meant every new device's opening state was fifteen fabricated
+records indistinguishable, to every code path downstream, from real ones. Once
+the boot state is empty, "don't upload untouched sample data" stops being a
+special case that has to be detected and becomes a thing that cannot arise.
+`structuralDefaults()` still ships one income-0 plan per owner as a skeleton,
+because `plans:[]` (though a valid document) leaves `resolvePlanForMonth` with
+nothing to return; the skeleton keeps Budget on its existing zero state instead
+of needing a new no-plan render path.
+
+**The chooser is not the conflict modal.** Reusing `ConflictModal` was the
+smaller diff, and it was wrong twice over: its copy asserts a shared history
+that by definition doesn't exist here, and its "Save Local to Cloud" button
+*overwrites*. Offering that from a device which has never synced means offering
+to destroy the other phone's entire dataset from a screen that cannot show what
+it would destroy. `FirstConnectSheet` offers merge-with-counts instead — the
+union of two unrelated documents loses neither side, which is the only outcome
+safe to offer blind.
+
+**Provenance is per-device and sticky.** It lives in `localStorage`, not
+`data`: a synced `provenance` field would travel to the other phone and make it
+distrust its own records, and per the `migrate()` rule it would cost every
+device a KV write for information no other device can use. The first
+implementation anchored the mark to the document's fingerprint, so that any
+edit would end sample status automatically — elegant, and it failed in the
+browser within seconds: the bills reconciler, the daily snapshot effect and the
+quote refresh all mutate the document on load, the fingerprint stopped
+matching, and the demo dataset auto-pushed exactly as before. The question "has
+a person edited this?" turned out to be the wrong one to ask. Sample status now
+ends only when somebody says so — an explicit Save to Cloud, a Reset, or
+adopting/merging a cloud document. Being too sticky costs one deliberate tap;
+being too eager costs somebody else's phone.
+
+A fourth thing surfaced only under a real browser: `migrate()` never defaulted
+`goals`/`investments`/`banks`/`assets`, so adopting a sparse cloud document
+left the device differing from the baseline just recorded for it, and it pushed
+a normalised copy straight back. "Adopted exactly, without issuing a POST" was
+false until those four defaults were added. The unit tests could not have found
+it — it needed the app's own effects running against a live document.
+
 ## Two Cloudflare projects, not one (2026-08-06)
 
 Moving the app to Cloudflare made it tempting to serve it from the **existing**

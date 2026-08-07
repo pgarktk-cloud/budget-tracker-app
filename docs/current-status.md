@@ -1,6 +1,80 @@
 # Current Status
 
-_Last updated: 2026-08-06 (moved to Cloudflare Pages, v1.28.1)_
+_Last updated: 2026-08-07 (fresh-device sync contamination fixed, v1.29.0)_
+
+---
+
+# 📋 SESSION HANDOVER — 2026-08-07
+
+**Built, tested and staged: v1.29.0 / `2026.08.07.0001`. NOT yet deployed and
+NOT yet on either phone** — `npx wrangler pages deploy site` is the remaining
+step. `worker.js` is untouched, so no `wrangler deploy` is needed.
+
+## The bug
+
+A new Safari/PWA origin booted showing the **sample dataset**. Entering the
+sync passphrase then pulled the real cloud document, merged the demo records
+into it, and auto-pushed the union — so both real phones received 15 fabricated
+budget categories, 3 goals and 3 investments.
+
+Nothing malfunctioned. `tryAutoMergeAll` is id-keyed and a fresh device's ids
+are all novel, so the merge succeeded perfectly and preserved every demo
+record. The missing idea was that **a merge is only meaningful against a shared
+ancestor**; see `docs/decisions.md`, "A merge needs a shared ancestor".
+
+Three code paths each decided this independently, and all three were doors to
+the same outcome:
+
+1. the connect effect set `cloudConfirmedRef=true` merely because `/sync/meta`
+   accepted the passphrase — an authentication fact that says nothing about the
+   document, clearing the device to push over data it had never read;
+2. `pullFromCloud` merged and re-pushed;
+3. `saveToCloud`'s conflict retry merged into the document a rev rejection
+   handed back.
+
+## What changed
+
+- **A fresh device now opens empty.** `defaultData()` split into
+  `structuralDefaults()` (settings + one income-0 plan per owner as a skeleton)
+  and `sampleData()`. Sample data is now an explicit Settings button; Reset
+  became "Reset to empty".
+- **`syncConnectDecision(ctx)`** — one pure module-scope function, called by all
+  three paths above. `hasBaseline` first, so an established device merges
+  exactly as before.
+- **`FirstConnectSheet`** — a blocking chooser when a never-synced device
+  holding real records meets an established cloud. Merge-with-counts, never
+  overwrite. Deliberately not `ConflictModal`.
+- **Sample provenance** in per-device `localStorage`, sticky, cleared only by
+  an explicit Save to Cloud / Reset / adopt / merge.
+- **`migrate()` now defaults `goals`/`investments`/`banks`/`assets`** — without
+  it, adopting a sparse cloud document immediately pushed a normalised copy
+  back, so "adopt without POSTing" wasn't actually true.
+
+## Verified
+
+All **18** committed runners green (`synconnecttest.cjs` is new, 27 cases), plus
+`parsecheck` and `stage.cjs`'s three-way version check.
+
+Driven for real in Chrome against `sandboxworker.cjs`, watching the network log:
+
+| Scenario | Result |
+|---|---|
+| Fresh origin, no passphrase | opens **empty** — 0 goals/investments/banks/assets/categories |
+| Fresh device + populated cloud | `GET /sync/meta`, `GET /sync`, exact adoption, **0 POST** over 16s |
+| Local records + populated cloud | chooser blocks, local data untouched, no baseline written, **0 POST** |
+| "Merge and upload" | both sides survive (both transactions, both categories), then pushes |
+| Sample data on a connected device | **0 requests** over 20s despite the doc being dirty |
+
+Two findings came only from the browser and could not have come from the unit
+tests: the `migrate()` defaults gap above, and the fingerprint-anchored
+provenance mark clearing itself within seconds of load (see decisions.md).
+
+## Not done
+
+- **The live cloud document is not cleaned up.** Prevention only, by choice —
+  any sample records already merged into the real dataset have to be deleted by
+  hand in the app.
+- No per-view onboarding empty states; the empty app is blank-but-working.
 
 ---
 

@@ -2136,8 +2136,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.28.1";
-const BUILD_ID="2026.08.06.0006";
+const APP_VERSION="1.29.0";
+const BUILD_ID="2026.08.07.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -2538,50 +2538,46 @@ function liabilityBalance(liab){
   return(Number(monthly)||0)*remaining;
 }
 
-/* ── Default data ── */
-function defaultData(){
-  const today=new Date().toISOString().slice(0,10);
-  const groups=[{id:"g1",name:"Invest & Grow"},{id:"g2",name:"Savings"},{id:"g3",name:"Essentials"},{id:"g4",name:"Personal"},{id:"g5",name:"Commitments"}];
-  const UNTRACKED=new Set(["Investment (GoTrade)","Long Term Savings","Savings (Seabank)","Misc. Savings"]);
-  const seed=[
-    ["Investment (GoTrade)",3300,"g1"],["Long Term Savings",2750,"g1"],
-    ["Savings (Seabank)",4796,"g2"],["Misc. Savings",350,"g2"],
-    ["Bills",4200,"g3"],["Subscriptions",209,"g3"],["Postpaid Bill",90,"g3"],
-    ["Allowance",1305,"g4"],["Shopping",1250,"g4"],["Gym",750,"g4"],
-    ["Charlene",750,"g4"],["Braces",150,"g4"],
-    ["Toyota Raize",1100,"g5"],["Tuition Fee Wife",1000,"g5"],
-  ];
-  const categories=seed.map(([name,amount,groupId],i)=>({id:uid(),name,amount,groupId,color:SEG[i%SEG.length],subs:[],trackExpenses:!UNTRACKED.has(name)}));
-  const buyDate=new Date().toISOString().slice(0,10);
+/* ── Default data ──────────────────────────────────────────────────────────
+   Split in two on 2026-08-07, after a fresh Safari/PWA origin was found to
+   boot on the SAMPLE dataset, persist it, and then push it into the real
+   cloud document the moment a passphrase was entered (see
+   syncConnectDecision below and docs/decisions.md).
+
+     structuralDefaults()  the shape of an empty document — settings, owners,
+                           pay periods, display prefs, and a plan SKELETON per
+                           owner (income 0, no groups, no categories) so that
+                           activePlanId still resolves and Budget renders its
+                           existing zero state rather than needing a new
+                           no-plan render path. This is what a brand-new
+                           device now opens on.
+     sampleData(base)      the demo records layered on top. Reachable ONLY
+                           from Settings → "Load sample data", which stamps
+                           PROVENANCE_KEY so the result can never auto-push.
+     defaultData()         both, exactly as before.
+
+   All three stay in this one region on purpose: importtest.cjs and
+   cloudguardtest.cjs slice from "function defaultData(){" to the Bills
+   Reserve comment below and assert that every document produced here passes
+   the cloud gate. Moving one of them out of that span makes those two
+   runners silently test nothing. */
+function structuralDefaults(){
   return{
     currency:"SAR",owners:{me:"Me",wife:"My wife"},theme:"light",
     // `actualStarts` records the days a period really began, where that
     // differed from payday — see the pay-period utilities block.
     payPeriods:{me:{enabled:false,payday:28,actualStarts:{}},wife:{enabled:false,payday:1,actualStarts:{}}},
     activePlanId:{me:"p1",wife:"pw1"},
+    // Skeleton, not sample: an empty plan per owner keeps activePlanId
+    // resolvable. plans:[] would also pass validateBackup (it only checks
+    // Array.isArray), but it leaves resolvePlanForMonth with nothing to
+    // return and Budget with nothing to render.
     plans:[
-      {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:22000,groups,categories},
-      {id:"pw1",owner:"wife",name:"Monthly Salary",month:monthLabel(),income:0,
-       groups:[{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"}],
-       categories:[
-         {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[],trackExpenses:false},
-         {id:uid(),name:"Bills",amount:0,groupId:"wg2",color:SEG[3],subs:[],trackExpenses:true},
-         {id:uid(),name:"Shopping",amount:0,groupId:"wg3",color:SEG[5],subs:[],trackExpenses:true},
-       ]},
+      {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:0,groups:[],categories:[]},
+      {id:"pw1",owner:"wife",name:"Monthly Salary",month:monthLabel(),income:0,groups:[],categories:[]},
     ],
-    goals:[
-      {id:uid(),owner:"me",name:"Emergency Fund",type:"emergency",target:60000,contributions:[{id:uid(),date:buyDate,amount:18500,note:"Opening balance"}],monthly:2000,color:P.gr},
-      {id:uid(),owner:"me",name:"Family Trip",type:"vacation",target:25000,contributions:[{id:uid(),date:buyDate,amount:6000,note:""}],monthly:1000,color:P.br},
-      {id:uid(),owner:"wife",name:"New Laptop",type:"tech",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
-    ],
-    investments:[
-      {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",owner:"me",type:"stocks",
-       trades:[{id:uid(),date:buyDate,type:"buy",shares:10,price:180}]},
-      {id:uid(),ticker:"VOO",name:"Vanguard S&P 500",broker:"GoTrade",owner:"me",type:"stocks",
-       trades:[{id:uid(),date:buyDate,type:"buy",shares:5,price:420}]},
-      {id:uid(),ticker:"VWRA",name:"Vanguard FTSE All-World",broker:"GoTrade",owner:"me",type:"stocks",
-       trades:[{id:uid(),date:buyDate,type:"buy",shares:8,price:160}]},
-    ],
+    goals:[],
+    investments:[],
     livePrice:{},
     livePriceAt:null,
     prevClose:{},
@@ -2595,11 +2591,11 @@ function defaultData(){
     // Phase 4 — Home Dashboard settings: which budget categories count as
     // "saving" vs "investing" for the Savings & Investing card (matched by
     // name, not id — see savingsInvestingFor()), plus per-card visibility.
-    // Seeded from this same file's own UNTRACKED categories above so the
-    // card has real numbers out of the box instead of an empty state.
+    // Empty here because the names they match are sample category names;
+    // sampleData() seeds them alongside the categories they refer to.
     homeSettings:{
-      savingsCategories:["Long Term Savings","Savings (Seabank)","Misc. Savings"],
-      investmentCategories:["Investment (GoTrade)"],
+      savingsCategories:[],
+      investmentCategories:[],
       cardVisibility:{hero:true,portfolio:true,savingsInvesting:true,trackedSpending:true,goals:true},
     },
     projection:{monthly:1500,years:20,rate:8},
@@ -2607,16 +2603,8 @@ function defaultData(){
     // block behaves exactly as it did before that feature existed.
     // `balanceAsOf` is the day the balance was last confirmed; see
     // bankValuation().
-    banks:[
-      {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000,balanceAsOf:today,interest:null},
-      {id:uid(),owner:"me",name:"Savings",bank:"BDO",country:"PH",currency:"PHP",balance:150000,balanceAsOf:today,interest:null},
-      {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000,balanceAsOf:today,interest:null},
-    ],
-    assets:[
-      {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000,owner:"household"},
-      {id:uid(),name:"Car loan",kind:"liability",currency:"SAR",value:0,owner:"household",
-       installment:true,monthly:1100,monthsRemaining:24,asOfDate:new Date().toISOString().slice(0,10)},
-    ],
+    banks:[],
+    assets:[],
     history:[],
     targets:[],
     mp2DividendRates:[],
@@ -2624,13 +2612,10 @@ function defaultData(){
     settings:{includeMp2EstimateInNetWorth:false,goldAutoRefresh:true,snapshotRetention:{dailyDays:35,weeklyDays:365},
       // Home's "am I saving enough?" needs something to be enough *of*.
       savingsTargetPct:20},
-    investTarget:{me:{thresholdPct:20,groupNames:["Invest & Grow"]},wife:{thresholdPct:20,groupNames:[]}},
-    household:{splitMine:50,expenses:[
-      {id:uid(),name:"Rent",amount:2000,color:SEG[0],trackInBills:false},
-      {id:uid(),name:"Transport",amount:500,color:SEG[3],trackInBills:false},
-      {id:uid(),name:"Groceries",amount:1200,color:SEG[5],trackInBills:false},
-      {id:uid(),name:"Utilities",amount:400,color:SEG[8],trackInBills:true},
-    ]},
+    // groupNames keys on group NAMES, so like homeSettings above it is empty
+    // until sampleData() creates the groups it would refer to.
+    investTarget:{me:{thresholdPct:20,groupNames:[]},wife:{thresholdPct:20,groupNames:[]}},
+    household:{splitMine:50,expenses:[]},
     // Bills module — a lightweight layer over household.expenses (see
     // migrate() and docs/decisions.md). `bills` holds one snapshot record
     // per tracked household item per calendar month (allocated/paid/status,
@@ -2656,8 +2641,79 @@ function defaultData(){
   };
 }
 
+/* The demo records, layered onto an empty document. Kept as a transform of
+   structuralDefaults() rather than a second literal so that a field added to
+   the empty shape can't go missing from the sample one. */
+function sampleData(base){
+  const d=base||structuralDefaults();
+  const today=new Date().toISOString().slice(0,10);
+  const buyDate=today;
+  const groups=[{id:"g1",name:"Invest & Grow"},{id:"g2",name:"Savings"},{id:"g3",name:"Essentials"},{id:"g4",name:"Personal"},{id:"g5",name:"Commitments"}];
+  const UNTRACKED=new Set(["Investment (GoTrade)","Long Term Savings","Savings (Seabank)","Misc. Savings"]);
+  const seed=[
+    ["Investment (GoTrade)",3300,"g1"],["Long Term Savings",2750,"g1"],
+    ["Savings (Seabank)",4796,"g2"],["Misc. Savings",350,"g2"],
+    ["Bills",4200,"g3"],["Subscriptions",209,"g3"],["Postpaid Bill",90,"g3"],
+    ["Allowance",1305,"g4"],["Shopping",1250,"g4"],["Gym",750,"g4"],
+    ["Charlene",750,"g4"],["Braces",150,"g4"],
+    ["Toyota Raize",1100,"g5"],["Tuition Fee Wife",1000,"g5"],
+  ];
+  const categories=seed.map(([name,amount,groupId],i)=>({id:uid(),name,amount,groupId,color:SEG[i%SEG.length],subs:[],trackExpenses:!UNTRACKED.has(name)}));
+  d.plans=[
+    {id:"p1",owner:"me",name:"Monthly Salary",month:monthLabel(),income:22000,groups,categories},
+    {id:"pw1",owner:"wife",name:"Monthly Salary",month:monthLabel(),income:0,
+     groups:[{id:"wg1",name:"Savings"},{id:"wg2",name:"Essentials"},{id:"wg3",name:"Personal"}],
+     categories:[
+       {id:uid(),name:"Savings",amount:0,groupId:"wg1",color:SEG[1],subs:[],trackExpenses:false},
+       {id:uid(),name:"Bills",amount:0,groupId:"wg2",color:SEG[3],subs:[],trackExpenses:true},
+       {id:uid(),name:"Shopping",amount:0,groupId:"wg3",color:SEG[5],subs:[],trackExpenses:true},
+     ]},
+  ];
+  d.goals=[
+    {id:uid(),owner:"me",name:"Emergency Fund",type:"emergency",target:60000,contributions:[{id:uid(),date:buyDate,amount:18500,note:"Opening balance"}],monthly:2000,color:P.gr},
+    {id:uid(),owner:"me",name:"Family Trip",type:"vacation",target:25000,contributions:[{id:uid(),date:buyDate,amount:6000,note:""}],monthly:1000,color:P.br},
+    {id:uid(),owner:"wife",name:"New Laptop",type:"tech",target:8000,contributions:[{id:uid(),date:buyDate,amount:1500,note:""}],monthly:500,color:SEG[4]},
+  ];
+  d.investments=[
+    {id:uid(),ticker:"AAPL",name:"Apple Inc.",broker:"IBKR",owner:"me",type:"stocks",
+     trades:[{id:uid(),date:buyDate,type:"buy",shares:10,price:180}]},
+    {id:uid(),ticker:"VOO",name:"Vanguard S&P 500",broker:"GoTrade",owner:"me",type:"stocks",
+     trades:[{id:uid(),date:buyDate,type:"buy",shares:5,price:420}]},
+    {id:uid(),ticker:"VWRA",name:"Vanguard FTSE All-World",broker:"GoTrade",owner:"me",type:"stocks",
+     trades:[{id:uid(),date:buyDate,type:"buy",shares:8,price:160}]},
+  ];
+  d.banks=[
+    {id:uid(),owner:"me",name:"Salary account",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:12000,balanceAsOf:today,interest:null},
+    {id:uid(),owner:"me",name:"Savings",bank:"BDO",country:"PH",currency:"PHP",balance:150000,balanceAsOf:today,interest:null},
+    {id:uid(),owner:"wife",name:"Personal",bank:"Al Rajhi Bank",country:"SA",currency:"SAR",balance:4000,balanceAsOf:today,interest:null},
+  ];
+  d.assets=[
+    {id:uid(),name:"Toyota Raize",kind:"asset",currency:"SAR",value:85000,owner:"household"},
+    {id:uid(),name:"Car loan",kind:"liability",currency:"SAR",value:0,owner:"household",
+     installment:true,monthly:1100,monthsRemaining:24,asOfDate:today},
+  ];
+  d.household={splitMine:50,expenses:[
+    {id:uid(),name:"Rent",amount:2000,color:SEG[0],trackInBills:false},
+    {id:uid(),name:"Transport",amount:500,color:SEG[3],trackInBills:false},
+    {id:uid(),name:"Groceries",amount:1200,color:SEG[5],trackInBills:false},
+    {id:uid(),name:"Utilities",amount:400,color:SEG[8],trackInBills:true},
+  ]};
+  // Both of these key on names created just above, which is why they are
+  // seeded here and left empty in structuralDefaults().
+  d.homeSettings={...d.homeSettings,
+    savingsCategories:["Long Term Savings","Savings (Seabank)","Misc. Savings"],
+    investmentCategories:["Investment (GoTrade)"]};
+  d.investTarget={me:{thresholdPct:20,groupNames:["Invest & Grow"]},wife:{thresholdPct:20,groupNames:[]}};
+  return d;
+}
+
+function defaultData(){return sampleData(structuralDefaults());}
+
 function migrate(d){
-  if(!d||typeof d!=="object")return defaultData();
+  // Nothing to migrate means an EMPTY document, not the demo one — returning
+  // sample records here is the same contamination the split above exists to
+  // prevent, just reached through a corrupt localStorage blob.
+  if(!d||typeof d!=="object")return structuralDefaults();
   if(!d.owners)d.owners={me:"Me",wife:"My wife"};
   // migrate activePlanId from string to {me, wife}
   if(typeof d.activePlanId==="string"){
@@ -2971,6 +3027,22 @@ function migrate(d){
      fingerprint() omits it while empty, keeping the upgrade byte-identical.
      `ord` is NOT invented here for the same reason it isn't for expenses:
      absent means "unplaced", and creation order is what `createdAt` records. */
+  /* The four oldest record collections were never defaulted here, because
+     defaultData() has always produced them and no upgrade path could arrive
+     without them. Adopting a cloud document exposed the gap (2026-08-07): a
+     document missing them stays missing them through migrate(), the app then
+     materialises them as [] a moment later, and the freshly-adopted document
+     no longer matches the baseline just recorded for it — so a device that had
+     "adopted the cloud exactly, without issuing a POST" pushed a normalised
+     copy straight back. Defaulting them here makes adoption exact.
+
+     Byte-identical for any real document, which already has all four; only a
+     hand-written or partial one changes, and that one was already going to be
+     rewritten on the next save. */
+  if(!Array.isArray(d.goals))d.goals=[];
+  if(!Array.isArray(d.investments))d.investments=[];
+  if(!Array.isArray(d.banks))d.banks=[];
+  if(!Array.isArray(d.assets))d.assets=[];
   if(!Array.isArray(d.txTemplates))d.txTemplates=[];
   d.txTemplates.forEach(t=>{
     if(!t.owner)t.owner="me";
@@ -3366,6 +3438,47 @@ const PROFILE_KEY="allocation:preferredProfile";
    Separate from PROFILE_KEY, which is the remembered default *person*. */
 const VIEW_PROFILE_KEY="allocation:viewProfile";
 
+/* ── Provenance of THIS device's document ─────────────────────────────────────
+   "sample" only while the document is the untouched demo dataset loaded from
+   Settings → Load sample data. Anything else — including absent — is "user".
+
+   Deliberately per-device localStorage and NOT a field on `data`, exactly like
+   VIEW_PROFILE_KEY above. Three reasons, all load-bearing:
+     • Being sample data is a fact about this device's unsynced state, not about
+       the document. Sync a `provenance` field and the receiving phone starts
+       distrusting its own real records.
+     • A new field in `data` needs a migrate() default and a fingerprint touch
+       point, and per CLAUDE.md that costs every existing device a KV write on
+       first open — for information no other device can use.
+     • Absent must mean "user", so a device that has held real data since before
+       this build is never mistaken for a demo. Defaulting in `data` would have
+       to guess; here the absence itself is the answer.
+
+   The mark is STICKY: it is not cleared by editing. That is deliberate, and it
+   was arrived at the hard way. The first attempt anchored the mark to the
+   document's fingerprint, so that any edit would stop it matching and end
+   sample status by itself — elegant, and wrong: the bills reconciler, the
+   daily snapshot effect and the quote refresh all mutate the document within
+   seconds of load, so the mark cleared itself before anyone touched anything,
+   and the demo dataset auto-pushed exactly as before.
+
+   So the question "has a person edited this?" is not asked at all. Sample data
+   stops being sample when somebody says so, at one of exactly three points:
+     • an explicit Save to Cloud   (they chose to share it)
+     • Reset to empty              (it's gone)
+     • adopting or merging a cloud document (it's been replaced or absorbed)
+   Anything else keeps it local. A person who builds on the demo data has to
+   press Save to Cloud once, which is precisely what the button's own message
+   tells them — and the failure mode of being too sticky is a manual tap, while
+   the failure mode of being too eager is somebody else's phone filling up with
+   fake accounts. */
+const PROVENANCE_KEY="allocation:provenance";
+const markSampleData=()=>{try{localStorage.setItem(PROVENANCE_KEY,"sample");}catch(e){}};
+const clearSampleMark=()=>{try{localStorage.removeItem(PROVENANCE_KEY);}catch(e){}};
+const getProvenance=()=>{
+  try{return localStorage.getItem(PROVENANCE_KEY)==="sample"?"sample":"user";}catch(e){return "user";}
+};
+
 /* theme is a per-device UI preference (see PROFILE_KEY / allocation:theme in
    localStorage) that also happens to ride along inside the shared `data`
    object. It must never count toward "is my copy different from the
@@ -3725,6 +3838,86 @@ function mergeSettingPaths(local,remote,out){
    longer carried wholesale by whichever document is newer; each one merges on
    its own stamp via mergeSettingPaths above. Returns null (falling
    back to the conflict modal) only if something is structurally malformed. */
+/* ── Does this document contain anything a PERSON created? ────────────────────
+   Records only. Settings — currency, owner names, theme, homeDisplay,
+   payPeriods, the plan skeleton's own income — deliberately do not count.
+
+   The distinction drives whether a first connection blocks on a chooser or
+   adopts the cloud quietly, and it is chosen to keep false alarms out of the
+   scary dialog: losing a currency pick costs one tap to redo, so showing a
+   three-way data-loss dialog to someone who only chose SAR before connecting
+   would be a worse lie than silently taking the cloud's answer.
+
+   Counts LIVE records only (`!deletedAt`) — a tombstone is not something to
+   protect, and an empty document that has only ever had a record deleted from
+   it has nothing left to lose. */
+const RECORD_COLLECTIONS=["expenses","goals","investments","banks","assets","installments","txTemplates","monthlyPlans","bills","targets"];
+function countLocalRecords(d){
+  if(!d||typeof d!=="object")return 0;
+  const live=a=>(Array.isArray(a)?a:[]).filter(x=>x&&!x.deletedAt).length;
+  let n=RECORD_COLLECTIONS.reduce((s,k)=>s+live(d[k]),0);
+  n+=live(d.household&&d.household.expenses);
+  // Plan CATEGORIES, not plans: structuralDefaults() ships an empty plan per
+  // owner so activePlanId resolves, so counting plans would report every
+  // fresh device as having user data and block every first connection.
+  n+=(Array.isArray(d.plans)?d.plans:[]).reduce((s,p)=>s+live(p&&p.categories),0);
+  return n;
+}
+
+/* Everything that is a *preference* rather than a record. Compared only to
+   decide whether adopting the cloud silently is worth a one-line note — never
+   to decide whether to push, so it stays out of both fingerprints. `theme` is
+   excluded for the same reason the fingerprints exclude it: it is per-device. */
+function settingsSignature(d){
+  if(!d||typeof d!=="object")return "";
+  return JSON.stringify([d.currency,d.owners,d.payPeriods,d.homeDisplay,d.homeSettings,
+    d.settings,d.investTarget,d.projection,d.billsSettings,(d.household||{}).splitMine]);
+}
+
+/* ── What should happen when this device meets the cloud document? ────────────
+   Pure, module scope, and the single answer for all three paths that used to
+   decide this independently (startup reconcile, pullFromCloud, and
+   saveToCloud's conflict retry) — which is how they came to disagree.
+
+   The bug this exists to end: a brand-new Safari/PWA origin booted on the
+   SAMPLE dataset, and connecting a passphrase ran tryAutoMergeAll(sample,
+   cloud). That merge SUCCEEDS — it is id-keyed, and every sample id is novel,
+   so nothing collides and every demo record survives into the union — and the
+   result was then auto-pushed. Both real phones then adopted the demo data.
+
+   The load-bearing input is `hasBaseline`: whether this device has ever
+   successfully reconciled with the cloud (meta.lastCloudSnapshot !== null).
+   Merging is only meaningful against a shared ancestor. Without one there is
+   no divergence to reconcile — just two unrelated documents — and unioning
+   them is not a merge, it is contamination wearing a merge's clothes.
+
+   Returns {action, post, banner}:
+     merge   — established device: today's behaviour, unchanged.
+     adopt   — take the cloud document exactly. post:false.
+     ask     — hold, and let the person decide. post:false.
+     onboard — nothing in the cloud yet; this device seeds it. post:true. */
+function syncConnectDecision(ctx){
+  const c=ctx||{};
+  // An established device has a real ancestor, so the normal merge machinery
+  // applies and nothing below changes for it. This branch must stay first.
+  if(c.hasBaseline)return{action:"merge",post:true,banner:false};
+  // Empty cloud: there is nothing to contaminate and somebody has to write
+  // first. Sample data still may not be what seeds a shared document.
+  if(!c.remoteExists)
+    return c.provenance==="sample"
+      ?{action:"onboard",post:false,banner:false}
+      :{action:"onboard",post:true,banner:false};
+  // From here: no baseline, and the cloud already holds a real document.
+  // Untouched demo data has no claim on it whatsoever.
+  if(c.provenance==="sample")return{action:"adopt",post:false,banner:false};
+  // Nothing a person made — adopt the cloud exactly. A settings-only
+  // difference is worth a dismissible line, never a blocking dialog.
+  if(!c.localHasRecords)return{action:"adopt",post:false,banner:!!c.localDiffersInSettings};
+  // Genuine local records meeting an established cloud. This is the only
+  // case a person has to answer, and it may never resolve itself.
+  return{action:"ask",post:false,banner:false};
+}
+
 function tryAutoMergeAll(local,remote){
   try{
     const preferLocal=(local.dataUpdatedAt||"")>=(remote.dataUpdatedAt||"");
@@ -3987,7 +4180,12 @@ function BottomNav({tab,setTab,onMore}){
    MAIN APP
    ════════════════════════════════════════════════════════════════════════ */
 function App(){
-  const[data,setDataRaw]=useState(()=>migrate(defaultData()));
+  /* An EMPTY document, never the sample one. A brand-new origin has no
+     localStorage, so whatever this initializer produces is what the persist
+     effect writes to disk and what the first connect would have merged into
+     the cloud — which is exactly how the sample dataset used to reach both
+     real phones. Sample data is now opt-in from Settings. */
+  const[data,setDataRaw]=useState(()=>migrate(structuralDefaults()));
   const skipSave=useRef(false);
   /* every mutator in this file calls setData(updater). Wrapping it here (once)
      means none of those ~45 call sites need to know about dataUpdatedAt.
@@ -4028,6 +4226,16 @@ function App(){
   const[changesSinceSave,setChangesSinceSave]=useState(0);
   const[syncOp,setSyncOp]=useState(null); // null | "push" | "pull"
   const[conflict,setConflict]=useState(null); // {local,remote,remoteSavedAt} | null
+  /* Set when this device has never synced, holds records a person made, and
+     has met an established cloud document. Blocks every push until answered —
+     deliberately NOT the conflict modal, which describes a different situation
+     (two devices that diverged from a shared baseline). */
+  const[firstConnect,setFirstConnect]=useState(null); // {local,remote,remoteFP,remoteRev} | null
+  const firstConnectRef=useRef(null);
+  useEffect(()=>{firstConnectRef.current=firstConnect;},[firstConnect]);
+  /* One dismissible line after a silent adopt replaced this device's
+     preferences with the cloud's. Never blocks. */
+  const[adoptedSettingsNote,setAdoptedSettingsNote]=useState(false);
   /* ── revision-based sync state ───────────────────────────────────────────
      localRev tracks the last cloud revision this device has fully
      reconciled with (see loadSyncMeta comment). syncStatus drives the
@@ -4248,6 +4456,42 @@ function App(){
       return true;
     }catch(e){return false;}
   };
+  /* ── Take the cloud document EXACTLY ───────────────────────────────────────
+     No merge, no push, no rev invention. Used by a device that has never
+     synced meeting an established cloud, and by the chooser's "Use the cloud
+     copy" button. The local copy is stashed first so an adopt is undoable from
+     Recently Deleted → previous local copies, which is the whole reason
+     adopting can be the safe default rather than a question.
+
+     Sets the baseline to the remote fingerprint and hasUnsyncedChanges=false,
+     which is what stops the persist effect from immediately re-flagging the
+     document dirty and firing the idle autosave. */
+  const adoptCloudDoc=(remoteMigrated,remoteFP,remoteRev,banner)=>{
+    stashPreCloudBackup(dataRef.current,"before adopting the cloud copy");
+    clearSampleMark(); // whatever this device held, it is gone now
+    skipSave.current=true;
+    setData(remoteMigrated);
+    try{localStorage.setItem(STORAGE_KEY,JSON.stringify(remoteMigrated));}catch(e){}
+    lastCloudSnapshotRef.current=remoteFP;
+    cacheSyncedSnapshot(remoteMigrated);
+    const now=new Date();
+    const meta=loadSyncMeta();
+    meta.hasUnsyncedChanges=false;
+    meta.changesSinceSave=0;
+    meta.lastCloudSnapshot=remoteFP;
+    meta.lastCloudPulledAt=now.toISOString();
+    meta.lastCloudDownloadAt=meta.lastCloudPulledAt;
+    meta.localRev=remoteRev;
+    saveSyncMeta(meta);
+    setHasUnsyncedChanges(false);
+    setChangesSinceSave(0);
+    setLastCloudPulledAt(now);
+    setLocalRev(remoteRev);
+    setCloudRev(remoteRev);
+    setSyncStatus("synced");
+    setSyncMsg("Cloud data loaded ✓");
+    if(banner)setAdoptedSettingsNote(true);
+  };
   const restorePreCloudBackup=(index=0)=>{
     try{
       const slots=readPreCloudSlots();
@@ -4355,14 +4599,41 @@ function App(){
             resolved=localResolved;
             meta.hasUnsyncedChanges=false;
           }else{
-            const merged=tryAutoMergeAll(localResolved,remoteMigrated);
-            if(merged){
-              resolved=merged;
-              meta.hasUnsyncedChanges=fingerprint(merged)!==remoteFP;
-            }else if(!cancelled){
+            /* Same gate as pullFromCloud, for the same reason: without a
+               baseline these two documents share no ancestor, so their union
+               is contamination rather than reconciliation. Reloading before
+               connecting must not be a way around the chooser. */
+            const decision=syncConnectDecision({
+              hasBaseline:meta.lastCloudSnapshot!=null,
+              provenance:getProvenance(),
+              localHasRecords:countLocalRecords(localResolved)>0,
+              localDiffersInSettings:settingsSignature(localResolved)!==settingsSignature(remoteMigrated),
+              remoteExists:true,
+            });
+            if(decision.action==="adopt"){
+              stashPreCloudBackup(localResolved,"before adopting the cloud copy");
+              clearSampleMark();
+              resolved=remoteMigrated;
+              meta.hasUnsyncedChanges=false;
+              meta.changesSinceSave=0;
+              if(decision.banner)setAdoptedSettingsNote(true);
+            }else if(decision.action==="ask"&&!cancelled){
+              /* Keep local untouched and hold. saveToCloud refuses while this
+                 is set, so nothing can go up before the person answers. */
               resolved=localResolved;
-              conflictShown=true;
-              setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt,remoteRev,remoteWriter:(remoteEnvelope&&remoteEnvelope.lastWriter)||null});
+              conflictShown=true;   // reuse the guard: don't advance localRev
+              meta.hasUnsyncedChanges=true;
+              setFirstConnect({local:localResolved,remote:remoteMigrated,remoteFP,remoteRev});
+            }else{
+              const merged=tryAutoMergeAll(localResolved,remoteMigrated);
+              if(merged){
+                resolved=merged;
+                meta.hasUnsyncedChanges=fingerprint(merged)!==remoteFP;
+              }else if(!cancelled){
+                resolved=localResolved;
+                conflictShown=true;
+                setConflict({local:localResolved,remote:remoteMigrated,remoteSavedAt:KVSync.lastPulledAt,remoteRev,remoteWriter:(remoteEnvelope&&remoteEnvelope.lastWriter)||null});
+              }
             }
           }
         }else{
@@ -4441,15 +4712,17 @@ function App(){
         if(remoteRaw!==null||KVSync.lastPulledAt){
           // got an actual answer (data, or a confirmed-empty account)
           rejected=null;
-          cloudConfirmedRef.current=true;
           setCloudReconnecting(false);
           const meta=loadSyncMeta();
           const have=dataRef.current||localResolved;
           const resolved=reconcile(remoteRaw,have,meta);
-          /* Refused: we do NOT have a usable read of the cloud, so pushing is
-             off again (saveToCloud gates on this ref) and we keep retrying —
+          /* Set only now: reconcile has validated the document and decided
+             what to do with it. Setting it before the read (as this did) means
+             a device is cleared to push over a document it hasn't seen. */
+          /* Refused: we do NOT have a usable read of the cloud, so pushing
+             stays off (saveToCloud gates on this ref) and we keep retrying —
              a torn read heals itself on the next attempt. */
-          if(rejected)cloudConfirmedRef.current=false;
+          cloudConfirmedRef.current=!rejected;
           if(rejected&&!have){setCloudWaitReason(rejected);setCloudWaiting(true);backgroundRetry(localResolved,attempt+1);return;}
           if(!rejected)setCloudWaitReason(null);
           finish(resolved,meta);
@@ -4483,13 +4756,14 @@ function App(){
       if(!timedOut){
         // request genuinely completed — whether it found data or confirmed
         // the account is legitimately empty, either way we now know the
-        // real cloud state, so it's safe to proceed and to allow pushes.
-        cloudConfirmedRef.current=true;
+        // real cloud state. Pushing is enabled AFTER reconcile has validated
+        // that state, not before: the flag means "this device knows what it
+        // would be writing over", which a completed request alone doesn't say.
         const resolved=reconcile(remoteRaw,localResolved,meta);
+        cloudConfirmedRef.current=!rejected;
         if(rejected){
           /* Same rule as the timeout below, for the same reason: we don't know
              the cloud's real state, so nothing may be pushed. */
-          cloudConfirmedRef.current=false;
           if(!localResolved){
             /* Nothing local AND an unusable cloud copy. Do not open on an empty
                app that looks safe to type into — that is exactly the trap the
@@ -4534,7 +4808,7 @@ function App(){
   const continueOffline=()=>{
     setCloudWaiting(false);
     skipSave.current=true;
-    setData(migrate(defaultData()));
+    setData(migrate(structuralDefaults()));
     applyTheme(theme);applySegTheme(theme);setThemeTick(t=>t+1);
     setLoaded(true);
     if(typeof window.__hideLoading==="function")window.__hideLoading();
@@ -4630,6 +4904,26 @@ function App(){
        backgrounding push and the post-merge re-push — none of them are a
        decision to share the imported file with the other device. */
     if(importPendingRef.current&&reason!=="manual"&&reason!=="gesture")return;
+    /* A first-connection decision is outstanding: this device has never synced,
+       holds records of its own, and the cloud already has a document. Until the
+       person answers, NOTHING goes up — not the idle autosave, not the
+       backgrounding flush, and not a manual Save either, because "Save to
+       Cloud" from here has no defined meaning (overwrite? merge?). The chooser
+       itself pushes, through its own explicit path. */
+    if(firstConnectRef.current){
+      setSyncMsg("Choose what to do with this device's data first");
+      setTimeout(()=>setSyncMsg(""),4000);return;
+    }
+    /* Untouched sample data never reaches the cloud on its own. Only a
+       deliberate Save to Cloud can share the demo dataset, and doing so ends
+       its sample status — it is somebody's real starting point from then on. */
+    if(getProvenance()==="sample"){
+      if(reason!=="manual"&&reason!=="gesture"){
+        setSyncMsg("Sample data won't sync — use Save to Cloud if you meant to");
+        setTimeout(()=>setSyncMsg(""),4000);return;
+      }
+      clearSampleMark();
+    }
     if(!kvReady){setSyncMsg("Cloudflare sync isn't configured");setTimeout(()=>setSyncMsg(""),3000);return;}
     if(!cloudConfirmedRef.current){
       /* Two different reasons, and they need different answers: "we never got
@@ -4671,6 +4965,22 @@ function App(){
         }else if(remoteRaw){
           cloudUnreadableRef.current=null;
           const remoteMigrated=migrate(remoteRaw);
+          /* Third door to the same contamination. A rev rejection means the
+             cloud moved under us, and the reflex is to merge and retry — but
+             if this device has no baseline it has no shared ancestor with what
+             came back, so that union is not a merge. Hand it to the chooser
+             instead and push nothing. */
+          const m0=loadSyncMeta();
+          if(m0.lastCloudSnapshot==null){
+            clearUploadPending();
+            setHasUnsyncedChanges(true);
+            setSyncStatus("pending");
+            setSyncMsg("");
+            setFirstConnect({local:payload,remote:remoteMigrated,
+              remoteFP:fingerprint(remoteMigrated),remoteRev:result.rev});
+            savingRef.current=false;setSyncOp(null);
+            return;
+          }
           const merged=tryAutoMergeAll(payload,remoteMigrated);
           const retry=merged?await KVSync.save(merged,result.rev):null;
           if(merged&&retry&&!retry.conflict&&retry.ok!==false){
@@ -4883,6 +5193,12 @@ function App(){
         setSyncMsg("Cloud copy is unreadable — kept this device's data");
       }else if(remoteRaw){
         cloudUnreadableRef.current=null;
+        /* The document has now been READ and VALIDATED, which is the only
+           thing that may enable pushing. Passphrase acceptance at /sync/meta
+           is not evidence about the document — the connect effect used to set
+           this flag purely on that, which is how a device could push before it
+           knew what it was pushing over. */
+        cloudConfirmedRef.current=true;
         const remoteMigrated=migrate(remoteRaw);
         const remoteRev=Number.isFinite(remoteEnvelope.rev)?remoteEnvelope.rev:localRevRef.current;
         const localFP=fingerprint(dataRef.current);
@@ -4899,6 +5215,34 @@ function App(){
           setSyncStatus("synced");
           setSyncMsg("Already up to date ✓");
         }else{
+          /* Before merging, ask whether merging is even the right verb. Without
+             a baseline these two documents share no ancestor, so their union is
+             not a reconciliation — it is this device's contents added to
+             somebody else's document. See syncConnectDecision. */
+          const m0=loadSyncMeta();
+          const decision=syncConnectDecision({
+            hasBaseline:m0.lastCloudSnapshot!=null,
+            provenance:getProvenance(),
+            localHasRecords:countLocalRecords(dataRef.current)>0,
+            localDiffersInSettings:settingsSignature(dataRef.current)!==settingsSignature(remoteMigrated),
+            remoteExists:true,
+          });
+          if(decision.action==="adopt"){
+            adoptCloudDoc(remoteMigrated,remoteFP,remoteRev,decision.banner);
+            setSyncOp(null);setTimeout(()=>setSyncMsg(""),3000);
+            return;
+          }
+          if(decision.action==="ask"){
+            /* Hold. Not a conflict — the conflict modal describes two devices
+               that diverged from a shared baseline, and that is precisely what
+               has not happened here. Nothing is written and nothing is pushed
+               until the person answers. */
+            setSyncMsg("");
+            setSyncStatus("pending");
+            setFirstConnect({local:dataRef.current,remote:remoteMigrated,remoteFP,remoteRev});
+            setSyncOp(null);
+            return;
+          }
           const merged=tryAutoMergeAll(dataRef.current,remoteMigrated);
           if(merged){
             const mergedFP=fingerprint(merged);
@@ -4947,15 +5291,21 @@ function App(){
      the passphrase in Settings has to behave like a reload: pull straight
      away, or the device sits on its local-only copy until the person happens
      to hit Pull. Skips the initial mount, so a device that already had a
-     passphrase doesn't pull twice on open. pullFromCloud auto-merges and
-     stashes a pre-cloud backup, so this is safe on a device that has local
-     edits it hasn't shared yet. */
+     passphrase doesn't pull twice on open.
+
+     It deliberately does NOT set cloudConfirmedRef any more. Connecting means
+     the Worker accepted the passphrase at /sync/meta — an authentication fact,
+     which says nothing at all about the document. This effect used to flip the
+     flag right here, so a device that had never read the cloud was already
+     cleared to push over it; combined with a fresh origin booting on sample
+     data, that was the contamination path. pullFromCloud now sets the flag
+     itself, and only after a full /sync response has passed cloudDocProblem
+     and been reconciled. */
   const wasSyncTokenSet=useRef(syncTokenSet);
   useEffect(()=>{
     const justConnected=syncTokenSet&&!wasSyncTokenSet.current;
     wasSyncTokenSet.current=syncTokenSet;
     if(!justConnected||!loaded)return;
-    cloudConfirmedRef.current=true;
     pullFromCloudRef.current();
   },[syncTokenSet,loaded]);
 
@@ -5053,6 +5403,59 @@ function App(){
     }
     setConflict(null);
     await saveToCloud();
+  };
+
+  /* ── First-connection chooser outcomes ───────────────────────────────────
+     All three clear firstConnect, which is what un-blocks saveToCloud. Until
+     one of them runs, this device pushes nothing at all. ─────────────────── */
+  const firstConnectUseCloud=()=>{
+    const info=firstConnectRef.current;
+    if(!info)return;
+    setFirstConnect(null);firstConnectRef.current=null;
+    adoptCloudDoc(info.remote,info.remoteFP,info.remoteRev,false);
+    setTimeout(()=>setSyncMsg(""),3000);
+  };
+  const firstConnectMerge=async()=>{
+    const info=firstConnectRef.current;
+    if(!info)return;
+    /* Merge, never overwrite. The union of two documents with no shared
+       ancestor keeps both sides whole, which is the only outcome that is safe
+       to offer from a device that cannot show what it would be replacing. */
+    const merged=tryAutoMergeAll(dataRef.current,info.remote)||info.remote;
+    stashPreCloudBackup(dataRef.current,"before merging with the cloud copy");
+    clearSampleMark();
+    skipSave.current=true;
+    setData(merged);
+    try{localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));}catch(e){}
+    /* Adopt the remote rev first so the push lands as a normal CAS update
+       against the revision we actually read, rather than racing from 0 and
+       being rejected — the same reason resolveSaveLocalToCloud does it. */
+    if(Number.isFinite(info.remoteRev)){
+      localRevRef.current=info.remoteRev;
+      setLocalRev(info.remoteRev);
+      setCloudRev(info.remoteRev);
+    }
+    /* Give this device a baseline: it has now reconciled with the cloud, so
+       every later divergence is a real merge rather than another first
+       connection. */
+    lastCloudSnapshotRef.current=info.remoteFP;
+    cacheSyncedSnapshot(info.remote);
+    const m=loadSyncMeta();m.lastCloudSnapshot=info.remoteFP;m.localRev=info.remoteRev;m.hasUnsyncedChanges=true;saveSyncMeta(m);
+    setFirstConnect(null);firstConnectRef.current=null;
+    setHasUnsyncedChanges(true);
+    // Let the setData above land in dataRef.current before saveToCloud reads
+    // it — the same short delay pullFromCloud and pushImportant use.
+    setTimeout(()=>{if(!savingRef.current)saveToCloudRef.current("gesture");},350);
+  };
+  const firstConnectLater=()=>{
+    setFirstConnect(null);firstConnectRef.current=null;
+    /* Nothing was adopted and nothing was pushed, and there is still no
+       baseline — so the next pull asks again. That repetition is correct: the
+       question hasn't been answered, and quietly dropping it is how a device
+       ends up silently unsynced for weeks. */
+    setSyncStatus("pending");
+    setSyncMsg("Left unsynced — you'll be asked again next time you pull");
+    setTimeout(()=>setSyncMsg(""),4000);
   };
 
   /* ── pull-to-refresh ──────────────────────────────────────────────────────
@@ -6278,6 +6681,20 @@ function App(){
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
       {conflict&&<ConflictModal conflict={conflict} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
+      {firstConnect&&<FirstConnectSheet info={firstConnect}
+        onUseCloud={firstConnectUseCloud} onMerge={firstConnectMerge} onLater={firstConnectLater}/>}
+      {/* Adopting the cloud on a first connection replaces this device's
+          preferences too. That's the right outcome — the cloud document is the
+          household's — but it's rude to change someone's currency without
+          saying so. A line, not a dialog: nothing was lost that a record. */}
+      {adoptedSettingsNote&&
+        <div style={{position:"fixed",left:16,right:16,bottom:88,maxWidth:420,margin:"0 auto",zIndex:80,
+          background:P.neuBg,border:`1px solid ${P.line}`,borderRadius:12,padding:"10px 14px",
+          display:"flex",alignItems:"center",gap:10,fontSize:12,color:P.sub,boxShadow:"0 6px 18px rgba(0,0,0,.14)"}}>
+          <span style={{flex:1,lineHeight:1.5}}>Cloud settings applied — this device's own preferences were replaced.</span>
+          <button onClick={()=>setAdoptedSettingsNote(false)}
+            style={{border:"none",background:"transparent",color:P.jade,fontWeight:600,fontSize:12,padding:"4px 2px"}}>Got it</button>
+        </div>}
       {showPendingDiff&&<PendingChangesModal data={data} onClose={()=>setShowPendingDiff(false)}
         onSaveToCloud={()=>{setShowPendingDiff(false);saveToCloud();}}/>}
       {showRecentlyDeleted&&<RecentlyDeletedModal data={data} restoreRecord={restoreRecord}
@@ -13432,6 +13849,65 @@ function ConflictModal({conflict,onUseCloud,onSaveLocalToCloud}){
   );
 }
 
+/* ── First connection: this device has records, the cloud has a document ─────
+   Deliberately NOT ConflictModal. That one describes two devices that diverged
+   from a shared baseline and asks which side wins; here there is no shared
+   baseline at all — this device has simply never synced. Saying "cloud and
+   local data differ" would imply a common history that doesn't exist, and its
+   "Save Local to Cloud" button OVERWRITES, which from a device that has never
+   seen the cloud would silently destroy the other phone's entire dataset.
+
+   So the destructive option isn't offered. "Keep mine" merges — the union of
+   two documents that share nothing loses neither side — and it says how many
+   records it is about to add, because the person is being asked to change a
+   document they cannot see from here. */
+function FirstConnectSheet({info,onUseCloud,onMerge,onLater}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onLater);
+  const choiceBtn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",display:"block",width:"100%"};
+  /* Counts from the existing validator summary rather than a bespoke reduce,
+     so it can't drift from what the rest of the app calls a record. */
+  const mine=useMemo(()=>{
+    try{const r=validateBackup(info.local);return r.summary?r.summary.counts:null;}catch(e){return null;}
+  },[info]);
+  const theirs=useMemo(()=>{
+    try{const r=validateBackup(info.remote);return r.summary?r.summary.counts:null;}catch(e){return null;}
+  },[info]);
+  const phrase=c=>{
+    if(!c)return "";
+    const parts=[[c.transactions,"transaction"],[c.goals,"goal"],[c.investments,"investment"],
+      [c.banks,"account"],[c.assets,"asset"],[c.installments,"installment"]]
+      .filter(([n])=>n>0).map(([n,w])=>`${n} ${w}${n===1?"":"s"}`);
+    if(!parts.length)return "no records";
+    return parts.slice(0,3).join(", ")+(parts.length>3?"…":"");
+  };
+  return(
+    <div className="sheet-bg">
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <h3 style={{margin:"0 0 8px",fontWeight:600}}>This device has data of its own</h3>
+        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>
+          You've just connected, and there's already a document in the cloud. This device has never synced before, so nothing has been sent or changed yet — choose what should happen.
+        </p>
+        <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,lineHeight:1.7}}>
+          <div><span style={{color:P.faint}}>On this device: </span><strong>{phrase(mine)}</strong></div>
+          <div><span style={{color:P.faint}}>In the cloud: </span><strong>{phrase(theirs)}</strong></div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={onUseCloud} style={choiceBtn}>
+            Use the cloud copy<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Take the cloud document exactly. A backup of this device's data is kept, so this is undoable.</div>
+          </button>
+          <button onClick={onMerge} style={{...choiceBtn,border:"none",background:P.gr,color:"#fff"}}>
+            Merge and upload<div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Adds this device's {phrase(mine)} to the cloud. Nothing already in the cloud is removed.</div>
+          </button>
+          <button onClick={onLater} style={{...choiceBtn,background:"transparent",border:"none",color:P.faint,fontWeight:500,fontSize:13,textAlign:"center"}}>
+            Decide later — keep this device offline for now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Pending-changes viewer — diffs the current local data against the last
    full snapshot known to be in sync with the cloud (cached locally, so this
    works offline / without a round-trip). Answers "what exactly is the N in
@@ -13688,6 +14164,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
   const[confirm,setConfirm]=useState(false);
+  const[sampleConfirm,setSampleConfirm]=useState(false);
   const[msg,setMsg]=useState("");
   const[ppSheet,setPpSheet]=useState(null);    // {owner,periodKey,heading}
   const[ppConfirm,setPpConfirm]=useState(null);// {owner,count,turningOn?,repay?,apply}
@@ -14240,11 +14717,29 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
           <button onClick={onOpenRecentlyDeleted} style={{...btn,width:"100%",marginBottom:12}}>
             <I.Trash size={14}/>Recently Deleted
           </button>}
-        <button onClick={()=>confirm?(setData(migrate(defaultData())),flash("Reset done")):setConfirm(true)}
+        {/* Reset now empties rather than loading the demo dataset. On a
+            connected device the old behaviour was the fresh-device
+            contamination bug through a second door: it replaced real data with
+            sample records, the persist effect flagged the document dirty, and
+            the idle autosave pushed the demo data to the other phone. */}
+        <button onClick={()=>confirm?(clearSampleMark(),setData(migrate(structuralDefaults())),flash("Reset — this device is now empty")):setConfirm(true)}
           style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
             background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
-          <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to sample data"}
+          <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to empty"}
         </button>
+        {/* Sample data is explicit and marked. markSampleData() is what stops
+            it from ever being auto-pushed; only a deliberate Save to Cloud can
+            share it, and doing so ends its sample status. */}
+        <button onClick={()=>sampleConfirm
+            ?(()=>{setData(migrate(sampleData(structuralDefaults())));markSampleData();setSampleConfirm(false);
+                   flash(kvReady?"Sample data loaded — it won't sync unless you Save to Cloud":"Sample data loaded");})()
+            :setSampleConfirm(true)}
+          style={{...btn,width:"100%",marginTop:8,justifyContent:"center"}}>
+          <I.Refresh size={14}/>{sampleConfirm?"Tap again — this replaces what's on this device":"Load sample data"}
+        </button>
+        <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginTop:6}}>
+          Sample data is for trying things out. It stays on this device and won't sync on its own.
+        </div>
         <div style={{marginTop:16,paddingTop:12,borderTop:`1px solid ${P.line}`,fontSize:11,color:P.faint,lineHeight:1.7}}>
           <div>Version {APP_VERSION} · Build {BUILD_ID}</div>
           <div>Latest server build: {versionCheck.status==="ok"?versionCheck.buildId:versionCheck.status==="checking"?"checking…":"couldn't check"}</div>

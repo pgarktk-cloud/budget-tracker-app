@@ -41,9 +41,13 @@ const t=(name,fn)=>{n++;try{fn();console.log("  ok   "+name);}catch(e){fails++;c
 
 const ctx={console};
 vm.createContext(ctx);
-// defaultData() -> migrate() -> validateBackup() are contiguous in the source.
-// uid() is referenced by defaultData, so it's handed in rather than sliced.
-const src=slice("function defaultData(){","/* Bills Reserve = opening baseline");
+// structuralDefaults() -> sampleData() -> defaultData() -> migrate() ->
+// validateBackup() are contiguous in the source. The start marker is
+// structuralDefaults rather than defaultData because defaultData is now just
+// the composition of the first two — starting at it would slice away the
+// helpers it calls.
+// uid() is referenced by sampleData, so it's handed in rather than sliced.
+const src=slice("function structuralDefaults(){","/* Bills Reserve = opening baseline");
 // uid() and SEG (the category colour palette) are referenced by defaultData
 // but live far away in the source, so they're stubbed rather than sliced.
 vm.runInContext(`
@@ -53,6 +57,7 @@ var monthLabel=function(){return "August 2026";};
 var P={gr:"#2f9e6d",br:"#8a6a3d",amber:"#c98a12"};
 `+src+`
 this.defaultData=defaultData; this.migrate=migrate;
+this.structuralDefaults=structuralDefaults; this.sampleData=sampleData;
 this.validateBackup=validateBackup;
 this.BACKUP_ARRAY_KEYS=BACKUP_ARRAY_KEYS;
 this.BACKUP_OPTIONAL_KEYS=BACKUP_OPTIONAL_KEYS;`,ctx);
