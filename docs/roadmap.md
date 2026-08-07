@@ -344,7 +344,7 @@ write per app open; added `UpdateBalanceSheet` (Add/Subtract/Set + live
 preview) to Banks. All confirmed on-device. See `docs/current-status.md` and
 `docs/decisions.md`.
 
-## Mobile usability programme (scoped 2026-07-30, in progress)
+## Mobile usability programme (scoped 2026-07-30) — all six steps DONE
 Agreed order after a design grilling session. Each step ships on its own; the
 app must never be left non-working, because two people use it daily.
 
