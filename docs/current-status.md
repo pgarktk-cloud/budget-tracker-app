@@ -1,6 +1,59 @@
 # Current Status
 
-_Last updated: 2026-08-07 (Reset auto-push hole closed, v1.29.1)_
+_Last updated: 2026-08-07 (installment payments can be funded from a budget
+category, v1.30.0)_
+
+---
+
+# 📋 SESSION NOTE — 2026-08-07 (v1.30.0)
+
+Two Installments changes, one cosmetic and one structural. **Built, tested and
+staged; not yet deployed and not yet verified on real hardware.**
+
+## 1. `InstallmentEditSheet` layout
+
+The two-up rows (Purchase date / Total amount, First payment due / Number of
+payments) rendered at different heights and the date inputs spilled over the
+field beside them. Two causes, neither of them padding — `box-sizing:border-box`
+is global:
+
+- `box` set no `fontFamily`, so a bare `<input type="date">` rendered in the UA
+  font while `NumField` carried `tnum`. That is the height mismatch.
+- Safari's date input builds a shadow-DOM `-webkit-datetime-edit` whose
+  min-content width ignores `width:100%`. That is the overlap.
+
+Fixed with `fontFamily:"inherit"` on `box`, a `dateBox` variant carrying
+`minWidth:0` + `appearance:none` for all three date fields in the sheet, and
+`flexWrap:"wrap"` + `flex:"1 1 150px"` on both rows — the treatment the Provider
+row directly above them already had. The same `dateBox` was applied in
+`InstallmentPaymentSheet`, which had the identical pair of fields.
+
+## 2. A payment may be funded from a budget category
+
+New optional `installmentPayments[].fundedCatId`. Full reasoning in
+`docs/decisions.md` → "…except a payment funded from a budget category". Short
+version: the ledger row is written `isTransfer:false` with `catId` = the chosen
+category, so it consumes that envelope; the derived Budget row stays visible but
+leaves `installmentTotal`, so nothing is allocated twice.
+
+Also in this build:
+- **BNPL providers default the first payment to today.** `INSTALLMENT_PROVIDERS`
+  gained a `bnpl` flag (Tabby, Tamara); it only ever seeds a default and nothing
+  downstream branches on it. A `dueTouched` guard stops it moving under someone
+  who has already set a date.
+- **Creating a plan whose first payment is already due offers to record it**,
+  by opening the ordinary payment sheet — not a create-and-pay shortcut, which
+  would become a second way for money to reach a payment.
+- **The tx list annotates a cross-bucket funded payment** ("covers September"),
+  derived at render like `"overdue"`, never stored.
+
+`installmenttest.cjs` grew nine cases (20–28) covering the write, the classifier
+in both directions, the visible-but-not-allocating row, both reopen paths, the
+three degrade cases, migration byte-equivalence and a two-device merge. All 41
+pass; all eighteen runners green.
+
+**Not yet done:** browser verification (see the Verification section of the
+plan), deploy, and confirmation on the two phones.
 
 ---
 

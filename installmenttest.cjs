@@ -584,6 +584,183 @@ t("16b · a payment recorded on one device merges into the other",()=>{
   assert.equal(installmentRemainingBalance(null,installmentPaymentsFor(merged.installmentPayments,"i1")),750);
 });
 
+/* ── Funding a payment from a budget category ──────────────────────────────
+   The Tabby downpayment case: the first payment is due at purchase and comes
+   out of an envelope that already has room this month, rather than being
+   planned as its own Budget line.
+
+   The whole feature is one optional field, and its correctness is entirely
+   about the two halves moving TOGETHER — the ledger row stops being a transfer
+   at the same moment the derived row stops allocating. Either half alone is a
+   double-count or a hole. */
+console.log("\nfunding a payment from a budget category\n");
+
+/* A plan carrying a real Shopping category for `me`, so the resolver has
+   something live to find. Owner-scoped by construction: `wife`'s plan holds a
+   DIFFERENT category id, which is what test 24 leans on. */
+function withCats(d){
+  return{...d,plans:[
+    {id:"pl1",owner:"me",name:"Monthly Salary",month:"2026-08",income:10000,
+     groups:[{id:"g1",name:"Essentials"}],
+     categories:[{id:"cShop",groupId:"g1",name:"Shopping"},
+                 {id:"cGone",groupId:"g1",name:"Retired",deletedAt:"2026-07-01T00:00:00.000Z"}]},
+    {id:"pl2",owner:"wife",name:"Monthly Salary",month:"2026-08",income:8000,
+     groups:[{id:"g2",name:"Essentials"}],
+     categories:[{id:"cHers",groupId:"g2",name:"Shopping"}]},
+  ]};
+}
+const fundedSeed=()=>withCats({...baseDoc()});
+
+t("20 · a funded payment is real spending against the category, not a transfer",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  const e=d.expenses[0];
+  assert.equal(e.catId,"cShop","catId becomes the CATEGORY, not the installment id");
+  assert.equal(e.isTransfer,false,"it must consume the envelope");
+  // the links that make it an installment payment are untouched
+  assert.equal(e.installmentId,"i1");
+  assert.equal(e.installmentPaymentId,"p1");
+  assert.equal(d.installmentPayments.find(p=>p.id==="p1").fundedCatId,"cShop");
+  assert.equal(d.installmentPayments.find(p=>p.id==="p1").status,"paid");
+});
+
+t("21 · the unaccounted classifier needs no branch — it lands in tracked spend",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  const funded=classify(d.expenses,[]);
+  assert.equal(funded.trackedSpend,250);
+  assert.equal(funded.untrackedTransfers,0,"a funded payment is NOT a transfer out");
+  // and the unfunded case is unchanged, which is the half that must not regress
+  let u=withPlan(fundedSeed());
+  u=applyInstallmentPayment(u,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e2"});
+  const plain=classify(u.expenses,[]);
+  assert.equal(plain.untrackedTransfers,250);
+  assert.equal(plain.trackedSpend,0);
+});
+
+t("22 · the derived row stays VISIBLE but stops allocating",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  // p1 is due 15 Aug, which for `me` (payday 28) is the bucket opening 28 Jul
+  const rows=derivedInstallmentRowsFor(d.installments,d.installmentPayments,"me","2026-07-28",PP);
+  const row=rows.find(r=>r.paymentId==="p1");
+  assert.ok(row,"the row must NOT disappear — the schedule stays readable");
+  assert.equal(row.fundedElsewhere,true);
+  assert.equal(row.fundedCatId,"cShop");
+  assert.equal(row.amount,250,"it still displays what was due");
+  // the exclusion is the caller's, and it is the line that prevents the double
+  const total=rows.reduce((s,r)=>s+(r.fundedElsewhere?0:r.amount),0);
+  assert.equal(total,0,"nothing else falls in this bucket, and the funded row adds nothing");
+  assert.ok(/installmentRows\.reduce\(\(s,r\)=>s\+\(r\.fundedElsewhere\?0:r\.amount\),0\)/.test(html),
+    "installmentTotal must exclude funded rows — this is the double-allocation guard");
+});
+
+t("23 · fundedElsewhere is derived from status, so a reopened payment resets",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  d=applyInstallmentExpenseDelete(d,{expenseId:"e1",now:NOW});
+  const p=d.installmentPayments.find(x=>x.id==="p1");
+  assert.equal(p.status,"upcoming","deleting the money reopens the payment");
+  assert.equal("fundedCatId"in p,false,"the mark goes with the money, or the row allocates nowhere");
+  const rows=derivedInstallmentRowsFor(d.installments,d.installmentPayments,"me","2026-07-28",PP);
+  const row=rows.find(r=>r.paymentId==="p1");
+  assert.equal(row.fundedElsewhere,false);
+  assert.equal(rows.reduce((s,r)=>s+(r.fundedElsewhere?0:r.amount),0),250,
+    "it must re-enter the planned total");
+});
+
+t("23b · restoring re-derives the funding from the expense itself",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  d=applyInstallmentExpenseDelete(d,{expenseId:"e1",now:NOW});
+  d=applyInstallmentExpenseRestore(d,{expenseId:"e1",now:NOW});
+  const p=d.installmentPayments.find(x=>x.id==="p1");
+  assert.equal(p.status,"paid");
+  assert.equal(p.fundedCatId,"cShop","re-derived from the restored row, not from a stash");
+  // an UNfunded payment must not acquire one on restore
+  let u=withPlan(fundedSeed());
+  u=applyInstallmentPayment(u,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",now:NOW,expenseId:"e2"});
+  u=applyInstallmentExpenseDelete(u,{expenseId:"e2",now:NOW});
+  u=applyInstallmentExpenseRestore(u,{expenseId:"e2",now:NOW});
+  assert.equal("fundedCatId"in u.installmentPayments.find(x=>x.id==="p1"),false);
+});
+
+t("24 · an unusable category degrades to a plain transfer rather than being swallowed",()=>{
+  const cases=[
+    ["cHers","the OTHER owner's category — a cross-owner link is the corruption to prevent"],
+    ["cGone","a tombstoned category"],
+    ["nope", "a category that never existed"],
+  ];
+  cases.forEach(([catId,why])=>{
+    let d=withPlan(fundedSeed());
+    d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+      now:NOW,expenseId:"e1",fundedCatId:catId});
+    const e=d.expenses[0];
+    assert.equal(e.catId,"i1",why+": catId falls back to the installment");
+    assert.equal(e.isTransfer,true,why+": it must still record that money moved");
+    assert.equal("fundedCatId"in d.installmentPayments.find(p=>p.id==="p1"),false,why);
+    assert.equal(d.installmentPayments.find(p=>p.id==="p1").status,"paid",
+      why+": the payment is still recorded — degrading must not swallow the transaction");
+  });
+});
+
+t("25 · unlinking leaves an ordinary category expense and reopens the payment",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  d=applyInstallmentUnlink(d,{expenseId:"e1",now:NOW});
+  const e=d.expenses[0];
+  assert.equal(e.catId,"cShop","it becomes a plain Shopping expense — exactly what unlink should leave");
+  assert.equal(e.isTransfer,false);
+  assert.equal("installmentPaymentId"in e,false);
+  const p=d.installmentPayments.find(x=>x.id==="p1");
+  assert.equal(p.status,"upcoming");
+  assert.equal("fundedCatId"in p,false,"reopened means planned again, so it must allocate again");
+});
+
+t("26 · re-recording without a category clears a stale funding mark",()=>{
+  let d=withPlan(fundedSeed());
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",
+    now:NOW,expenseId:"e1",fundedCatId:"cShop"});
+  // the same payment recorded again, this time as an ordinary transfer
+  d=applyInstallmentPayment(d,{paymentId:"p1",actualAmount:250,paidDate:"2026-08-15",now:NOW});
+  assert.equal("fundedCatId"in d.installmentPayments.find(p=>p.id==="p1"),false);
+  assert.equal(d.expenses[0].isTransfer,true);
+  assert.equal(d.expenses[0].catId,"i1");
+  assert.equal(live(d.expenses).length,1,"still exactly one ledger row");
+});
+
+t("27 · the field is absent by default, so migrate stays byte-identical",()=>{
+  const doc=migrate(withPlan({...baseDoc()}));
+  assert.ok(doc.installmentPayments.every(p=>!("fundedCatId"in p)),
+    "absent means unfunded — defaulting it would cost every device a KV write");
+  assert.equal(fingerprint(doc),fingerprint(migrate(clone(doc))));
+  assert.ok(!/fundedCatId/.test(slice("function migrate(d){","/* Bills Reserve = opening baseline")),
+    "migrate() must not default fundedCatId");
+});
+
+t("28 · a funded payment merges across devices intact",()=>{
+  const base=withPlan(fundedSeed());
+  const local={...clone(base),dataUpdatedAt:"2026-08-03T00:00:00.000Z"};
+  const remote={...clone(base),dataUpdatedAt:"2026-08-02T00:00:00.000Z"};
+  const paid=applyInstallmentPayment(local,{paymentId:"p1",actualAmount:250,
+    paidDate:"2026-08-15",now:"2026-08-03T00:00:00.000Z",expenseId:"e1",fundedCatId:"cShop"});
+  const merged=tryAutoMergeAll(paid,remote);
+  assert.ok(merged);
+  const p=merged.installmentPayments.find(x=>x.id==="p1");
+  assert.equal(p.fundedCatId,"cShop");
+  const rows=merged.expenses.filter(e=>e.installmentPaymentId==="p1");
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].isTransfer,false);
+  assert.equal(rows[0].catId,"cShop");
+});
+
 t("the two collections are wired into every persistence site",()=>{
   // cheap source guards — these are the sites a new collection silently misses
   ["installments:[]","installmentPayments:[]"].forEach(s=>

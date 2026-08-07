@@ -757,6 +757,57 @@ bucket, added to the untracked-envelope allocation. The sheet must keep counting
 the **ledger** and must never read payment `status` — reading both is exactly
 how the same payment gets counted twice.
 
+### …except a payment funded from a budget category (v1.30.0)
+
+The rule above holds for every payment that is *planned* as its own Budget line.
+It does not fit the BNPL case that prompted this: with Tabby the first payment is
+a downpayment taken **at purchase**, and the natural thing is to fund it out of an
+envelope that already has room this month (Shopping) and let the remaining
+payments become their own budget line from next month. As a transfer it was
+invisible to that envelope, so "use some of my Shopping budget for it" could not
+be said at all.
+
+An optional `installmentPayments[].fundedCatId` says it. When present the ledger
+row **inverts shape**:
+
+    catId       = the BUDGET CATEGORY, not the installment id
+    isTransfer  = false, so it consumes the envelope and lands in spentMap
+
+Four things make that cheap rather than invasive:
+
+- **Nothing reads `catId` on an installment expense.** Every reader keys on
+  `installmentId`/`installmentPaymentId`. The field was almost dead weight, so
+  repurposing it costs nothing and the links are untouched.
+- **It is the shape v1.28.0 already chose** for untracked-category goal links:
+  `catId` stays the category a person recognises, and the explicit link id is
+  what *means* it.
+- **`unaccountedParts` needed no change again**, for the opposite reason this
+  time — `isTransfer:false` already falls through to `trackedSpend`.
+- **The planned side moves in the same breath.** `derivedInstallmentRowsFor`
+  marks the row `fundedElsewhere` and `installmentTotal` drops it, because that
+  money is now allocated by the envelope's own budget. Counting both is the
+  double-allocation the paragraph above has always been guarding against. The
+  row stays **visible** — greyed, struck through, naming the category — because
+  the schedule should still read complete.
+
+`fundedElsewhere` is derived (`status==="paid" && !!fundedCatId`), never stored,
+so a reopened payment stops being funded with nothing to clean up. The field is
+resolved against live categories **before** the write, exactly as
+`categoryGoalFor` resolves a goal link: a tombstoned category, a category
+belonging to the *other owner*, or an id that never existed all degrade to an
+ordinary transfer rather than being swallowed by a guard inside the writer. The
+payment is still recorded either way — degrading must never lose the transaction.
+
+Deleting or unlinking the ledger row clears `fundedCatId` along with the rest of
+the paid state: a reopened payment is planned again, and leaving the mark would
+keep it out of the planned total while nothing funds it. Restore re-derives it
+from the restored expense (`!isTransfer && catId`) rather than from a stashed
+copy, so there is no second record to fall out of step.
+
+`fundedCatId` is **deliberately not defaulted in `migrate()`** — absent means
+unfunded, the same reasoning as `goalId` and `ord`. Defaulting it would rewrite
+every existing payment row and cost every device a KV write on first open.
+
 ### Deleting a plan must not delete money that moved
 
 `applyInstallmentDelete` tombstones the plan and its **unpaid** payments

@@ -1464,9 +1464,12 @@ function installmentRowId(paymentId){return"inst:"+paymentId;}
 
 /* Provider registry. `iconKey` names an entry in `I` — no remote logos, no
    scraped branding. "other" carries a free-text customProviderName. */
+/* `bnpl` means the first payment falls due AT PURCHASE, not a month later — the
+   Tabby/Tamara downpayment. It only ever seeds a default in the create sheet;
+   nothing downstream branches on it, so adding a provider here is safe. */
 const INSTALLMENT_PROVIDERS=[
-  {key:"tabby",  label:"Tabby",       iconKey:"Layers",  color:"#5BC0A8"},
-  {key:"tamara", label:"Tamara",      iconKey:"Layers",  color:"#C98BB9"},
+  {key:"tabby",  label:"Tabby",       iconKey:"Layers",  color:"#5BC0A8", bnpl:true},
+  {key:"tamara", label:"Tamara",      iconKey:"Layers",  color:"#C98BB9", bnpl:true},
   {key:"amazon", label:"Amazon",      iconKey:"Package", color:"#E0913A"},
   {key:"card",   label:"Credit card", iconKey:"Card",    color:"#6E8FD0"},
   {key:"other",  label:"Other",       iconKey:"Receipt", color:"#8C93A8"},
@@ -1626,6 +1629,13 @@ function derivedInstallmentRowsFor(insts,pays,owner,bucketKey,payPeriods){
         name:inst.name||"Installment",provider:inst.provider,
         providerLabel:installmentProviderLabel(inst),
         color:installmentProvider(inst.provider).color,
+        /* Derived, never stored — a reopened payment stops being funded the
+           moment its status changes, with nothing to clean up. The row keeps
+           its scheduled `amount` so it still DISPLAYS what was due; it is
+           installmentTotal that drops it, because an envelope is already
+           allocating that money. */
+        fundedCatId:p.fundedCatId||null,
+        fundedElsewhere:p.status==="paid"&&!!p.fundedCatId,
         sequence:p.sequence,dueDate:p.dueDate,
         /* the PLANNED figure is always the scheduled amount — a payment that
            came out a riyal different is an actuals fact and must not rewrite
@@ -1714,7 +1724,43 @@ function applyInstallmentUpdate(d,{installmentId,patch,rows,ids,now}){
    merge. The row is an ordinary isTransfer expense — the same shape a goal
    contribution uses (catId = the thing it funds), so the unaccounted sheet
    classifies it as Transfers out with no arithmetic change. */
-function applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,now,expenseId}){
+/* Is `catId` still a live category belonging to THIS owner?
+
+   Owner-scoped on purpose: funding one person's installment out of the other
+   person's envelope would split a linked chain across owners, which is the
+   corruption this module exists to prevent.
+
+   Deliberately not month-scoped. A plan chain materialises lazily and a category
+   is inherited by every month after the one that introduced it, so "does this
+   person have this category" is the question that stays true regardless of which
+   bucket the money landed in. Scoping it to the paid month would reject a
+   perfectly good category merely because that month hadn't been edited yet. */
+function installmentFundingCategoryExists(d,owner,catId){
+  if(!catId)return false;
+  return(d&&d.plans||[]).some(pl=>pl&&!pl.deletedAt&&(pl.owner||"me")===owner
+    &&(pl.categories||[]).some(c=>c&&c.id===catId&&!c.deletedAt));
+}
+
+/* `fundedCatId` (optional) says this payment came out of an ordinary budget
+   envelope rather than being planned as its own Budget line — the Tabby
+   downpayment paid out of this month's Shopping. When it is set the ledger row
+   inverts shape:
+
+     catId       = the BUDGET CATEGORY, not the installment id
+     isTransfer  = false, so it consumes the envelope and lands in `spentMap`
+
+   That inversion is safe because NOTHING reads `catId` on an installment
+   expense — every reader keys on installmentId/installmentPaymentId — and it is
+   the same shape v1.28.0 chose for untracked-category goal links: `catId` stays
+   the category a person recognises, and the explicit link id is what MEANS it.
+   `unaccountedParts` needs no change either; `isTransfer:false` already falls
+   through to tracked spending.
+
+   The planned side must move with it: `derivedInstallmentRowsFor` marks the row
+   `fundedElsewhere` and `installmentTotal` drops it, because that money is now
+   allocated by the envelope's own budget. Counting both is the double-allocation
+   the comment above `unaccountedParts` has always been guarding against. */
+function applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,now,expenseId,fundedCatId}){
   const p=(d.installmentPayments||[]).find(x=>x.id===paymentId&&!x.deletedAt);
   if(!p)return d;
   const inst=(d.installments||[]).find(x=>x.id===p.installmentId&&!x.deletedAt);
@@ -1722,17 +1768,27 @@ function applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,no
   const amt=Number(actualAmount!=null?actualAmount:p.scheduledAmount)||0;
   const date=paidDate||todayISO();
   const owner=p.owner||inst.owner||"me";
+  /* Resolved against LIVE categories before the write, the same way
+     categoryGoalFor resolves a goal link: a category that has since been
+     tombstoned degrades to an ordinary transfer rather than writing an expense
+     filed under something no envelope will ever show. */
+  const funded=fundedCatId&&installmentFundingCategoryExists(d,owner,fundedCatId)?fundedCatId:null;
   const prior=p.expenseId?(d.expenses||[]).find(e=>e.id===p.expenseId):null;
   const exId=prior?prior.id:expenseId;
   const expenses=prior
     ?(d.expenses||[]).map(e=>e.id===exId
-      ?{...e,amount:amt,date,name:name||e.name,note:note!=null?note:e.note,deletedAt:null,updatedAt:now}:e)
-    :[...(d.expenses||[]),{id:exId,catId:inst.id,
+      ?{...e,amount:amt,date,name:name||e.name,note:note!=null?note:e.note,
+        catId:funded||inst.id,isTransfer:!funded,deletedAt:null,updatedAt:now}:e)
+    :[...(d.expenses||[]),{id:exId,catId:funded||inst.id,
         name:name||`${inst.name||"Installment"} #${p.sequence}`,note:note||"",
-        amount:amt,date,owner,isTransfer:true,isExtraFunds:false,
+        amount:amt,date,owner,isTransfer:!funded,isExtraFunds:false,
         installmentId:inst.id,installmentPaymentId:p.id,createdAt:now,updatedAt:now}];
-  const payments=(d.installmentPayments||[]).map(x=>x.id===paymentId
-    ?{...x,status:"paid",actualAmount:amt,paidDate:date,expenseId:exId,owner,updatedAt:now}:x);
+  const payments=(d.installmentPayments||[]).map(x=>{
+    if(x.id!==paymentId)return x;
+    const n={...x,status:"paid",actualAmount:amt,paidDate:date,expenseId:exId,owner,updatedAt:now};
+    if(funded)n.fundedCatId=funded;else delete n.fundedCatId;
+    return n;
+  });
   return{...d,expenses,installmentPayments:payments};
 }
 
@@ -1768,7 +1824,12 @@ function applyInstallmentExpenseDelete(d,{expenseId,now}){
     const payments=(d.installmentPayments||[]).map(p=>{
       if(p.id!==e.installmentPaymentId)return p;
       const n={...p,status:"upcoming",updatedAt:now};
-      delete n.actualAmount;delete n.paidDate;delete n.expenseId;
+      /* fundedCatId goes with the money. A reopened payment is planned again,
+         so leaving the mark would keep it out of the planned total while
+         nothing funds it — the row would silently allocate nowhere. The
+         deleted expense still carries catId, which is what lets restore
+         re-derive it without stashing a copy. */
+      delete n.actualAmount;delete n.paidDate;delete n.expenseId;delete n.fundedCatId;
       return n;
     });
     return{...d,expenses,installmentPayments:payments};
@@ -1799,8 +1860,18 @@ function applyInstallmentExpenseRestore(d,{expenseId,now}){
   const expenses=(d.expenses||[]).map(x=>x.id===expenseId?{...x,deletedAt:null,updatedAt:now}:x);
   if(!e)return{...d,expenses};
   if(e.installmentPaymentId){
-    const payments=(d.installmentPayments||[]).map(p=>p.id===e.installmentPaymentId
-      ?{...p,status:"paid",actualAmount:Number(e.amount)||0,paidDate:e.date,expenseId:e.id,updatedAt:now}:p);
+    /* Re-derived from the restored row rather than stashed: a non-transfer
+       installment expense is BY DEFINITION funded from its catId, so the
+       expense is its own record of where the money came from and there is no
+       second copy to fall out of step. */
+    const refunded=(!e.isTransfer&&e.catId)?e.catId:null;
+    const payments=(d.installmentPayments||[]).map(p=>{
+      if(p.id!==e.installmentPaymentId)return p;
+      const n={...p,status:"paid",actualAmount:Number(e.amount)||0,paidDate:e.date,
+        expenseId:e.id,updatedAt:now};
+      if(refunded)n.fundedCatId=refunded;else delete n.fundedCatId;
+      return n;
+    });
     return{...d,expenses,installmentPayments:payments};
   }
   if(e.installmentPayoff){
@@ -1889,7 +1960,11 @@ function applyInstallmentUnlink(d,{expenseId,now}){
   const payments=(d.installmentPayments||[]).map(p=>{
     if(p.id!==e.installmentPaymentId)return p;
     const n={...p,status:"upcoming",updatedAt:now};
-    delete n.actualAmount;delete n.paidDate;delete n.expenseId;
+    /* Same reasoning as the delete path: the payment is planned again, so it
+       must re-enter the planned total. The expense keeps its catId and
+       isTransfer:false and simply becomes an ordinary category expense, which
+       is exactly what unlinking should leave behind. */
+    delete n.actualAmount;delete n.paidDate;delete n.expenseId;delete n.fundedCatId;
     return n;
   });
   return{...d,expenses,installmentPayments:payments};
@@ -2136,8 +2211,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.29.1";
-const BUILD_ID="2026.08.07.0002";
+const APP_VERSION="1.30.0";
+const BUILD_ID="2026.08.07.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -5683,6 +5758,18 @@ function App(){
     resolvePlanForMonth(monthlyPlans,mo,owner,activePlanId,plans);
   const planForMonth=(mo,owner=budgetOwner)=>planSourceForMonth(mo,owner).plan;
 
+  /* Categories an installment payment may be funded out of. A function of the
+     DATE the money moved, not of "now": the payment sheet lets you back-date,
+     and the envelope it comes from must be the one that bucket actually had.
+     Owner-scoped by construction — it only ever reads that owner's plan chain,
+     which is what stops a payment being funded from the other person's budget. */
+  const fundingCategoriesFor=(dateISO,owner=budgetOwner)=>{
+    const pl=planForMonth(bucketKeyFor(dateISO||todayISO(),data.payPeriods,owner),owner);
+    const groupName=new Map(((pl&&pl.groups)||[]).map(g=>[g.id,g.name||""]));
+    return((pl&&pl.categories)||[]).filter(c=>c&&!c.deletedAt)
+      .map(c=>({id:c.id,name:c.name||"Untitled",groupName:groupName.get(c.groupId)||""}));
+  };
+
   const assignPlanToMonth=(mo,planId,owner=budgetOwner)=>setData(d=>({
     ...d,
     monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId,updatedAt:new Date().toISOString()}]
@@ -6133,8 +6220,8 @@ function App(){
       ids:(rows||[]).filter(r=>!r.id).map(()=>uid()),now:nowStamp()}));
     pushImportantRef.current();
   };
-  const recordInstallmentPayment=(paymentId,{actualAmount,paidDate,name,note}={})=>{
-    setData(d=>applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,
+  const recordInstallmentPayment=(paymentId,{actualAmount,paidDate,name,note,fundedCatId}={})=>{
+    setData(d=>applyInstallmentPayment(d,{paymentId,actualAmount,paidDate,name,note,fundedCatId,
       now:nowStamp(),expenseId:uid()}));
     pushImportantRef.current();
   };
@@ -6741,7 +6828,7 @@ function App(){
             addInstallment,updateInstallment,recordInstallmentPayment,payOffInstallmentEarly,
             cancelInstallment,removeInstallment,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
-            payPeriods:data.payPeriods,focus:installmentFocus}}/>}
+            payPeriods:data.payPeriods,focus:installmentFocus,fundingCategoriesFor}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -8221,7 +8308,13 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
   const installmentRows=useMemo(()=>derivedInstallmentRowsFor(
     installments,installmentPayments,budgetOwner,viewMonth,payPeriods),
     [installments,installmentPayments,budgetOwner,viewMonth,payPeriods]);
-  const installmentTotal=installmentRows.reduce((s,r)=>s+r.amount,0);
+  /* Funded rows are excluded, not hidden. Their money is allocated by the
+     envelope they came out of, so counting them here as well would reserve the
+     same riyal twice in one month — and this figure feeds the untracked-envelope
+     allocation the unaccounted sheet reconciles against, so the double would
+     show up as a plan that never balances. The row itself stays visible in the
+     group below, greyed, saying where it went. */
+  const installmentTotal=installmentRows.reduce((s,r)=>s+(r.fundedElsewhere?0:r.amount),0);
 
   /* month-scoped totals */
   const income=Number(monthPlan.income)||0;
@@ -8692,34 +8785,48 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
             </div>
             <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(installmentTotal)}</span>
           </div>
-          {installmentRows.map(r=>(
+          {installmentRows.map(r=>{
+            /* A funded row still shows what was due — it just stops claiming a
+               share of this month's income, because the envelope it came out of
+               is already claiming it. Greying the figure rather than removing
+               the row is what keeps the schedule readable. */
+            const fundedName=r.fundedElsewhere
+              ?((monthPlan.categories||[]).find(c=>c.id===r.fundedCatId)||{}).name||"another category"
+              :null;
+            return(
             <button key={r.id} onClick={()=>onOpenInstallment&&onOpenInstallment(r.installmentId)}
               aria-label={`Open ${r.name} installment`}
               style={{display:"flex",alignItems:"center",gap:10,width:"100%",minHeight:48,
                 padding:"8px 12px",background:"transparent",border:"none",textAlign:"left",
                 borderBottom:"1px solid rgba(0,0,0,.06)"}}>
               <span style={{width:10,height:10,borderRadius:999,flexShrink:0,
-                background:r.color}}/>
+                background:r.color,opacity:fundedName?.4:1}}/>
               <span style={{flex:1,minWidth:0}}>
-                <span style={{display:"block",fontSize:14,color:P.neuInk,overflow:"hidden",
-                  textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                <span style={{display:"block",fontSize:14,color:fundedName?P.neuSub:P.neuInk,
+                  overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                   {r.providerLabel} – {r.name}
                 </span>
                 <span style={{display:"block",fontSize:11,color:P.faint}}>
                   Payment #{r.sequence} · due {instShortDate(r.dueDate)}
                   {r.status==="paid"?" · paid":""}
                 </span>
+                {fundedName&&(
+                  <span style={{display:"block",fontSize:11,color:P.br}}>
+                    Funded from {fundedName} — not allocated here
+                  </span>)}
               </span>
               <span className="tnum" style={{fontSize:12,color:P.neuSub,width:44,textAlign:"right",opacity:.75}}>
-                {pct(r.amount).toFixed(2)}%
+                {fundedName?"—":`${pct(r.amount).toFixed(2)}%`}
               </span>
               <span style={{fontSize:11,color:P.neuSub}}>{cur}</span>
-              <span className="tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}>
+              <span className="tnum" style={{width:84,textAlign:"right",fontSize:14,fontWeight:600,
+                color:fundedName?P.faint:P.neuInk,textDecoration:fundedName?"line-through":"none"}}>
                 {r.amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
               </span>
               <I.Chevron size={13} style={{color:P.faint,transform:"rotate(-90deg)",flexShrink:0}}/>
             </button>
-          ))}
+            );
+          })}
           <div style={{padding:"8px 12px",fontSize:11,color:P.faint}}>
             From your installment schedules — edit them in the Installments tab.
           </div>
@@ -9183,14 +9290,23 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      — the reason this figure never made sense. Classified off the raw rows,
      not off totalSpent, which drops zero-budget categories at `envelopes`.
 
-     Installment payments and early payoffs are isTransfer with catId = the
-     installment id, so they land in `untrackedTransfers` — "Transfers out" —
-     and are never isExtraFunds. That's the intended classification: the money
-     genuinely leaves, and the planned side of it lives in Budget's derived
-     Installments group. When the plan-vs-actual annotation is built, the
-     planned figure for this line is derivedInstallmentRowsFor(...) summed for
-     the viewed bucket, added to the untracked-envelope allocation. This sheet
-     must keep counting the LEDGER and must never read payment status, or a
+     Early payoffs, and installment payments that were NOT funded from a
+     category, are isTransfer with catId = the installment id, so they land in
+     `untrackedTransfers` — "Transfers out" — and are never isExtraFunds. That's
+     the intended classification: the money genuinely leaves, and the planned
+     side of it lives in Budget's derived Installments group. When the
+     plan-vs-actual annotation is built, the planned figure for this line is
+     derivedInstallmentRowsFor(...) summed for the viewed bucket, added to the
+     untracked-envelope allocation.
+
+     A payment carrying `fundedCatId` is the exception and needs no code here:
+     it is written isTransfer:false against a real category, so it falls through
+     to `trackedSpend` and consumes that envelope exactly like any other expense.
+     Its planned side leaves `installmentTotal` in the same breath, so the two
+     halves move together and neither line double-counts. Adding a branch for it
+     below is how that would break.
+
+     This sheet must keep counting the LEDGER and must never read payment status, or a
      payment recorded here would be counted twice. */
   const totalIncome=Number(monthPlan.income)||0;
   const unaccountedParts=useMemo(()=>{
@@ -9467,6 +9583,19 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     const goal=!env&&!inst?(goals||[]).find(g=>g.id===tx.catId):null;
     const dotColor=env?.color||(inst?installmentProvider(inst.provider).color:goal?GOALS_GROUP_COLOR:P.faint);
     const subLabel=env?env.name:inst?`${installmentProviderLabel(inst)} – ${inst.name}`:goal?goal.name:"";
+    /* A category-funded installment payment resolves as an ordinary envelope
+       row above (catId IS the category), which is right — but it can be paying
+       for a month other than the one it sits in, and nothing else on the row
+       would say so. Derived at render, never stored, for the same reason
+       "overdue" is: the answer changes with the schedule, not with a flag. */
+    const linkedPay=tx.installmentPaymentId
+      ?(installmentPayments||[]).find(p=>p.id===tx.installmentPaymentId):null;
+    const coversBucket=(env&&linkedPay&&linkedPay.dueDate&&tx.date
+      &&bucketKeyFor(linkedPay.dueDate,payPeriods,tx.owner||budgetOwner)
+        !==bucketKeyFor(tx.date,payPeriods,tx.owner||budgetOwner))
+      ?bucketLabel(bucketKeyFor(linkedPay.dueDate,payPeriods,tx.owner||budgetOwner),
+          payPeriods,tx.owner||budgetOwner)
+      :null;
     return(
       <div key={tx.id} className="tx-row"
         style={{borderBottom:idx<total-1?"1px solid rgba(0,0,0,.06)":"none"}}>
@@ -9482,9 +9611,10 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
           </div>
           {/* Under a day sub-header the date is repeated noise, and with it
               gone the line can be empty — don't render an empty 11px strip. */}
-          {(showDate||subLabel||tx.note)&&
+          {(showDate||subLabel||tx.note||coversBucket)&&
             <div style={{fontSize:11,color:P.neuSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-              {[showDate?tx.date:"",subLabel,tx.note].filter(Boolean).join(" · ")}
+              {[showDate?tx.date:"",subLabel,
+                coversBucket?`covers ${coversBucket}`:"",tx.note].filter(Boolean).join(" · ")}
             </div>}
         </div>
         <span className="tnum tx-row-amount" style={{fontSize:14,fontWeight:600,color:tx.isExtraFunds?P.jade:P.neuInk,flexShrink:0}}>{tx.isExtraFunds?"+":""}{fmt(tx.amount)}</span>
@@ -12934,9 +13064,23 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
     includeInBudget:initial?initial.includeInBudget!==false:true,
     notes:(initial&&initial.notes)||"",
   }));
-  const set=patch=>setF(x=>({...x,...patch}));
+  /* A BNPL plan's first payment is a downpayment taken AT purchase, so
+     defaulting it a month out made the common case wrong and needed correcting
+     by hand every time. Only a default: `dueTouched` stops it moving under
+     someone who has already set a date. */
+  const[dueTouched,setDueTouched]=useState(false);
+  const defaultFirstDue=key=>installmentProvider(key).bnpl?todayISO():addMonthsISO(todayISO(),1);
+  const set=patch=>setF(x=>{
+    const next={...x,...patch};
+    if(patch.provider&&patch.provider!==x.provider&&!dueTouched&&!editing){
+      const d=defaultFirstDue(patch.provider);
+      setHandEdited(false);setFirstDue(d);
+    }
+    return next;
+  });
   const[firstDue,setFirstDue]=useState(()=>
-    editing?((payments[0]&&payments[0].dueDate)||todayISO()):addMonthsISO(todayISO(),1));
+    editing?((payments[0]&&payments[0].dueDate)||todayISO()):defaultFirstDue(
+      (initial&&initial.provider)||"tabby"));
   const[count,setCount]=useState(()=>editing?payments.length:4);
   const[rows,setRows]=useState(()=>editing
     ?payments.map(p=>({id:p.id,sequence:p.sequence,dueDate:p.dueDate,
@@ -12979,8 +13123,30 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
       scheduledAmount:Number(r.scheduledAmount)||0}))});
   };
   const lab={fontSize:12,color:P.sub,marginBottom:4};
-  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,
-    background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  /* Three separate reasons the two-up rows were misaligned, all of them about
+     <input type="date"> not being an ordinary text box:
+
+       fontFamily  — a bare date input renders in the UA's font while NumField
+                     carries `tnum`, so the pair came out different heights.
+       height      — even with the font matched it still measures ~2px taller,
+                     because its shadow-DOM `-webkit-datetime-edit` contributes
+                     content height that no padding or line-height reaches. An
+                     explicit height is the only thing that actually equalises
+                     them; measured in Chrome, both land on 38 exactly.
+       appearance  — Safari gives that shadow tree a min-content width which
+                     ignores `width:100%`, so it spills over the field beside
+                     it. Killing the native appearance and allowing the box to
+                     shrink is what stops the overlap.
+
+     Height lives here rather than on the schedule rows below, which reuse `box`
+     at a smaller size and set their own. */
+  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
+    height:38,background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  const dateBox={...box,minWidth:0,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"};
+  /* Wrap rather than collide: the Provider row above already does this, and these
+     two rows were the ones that didn't. */
+  const twoUp={display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"};
+  const cell={flex:"1 1 150px",minWidth:0};
   return(
     <Portal>
     <div className="sheet-bg" onClick={onClose}>
@@ -13022,12 +13188,12 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
             </div>)}
         </div>
 
-        <div style={{display:"flex",gap:10,marginBottom:12}}>
-          <div style={{flex:1,minWidth:0}}>
+        <div style={twoUp}>
+          <div style={cell}>
             <div style={lab}>Purchase date</div>
-            <input type="date" value={f.purchaseDate} onChange={e=>set({purchaseDate:e.target.value})} style={box}/>
+            <input type="date" value={f.purchaseDate} onChange={e=>set({purchaseDate:e.target.value})} style={dateBox}/>
           </div>
-          <div style={{flex:1,minWidth:0}}>
+          <div style={cell}>
             <div style={lab}>Total amount</div>
             <NumField value={f.originalAmount} onCommit={v=>set({originalAmount:v})}
               allowEmpty min={0} live className="tnum" style={box}/>
@@ -13035,12 +13201,14 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
         </div>
 
         {!editing&&(
-          <div style={{display:"flex",gap:10,marginBottom:12}}>
-            <div style={{flex:1,minWidth:0}}>
+          <div style={twoUp}>
+            <div style={cell}>
               <div style={lab}>First payment due</div>
-              <input type="date" value={firstDue} onChange={e=>{setHandEdited(false);setFirstDue(e.target.value);}} style={box}/>
+              <input type="date" value={firstDue}
+                onChange={e=>{setDueTouched(true);setHandEdited(false);setFirstDue(e.target.value);}}
+                style={dateBox}/>
             </div>
-            <div style={{flex:1,minWidth:0}}>
+            <div style={cell}>
               <div style={lab}>Number of payments</div>
               <NumField value={count} onCommit={v=>{setHandEdited(false);setCount(v);}}
                 integer min={1} max={60} live className="tnum" style={box}/>
@@ -13088,13 +13256,13 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
                   <input type="date" value={r.dueDate||""} disabled={paid||cancelled}
                     onChange={e=>setRow(i,{dueDate:e.target.value})}
                     aria-label={`Due date for payment ${i+1}`}
-                    style={{...box,flex:"1 1 120px",minWidth:0,padding:"6px 8px",fontSize:13}}/>
+                    style={{...dateBox,flex:"1 1 100px",padding:"6px 8px",fontSize:13,height:32}}/>
                   {paid||cancelled
                     ?<span className="tnum" style={{width:88,textAlign:"right",fontSize:13,
                         fontWeight:600,color:P.neuSub}}>{fmt(Number(r.scheduledAmount)||0)}</span>
                     :<NumField value={r.scheduledAmount} onCommit={v=>setRow(i,{scheduledAmount:v})}
                        min={0} live className="tnum" aria-label={`Amount for payment ${i+1}`}
-                       style={{...box,width:88,flexShrink:0,padding:"6px 8px",fontSize:13,textAlign:"right"}}/>}
+                       style={{...box,width:88,flexShrink:0,padding:"6px 8px",fontSize:13,height:32,textAlign:"right"}}/>}
                   {paid
                     ?<span style={{fontSize:9,fontWeight:700,color:P.gr,background:P.sfA,
                         borderRadius:999,padding:"2px 6px",flexShrink:0}}>PAID</span>
@@ -13141,15 +13309,44 @@ function InstallmentEditSheet({initial,payments,owner,ownerLabel,cur,fmt,onClose
    figure. A few halalas of difference never redistributes the rest of the
    schedule — if a provider genuinely changes the remaining amounts, that's an
    explicit schedule edit, not something inferred from one payment. ────────── */
-function InstallmentPaymentSheet({inst,payment,fmt,cur,onClose,onConfirm}){
+function InstallmentPaymentSheet({inst,payment,fmt,cur,payPeriods,fundingCategoriesFor,onClose,onConfirm}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
   const[amount,setAmount]=useState(payment.scheduledAmount);
   const[date,setDate]=useState(payment.paidDate||todayISO());
+  const[fundedCatId,setFundedCatId]=useState(payment.fundedCatId||"");
   const diff=roundTo((Number(amount)||0)-(Number(payment.scheduledAmount)||0),2);
+  /* Re-read on every date change: back-dating the payment can move it into a
+     bucket whose plan has a different set of categories, and offering one that
+     bucket never had is how you end up funding from an envelope that doesn't
+     exist there. */
+  const cats=useMemo(()=>(fundingCategoriesFor?fundingCategoriesFor(date):[]),[fundingCategoriesFor,date]);
+  /* The chosen category can fall out from under the picker when the date moves.
+     Dropping the selection is the honest response — silently keeping an id the
+     new bucket doesn't have would be resolved away at write time anyway, and the
+     person would never be told their choice was ignored. */
+  useEffect(()=>{
+    if(fundedCatId&&!cats.some(c=>c.id===fundedCatId))setFundedCatId("");
+  },[cats,fundedCatId]);
+  /* The paid month and the due month can differ — paying a September instalment
+     out of August's Shopping. The derived Budget row is marked in the month it
+     is DUE, so this sheet says so plainly rather than letting the allocation
+     quietly vanish from a month the person isn't looking at. */
+  const owner=payment.owner||inst.owner||"me";
+  const dueBucket=payPeriods&&payment.dueDate?bucketKeyFor(payment.dueDate,payPeriods,owner):null;
+  const paidBucket=payPeriods&&date?bucketKeyFor(date,payPeriods,owner):null;
+  const crossBucket=!!(fundedCatId&&dueBucket&&paidBucket&&dueBucket!==paidBucket);
+  const grouped=useMemo(()=>{
+    const m=new Map();
+    cats.forEach(c=>{const k=c.groupName||"Other";if(!m.has(k))m.set(k,[]);m.get(k).push(c);});
+    return[...m.entries()];
+  },[cats]);
   const lab={fontSize:12,color:P.sub,marginBottom:4};
-  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,
-    background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  /* Same three date-input corrections as InstallmentEditSheet — this sheet has
+     the identical Amount / Payment date pair and drifted the same way. */
+  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
+    height:38,background:"rgba(0,0,0,.05)",border:"none",color:P.ink};
+  const dateBox={...box,minWidth:0,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"};
   return(
     <Portal>
     <div className="sheet-bg" onClick={onClose}>
@@ -13168,29 +13365,50 @@ function InstallmentPaymentSheet({inst,payment,fmt,cur,onClose,onConfirm}){
             scheduled <span className="tnum">{fmt(payment.scheduledAmount)}</span>
           </div>
         </div>
-        <div style={{display:"flex",gap:10,marginBottom:12}}>
-          <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+          <div style={{flex:"1 1 140px",minWidth:0}}>
             <div style={lab}>Amount paid ({cur})</div>
             <NumField value={amount} onCommit={setAmount} min={0} live className="tnum" style={box}/>
           </div>
-          <div style={{flex:1,minWidth:0}}>
+          <div style={{flex:"1 1 140px",minWidth:0}}>
             <div style={lab}>Payment date</div>
-            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={box}/>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={dateBox}/>
           </div>
         </div>
+        {cats.length>0&&(
+          <div style={{marginBottom:12}}>
+            <div style={lab}>Pay from a budget category (optional)</div>
+            <select value={fundedCatId} onChange={e=>setFundedCatId(e.target.value)} style={box}>
+              <option value="">Don't take it from a category</option>
+              {grouped.map(([g,list])=>(
+                <optgroup key={g} label={g}>
+                  {list.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>)}
         {Math.abs(diff)>INSTALLMENT_ROUND_TOL&&
           <div style={{fontSize:12,color:P.sub,marginBottom:12}}>
             {diff>0?"+":""}<span className="tnum">{fmt(diff)}</span> against the scheduled amount.
             The remaining payments are left exactly as they are — edit the schedule if the
             provider changed them.
           </div>}
+        {crossBucket&&
+          <div style={{fontSize:12,color:P.br,marginBottom:12}}>
+            You're paying this out of {bucketLabel(paidBucket,payPeriods,owner)}, but it's due in{" "}
+            {bucketLabel(dueBucket,payPeriods,owner)} — that's the month whose Installments
+            row stops being allocated.
+          </div>}
         <div style={{fontSize:11,color:P.faint,marginBottom:14}}>
-          This creates one transfer in Expenses, linked to this payment.
+          {fundedCatId
+            ?"This spends from that category, so its envelope goes down and this payment stops taking a share of the month it's due."
+            :"This creates one transfer in Expenses, linked to this payment."}
         </div>
         {(()=>{
           const ok=(Number(amount)||0)>0&&!!date;
           return(
-            <button onClick={()=>{if(ok)onConfirm({actualAmount:Number(amount)||0,paidDate:date});}}
+            <button onClick={()=>{if(ok)onConfirm({actualAmount:Number(amount)||0,paidDate:date,
+              fundedCatId:fundedCatId||null});}}
               disabled={!ok}
               style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
                 background:ok?P.jade:P.sfA,color:ok?"#fff":P.faint,border:"none"}}>
@@ -13412,7 +13630,7 @@ function InstallmentCard({inst,pays,fmt,today,highlight,onRecord,onPayoff,onSche
 
 function InstallmentsView({installments,installmentPayments,addInstallment,updateInstallment,
   recordInstallmentPayment,payOffInstallmentEarly,cancelInstallment,removeInstallment,
-  fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,focus}){
+  fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,focus,fundingCategoriesFor}){
   const today=todayISO();
   const bucket=bucketNow(payPeriods,budgetOwner);
   const mine=useMemo(()=>installmentsForOwner(installments,budgetOwner),[installments,budgetOwner]);
@@ -13466,7 +13684,14 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
 
   const editing=sheet&&sheet.mode==="edit"?mine.find(x=>x.id===sheet.id):null;
   const payInst=paySheet?mine.find(x=>x.id===paySheet.installmentId):null;
-  const payRow=paySheet?(paysOf[paySheet.installmentId]||[]).find(p=>p.id===paySheet.paymentId):null;
+  /* Resolvable by SEQUENCE as well as by id, because the offer to record
+     payment #1 straight after creating a plan happens before the caller has
+     seen the ids applyInstallmentCreate minted. */
+  const payRow=paySheet
+    ?(paysOf[paySheet.installmentId]||[]).find(p=>paySheet.paymentId
+        ?p.id===paySheet.paymentId
+        :(p.sequence===paySheet.sequence&&installmentPaymentIsOpen(p)))
+    :null;
   const payoffInst=payoffId?mine.find(x=>x.id===payoffId):null;
   const schedInst=scheduleId?mine.find(x=>x.id===scheduleId):null;
 
@@ -13568,16 +13793,25 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
           cur={cur} fmt={fmt}
           onClose={()=>setSheet(null)}
           onSave={({plan,rows})=>{
-            if(editing)updateInstallment(editing.id,plan,rows);
-            else addInstallment(plan,rows);
+            if(editing){updateInstallment(editing.id,plan,rows);setSheet(null);return;}
+            const newId=addInstallment(plan,rows);
             setSheet(null);
+            /* A plan whose first payment is already due is the BNPL downpayment
+               case — offer to record it now rather than making the person hunt
+               for it. Deliberately opens the ORDINARY payment sheet: there is
+               exactly one way money reaches a payment, and a create-and-pay
+               shortcut would quietly become a second one. */
+            const first=rows[0];
+            if(first&&first.dueDate&&String(first.dueDate)<=todayISO())
+              setPaySheet({installmentId:newId,sequence:1});
           }}/>}
 
       {payInst&&payRow&&
         <InstallmentPaymentSheet inst={payInst} payment={payRow} fmt={fmt} cur={cur}
+          payPeriods={payPeriods} fundingCategoriesFor={fundingCategoriesFor}
           onClose={()=>setPaySheet(null)}
-          onConfirm={({actualAmount,paidDate})=>{
-            recordInstallmentPayment(payRow.id,{actualAmount,paidDate});
+          onConfirm={({actualAmount,paidDate,fundedCatId})=>{
+            recordInstallmentPayment(payRow.id,{actualAmount,paidDate,fundedCatId});
             setPaySheet(null);
           }}/>}
 
