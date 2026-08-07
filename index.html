@@ -2315,6 +2315,49 @@ function applyGoalContributionRestoreByContribution(d,{goalId,contributionId,now
     expenses:(d.expenses||[]).map(x=>x.id===c.expenseId?{...x,deletedAt:null,updatedAt:now}:x)};
 }
 
+/* ── Goal deadlines ───────────────────────────────────────────────────────
+   A target and a monthly figure can say "~16 months at this pace". Only a
+   deadline can say "you will miss this", which is the question somebody
+   saving for a dated purchase is actually asking.
+
+   Pure, module scope, takes `todayStr` — the same rules the rest of the
+   derived layer follows, so goaltest.cjs runs the shipped function rather
+   than a copy, and a projection can't move at midnight.
+
+   Three choices worth keeping:
+
+   • Returns null when there is no deadline. Absence is the normal case, not
+     an incomplete record, so the Goals tab keeps showing exactly the pace line
+     it always showed and no card has to special-case an empty state.
+   • `onTrack` compares the goal's STATED `monthly` against what the deadline
+     demands — never against recent actual contributions. Plan-based, with
+     actuals only ever a warning: one month you happened to skip is not
+     evidence the plan is wrong, and quietly re-deriving the plan from
+     behaviour is how a budget stops being a decision. Same rule the Purchase
+     Advisor's projections follow.
+   • Months are WHOLE months remaining, via the existing completedMonths, which
+     rounds the requirement UP rather than down — with three and a half months
+     left you are asked for the three-month figure. A deadline is a commitment;
+     flattering it with a part-month helps nobody. */
+function goalDeadlineStatus(goal,todayStr){
+  if(!goal||!goal.deadline)return null;
+  const today=String(todayStr||"");
+  const target=Number(goal.target)||0;
+  const saved=(goal.contributions||[]).filter(c=>c&&!c.deletedAt)
+    .reduce((s,c)=>s+(Number(c.amount)||0),0);
+  const remain=Math.max(0,target-saved);
+  const done=remain<=0;
+  /* Reached counts as reached: a goal you finished early is not "overdue"
+     just because its date has since passed. */
+  const overdue=!done&&String(goal.deadline)<today;
+  const monthsLeft=overdue?0:completedMonths(today,goal.deadline);
+  const requiredMonthly=done?0:(monthsLeft>0?remain/monthsLeft:remain);
+  const monthly=Number(goal.monthly)||0;
+  return{deadline:String(goal.deadline),target,saved,remain,done,overdue,
+    monthsLeft,requiredMonthly,monthly,
+    onTrack:done||(!overdue&&monthly>=requiredMonthly)};
+}
+
 /* Tracked-spending rollup for one owner, for their CURRENT bucket (calendar
    month, or pay-period when that owner has pay-periods enabled).
 
@@ -2445,13 +2488,20 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.31.0";
-const BUILD_ID="2026.08.07.0004";
+const APP_VERSION="1.32.0";
+const BUILD_ID="2026.08.07.0005";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
 const PROXY_URL="https://alloc-kv.jastinefodra21.workers.dev";
 // e.g. "https://allocation-proxy.yourname.workers.dev"
+
+/* How long cached quotes / FX rates stay usable before a passive refresh will
+   go and get new ones. Module scope since v1.32.0: the rates cache now lives in
+   `data`, so the mount effect has to consult RATES_STALE_MS *before* App's body
+   has finished executing, and a const declared further down that body would be
+   a temporal-dead-zone trap waiting for the first person to reorder something. */
+const QUOTES_STALE_MS=15*60*1000,RATES_STALE_MS=6*60*60*1000;
 
 /* ── FX rates (free, no key) ── */
 async function fetchRates(){
@@ -2828,6 +2878,30 @@ function bankValuation(bank,asOf){
 /* The number every total should use. Thin wrapper so the reduce call sites
    read like the plain `b.balance` they replaced. */
 function bankValue(bank,asOf){return bankValuation(bank,asOf).value;}
+
+/* ── Can you reach it, and what is it for? ────────────────────────────────
+   Two independent facts about an account, deliberately NOT collapsed into one
+   "don't spend this" flag, because they fail differently:
+
+     accessible:false   a capability. Money in a Philippine account this
+                        household can't reach is not spendable no matter how
+                        anyone feels about it. Excluded, and reported so the
+                        exclusion is visible rather than a silent shortfall.
+     purpose:"emergency"  a policy. You CAN spend it; you've decided you
+                        shouldn't. So it stays counted, is withheld by default,
+                        and can be released for one decision — the same shape
+                        the Purchase Advisor's protected goals already use.
+
+   Collapse them and the emergency fund loses the only interesting thing about
+   it: being able to ask what raiding it would cost.
+
+   Both read as absent-means-default, which is what lets migrate() leave every
+   existing record untouched (see the note there). `purpose` is a one-value
+   enum rather than a boolean so a later "sinking fund" or "tax" purpose
+   doesn't need a second field; only "emergency" affects arithmetic today. */
+const BANK_PURPOSES=[["","Everyday spending"],["emergency","Emergency fund"]];
+function bankIsAccessible(b){return!!b&&b.accessible!==false;}
+function bankIsReserved(b){return!!b&&b.purpose==="emergency";}
 /* Reconcile: fold the accrued estimate into the stored balance and re-anchor
    to today. Anything that credits or debits an account has to do this first,
    or a later day's accrual gets applied to money that only arrived today. */
@@ -3077,10 +3151,28 @@ function migrate(d){
        of interest off that sentinel is exactly what the re-stamp prevents. */
     if(b.interest===undefined)b.interest=null;
     if(!b.balanceAsOf)b.balanceAsOf=(b.updatedAt||"").slice(0,10)||new Date().toISOString().slice(0,10);
+    /* `accessible` and `purpose` (v1.32.0) are deliberately NOT defaulted here,
+       and adding a default would be a regression rather than a tidy-up:
+
+         accessible  absent ⇒ true.  "I can reach this money" is what every
+                     existing account already meant, so writing `true` onto all
+                     of them states a fact the absence already states.
+         purpose     absent ⇒ an ordinary spending account.
+
+       Defaulting either one rewrites every bank record on every device's first
+       open, which changes the document, which changes the fingerprint, which
+       buys a Cloudflare KV write per device for information nobody entered.
+       Same reasoning as `goalId` on a category, `fundedCatId` on an installment
+       payment and `ord` on an expense — absence is the value. */
   });
   (d.goals||[]).forEach(g=>{
     if(!g.owner)g.owner="me";
     if(!g.type)g.type="savings";
+    /* `bankId` and `deadline` (v1.32.0) follow the same absent-means-default
+       rule as the two bank fields above — unlinked, and no deadline. A goal
+       with no deadline is the normal case, not an incomplete one, so
+       goalDeadlineStatus returns null for it and the Goals tab shows the
+       pace line it always showed. */
     // migrate old saved→contributions
     if(g.saved!==undefined&&!g.contributions){
       g.contributions=[{id:uid(),date:new Date().toISOString().slice(0,10),amount:g.saved,note:"Migrated balance"}];
@@ -3867,12 +3959,20 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
     // they're refreshed automatically in the background (manual/auto quote+FX
     // refresh) and must never make the doc look "dirty" or trigger a cloud
     // autosave just because a stock price ticked.
+    // rates/ratesAt joined them in v1.32.0 and MUST stay here. They are a cache
+    // of an external FX feed, not household data, and loadRates() fires from a
+    // mount effect on every single app open — so a rates block inside the
+    // fingerprint would mark the document dirty seconds after launch and buy a
+    // Cloudflare KV write per open, for a number nobody typed. That is exactly
+    // the failure the userFingerprint split below exists to prevent, and it is
+    // why the rates cache lives in `data` (like livePrice) rather than needing
+    // its own storage: the exclusion mechanism already existed.
     // fieldUpdatedAt is excluded for the same reason as dataUpdatedAt: it's
     // bookkeeping about when a setting changed, not the setting itself. The
     // value it stamps is inside `rest`, so a real edit still changes the
     // fingerprint — but two devices agreeing on every setting never look
     // different just because they recorded the change at different instants.
-    const{theme,dataUpdatedAt,fieldUpdatedAt,livePrice,livePriceAt,prevClose,...rest}=d||{};
+    const{theme,dataUpdatedAt,fieldUpdatedAt,livePrice,livePriceAt,prevClose,rates,ratesAt,...rest}=d||{};
     const hist=ignoreAuto?stripAutoRows(rest.history):rest.history;
     const snaps=ignoreAuto?stripAutoRows(rest.snapshots):rest.snapshots;
     const canon={
@@ -6117,7 +6217,20 @@ function App(){
 
   /* goals */
   const goals=(data.goals||[]).filter(g=>!g.deletedAt);
-  const addGoal=owner=>{setData(d=>({...d,goals:[...d.goals,{id:uid(),owner,name:"New goal",type:"savings",target:10000,contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length],updatedAt:new Date().toISOString()}]}));pushImportantRef.current();};
+  /* `patch` overrides any of the defaults and returns the new goal's id, which
+     is what lets the Purchase Advisor create a fully-formed savings goal in one
+     step — the mirror of addInstallment returning its id. Called with one
+     argument it behaves exactly as it always did. Deliberately still ONE way to
+     create a goal: a second constructor is how the three goal-contribution
+     paths drifted apart before applyGoalContribution was made the only writer. */
+  const addGoal=(owner,patch)=>{
+    const id=uid();
+    setData(d=>({...d,goals:[...d.goals,{id,owner,name:"New goal",type:"savings",target:10000,
+      contributions:[],monthly:500,color:SEG[d.goals.length%SEG.length],
+      ...(patch||{}),updatedAt:new Date().toISOString()}]}));
+    pushImportantRef.current();
+    return id;
+  };
   const updateGoal=(id,patch)=>setData(d=>({...d,goals:d.goals.map(g=>g.id===id?{...g,...patch,updatedAt:new Date().toISOString()}:g)}));
   const removeGoal=id=>{
     const g=(data.goals||[]).find(x=>x.id===id);
@@ -6517,25 +6630,58 @@ function App(){
   const openInstallment=id=>{setInstallmentFocus({id,nonce:Date.now()});setTab("installments");};
 
 
-  /* FX */
-  const[rates,setRates]=useState(null);
-  const[ratesAt,setRatesAt]=useState(null);
+  /* ── FX ────────────────────────────────────────────────────────────────
+     Cached in `data`, exactly like livePrice/prevClose above, and excluded
+     from fingerprint() for exactly the same reason — see the comment there.
+
+     These used to be useState(null), which meant every reload started with no
+     rates at all: convert() returned null for everything until the network
+     answered, so an offline cold start could show nothing in a foreign
+     currency even though it had converted fine a minute earlier. Persisting
+     them is what makes "≈ SAR 9,750 · rate from 3 Aug" possible, and it costs
+     nothing precisely because the exclusion mechanism already existed.
+
+     Deliberately NOT seeded in structuralDefaults(): absent means "nothing
+     cached yet", so the empty-document shape is unchanged. */
+  const rates=(data.rates&&typeof data.rates==="object")?data.rates:null;
+  const ratesAt=data.ratesAt||null;
   const[ratesErr,setRatesErr]=useState(false);
   const[ratesLoading,setRatesLoading]=useState(false);
   const loadRates=async()=>{
     setRatesLoading(true);setRatesErr(false);
     let ok=true;
-    try{const{rates:r,at}=await fetchRates();setRates(r);setRatesAt(at);}
+    /* Like setLivePrice, this rides the slow idle-autosave path only — it is
+       never pushed via pushImportantRef, and being outside the fingerprint it
+       cannot force a cloud write on its own. */
+    try{const{rates:r,at}=await fetchRates();setData(d=>({...d,rates:r,ratesAt:at}));}
     catch(e){setRatesErr(true);ok=false;}
     setRatesLoading(false);
     return ok; // used by refreshMarketDataIfStale to surface a "some data failed" flag
   };
-  useEffect(()=>{loadRates();},[]);
+  /* Only fetch when there is nothing cached or the cache has aged out. While
+     rates lived in useState this effect had to run unconditionally — there was
+     never anything to reuse — but now that they persist, refetching on every
+     open would rewrite the document each time for a number that moves daily.
+     Same staleness gate refreshMarketDataIfStale already applies.
+
+     Gated on `loaded`, and that gate is the whole thing working. App's initial
+     state is an EMPTY document (structuralDefaults); the stored one arrives
+     later, in the load effect. A bare [] mount effect therefore looks at
+     `data.rates` before the document exists, finds nothing cached every single
+     time, and refetches on every open — which is exactly what this was written
+     to stop. Measured in the sandbox: rates 80 seconds old, refetched anyway. */
+  useEffect(()=>{
+    if(!loaded)return;
+    if(!rates||Date.now()-(ratesAt||0)>RATES_STALE_MS)loadRates();
+  },[loaded]);
   const convert=(amt,from,to)=>{
     if(!rates||!rates[from]||!rates[to])return null;
     return(Number(amt)||0)/rates[from]*rates[to];
   };
   const sarRate=rates&&rates.SAR?rates.SAR:null;
+  /* How old the cached rates are, for the "rate from 3 Aug" caveat. Whole days
+     so it can't churn within a calendar day. */
+  const ratesStaleDays=ratesAt?Math.max(0,Math.floor((Date.now()-ratesAt)/86400000)):null;
 
   /* banks */
   const banks=(data.banks||[]).filter(b=>!b.deletedAt);
@@ -6761,7 +6907,6 @@ function App(){
      success, so there's nothing to overwrite on failure. */
   const quotesRefreshingRef=useRef(false);
   const ratesRefreshingRef=useRef(false);
-  const QUOTES_STALE_MS=15*60*1000,RATES_STALE_MS=6*60*60*1000;
   /* {force:true} bypasses the staleness window — used by the manual/gesture
      pull-to-refresh, where the person explicitly asked for fresh data right
      now. Passive lifecycle triggers (visibility/focus/online) call this with
@@ -7085,7 +7230,7 @@ function App(){
             includeMp2Estimate}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
-          {tab==="goals"&&<GoalsView {...{goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners}}/>}
+          {tab==="goals"&&<GoalsView {...{goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners}}/>}
           {tab==="installments"&&<InstallmentsView {...{installments,installmentPayments,
             addInstallment,updateInstallment,recordInstallmentPayment,payOffInstallmentEarly,
             cancelInstallment,removeInstallment,
@@ -11521,9 +11666,18 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
             </button>
           </div>
 
-          <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6}}>
+          <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",background:accentS,color:accent}}>{b.currency}</span>
             <span style={{fontSize:10,color:P.neuSub}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
+            {/* On the card face, not just behind the settings gear: an account
+                the Purchase Advisor won't spend has to say so where the balance
+                is, or the advisor's total looks wrong rather than careful. */}
+            {bankIsReserved(b)&&
+              <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",
+                background:P.amberS,color:"#E07B2A"}}>Emergency fund</span>}
+            {!bankIsAccessible(b)&&
+              <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",
+                background:P.sfA,color:P.faint}}>Can't reach</span>}
             <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{bankOwnerLabel(b.owner,owners)}</span>
           </div>
         </div>
@@ -11560,6 +11714,33 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
                   accrual date exactly like the Update sheet's Set mode. */}
               <NumField value={b.balance} onCommit={v=>{updateBank(b.id,{balance:v,balanceAsOf:todayStr});syncNow&&syncNow();}}
                 className="bare tnum" style={{...neuInset(8),flex:1,textAlign:"right",fontSize:14,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
+            </div>
+
+            {/* ── What this account is for ──
+                Both fields affect the Purchase Advisor only. Net worth, the
+                Home cash card and every total elsewhere still count this money
+                — you own it either way, and an account you can't reach today
+                has not stopped being yours. */}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+              <select value={b.purpose||""} aria-label="What this account is for"
+                onChange={e=>updateBank(b.id,{purpose:e.target.value||null})}
+                style={{...neu(8),flex:"1 1 150px",minWidth:0,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                {BANK_PURPOSES.map(([v,l])=><option key={v||"none"} value={v}>{l}</option>)}
+              </select>
+              <label style={{display:"flex",alignItems:"center",gap:8,minHeight:40,
+                fontSize:12,color:P.neuSub,flex:"1 1 150px",minWidth:0}}>
+                <input type="checkbox" checked={bankIsAccessible(b)}
+                  onChange={e=>updateBank(b.id,{accessible:e.target.checked?null:false})}
+                  style={{width:16,height:16,accentColor:P.jade,flexShrink:0}}/>
+                <span>I can reach this money</span>
+              </label>
+            </div>
+            <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:-2}}>
+              {!bankIsAccessible(b)
+                ?"Left out of the Purchase Advisor's available cash, and shown there as excluded. Still counted in Net Worth."
+                :bankIsReserved(b)
+                  ?"Held back from the Purchase Advisor's available cash. You can release it for a single purchase from that tab."
+                  :"Counted as spendable by the Purchase Advisor."}
             </div>
 
             <InterestSettings b={b} updateBank={updateBank} todayStr={todayStr} accent={accent}/>
@@ -13033,11 +13214,14 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
 
 
 /* ── GOAL SQUARE CARD (top-level so inputs keep focus) ── */
-function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}){
+function GoalSquare({g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}){
   const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
   const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
   const Icon=goalIcon(g.type);
   const R=26,C=2*Math.PI*R;
+  /* Null unless this goal has a deadline, so a goal without one renders
+     exactly the card it always did — no empty state, nothing to dismiss. */
+  const dl=goalDeadlineStatus(g,today);
   return(
     <div style={{borderRadius:16,padding:14,background:P.neuBg,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`,display:"flex",flexDirection:"column",gap:8}}>
       {/* top row: type icon + delete */}
@@ -13071,6 +13255,18 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
         <div style={{fontSize:11,color:P.neuSub}}>of {fmt(g.target)}</div>
       </div>
 
+      {/* Deadline verdict — a figure is not an answer. "38% of 5,200" doesn't
+          tell you whether you will make it; this line does. Only rendered when
+          a deadline exists. */}
+      {dl&&
+        <div style={{textAlign:"center",fontSize:10,fontWeight:600,lineHeight:1.4,
+          color:dl.done?P.grD:(dl.onTrack?P.grD:(dl.overdue?P.wine:"#E07B2A"))}}>
+          {dl.done?"Reached"
+            :dl.overdue?`Past ${instShortDate(dl.deadline)}`
+            :dl.onTrack?`On track · ${instShortDate(dl.deadline)}`
+            :`Behind · needs ${fmt(dl.requiredMonthly)}/mo`}
+        </div>}
+
       {/* actions */}
       <div style={{display:"flex",gap:6,marginTop:"auto"}}>
         <button onClick={()=>openAdd(g.id)}
@@ -13085,7 +13281,8 @@ function GoalSquare({g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePic
 }
 
 /* ── GOALS VIEW — square cards with type icons ── */
-function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners}){
+function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners}){
+  const today=todayISO();
   const[addModal,setAddModal]=useState(null);     // goalId for "add money"
   useScrollLock(!!addModal);
   const[addAmount,setAddAmount]=useState("");
@@ -13114,7 +13311,7 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,rem
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(148px,100%),1fr))",gap:10}}>
               {list.map(g=>(
-                <GoalSquare key={g.id} {...{g,fmt,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
+                <GoalSquare key={g.id} {...{g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
               ))}
               {/* add-goal square */}
               <button onClick={()=>addGoal(ok)} className="neu-btn"
@@ -13213,6 +13410,18 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,rem
         const remain=Math.max(0,g.target-saved);
         const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
         const Icon=goalIcon(g.type);
+        const dl=goalDeadlineStatus(g,today);
+        /* Owner-scoped, and resolved from LIVE banks. A goal belongs to one
+           person and its money cannot be sitting in the other person's account
+           — offering those would invite a link that the advisor then has to
+           refuse to read. Joint accounts are excluded for the same reason the
+           advisor never counts them toward one owner. */
+        const linkableBanks=(banks||[]).filter(b=>b&&!b.deletedAt&&b.owner===g.owner);
+        /* A stored id whose account has since been deleted, changed owner or
+           become joint reads as unlinked rather than as a dangling reference —
+           resolved here, before anything writes, the same way categoryGoalFor
+           degrades an unusable installment funding category. */
+        const linkedBank=linkableBanks.find(b=>b.id===g.bankId)||null;
         return(
           <Portal>
           <div className="sheet-bg" onClick={()=>setDetailModal(null)}>
@@ -13235,9 +13444,59 @@ function GoalsView({goals,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,rem
                     className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}/>
                 </div>
               </div>
-              <div style={{fontSize:12,color:P.sub,marginBottom:14}} className="tnum">
+              {/* ── Deadline and account ──
+                  The date input needs all three corrections or it will not line
+                  up with the field beside it: fontFamily:"inherit" (a bare date
+                  input renders in the UA font), an explicit height (its
+                  shadow-DOM -webkit-datetime-edit adds content height no padding
+                  reaches), and appearance:none in all three prefixes (Safari
+                  gives that shadow tree a min-content width that ignores
+                  width:100% and spills over its neighbour). The row wraps so it
+                  stacks on a narrow phone instead of colliding. */}
+              <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                <div style={{flex:"1 1 150px",minWidth:0}}>
+                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Target date</div>
+                  <input type="date" value={g.deadline||""} aria-label="Goal deadline"
+                    onChange={e=>updateGoal(g.id,{deadline:e.target.value||null})}
+                    style={{width:"100%",minWidth:0,borderRadius:10,padding:"8px 10px",fontSize:14,
+                      fontFamily:"inherit",height:38,background:"rgba(0,0,0,.05)",border:"none",color:P.ink,
+                      WebkitAppearance:"none",MozAppearance:"none",appearance:"none"}}/>
+                </div>
+                <div style={{flex:"1 1 150px",minWidth:0}}>
+                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Kept in</div>
+                  <select value={linkedBank?linkedBank.id:""} aria-label="Account this goal is kept in"
+                    onChange={e=>updateGoal(g.id,{bankId:e.target.value||null})}
+                    style={{width:"100%",minWidth:0,borderRadius:10,padding:"8px 10px",fontSize:14,
+                      fontFamily:"inherit",height:38,background:"rgba(0,0,0,.05)",border:"none",color:P.ink}}>
+                    <option value="">Not linked</option>
+                    {linkableBanks.map(b=><option key={b.id} value={b.id}>{b.name||"Account"}{b.bank?` — ${b.bank}`:""}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{fontSize:12,color:P.sub,marginBottom:dl?6:14}} className="tnum">
                 Saved {fmt(saved)} · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
               </div>
+              {/* Only ever shown when a deadline exists — goalDeadlineStatus
+                  returns null otherwise, so a goal without one keeps exactly
+                  the pace line it always had. */}
+              {dl&&
+                <div style={{fontSize:12,marginBottom:14,lineHeight:1.5,
+                  color:dl.done?P.grD:(dl.onTrack?P.grD:(dl.overdue?P.wine:"#E07B2A"))}}>
+                  {dl.done
+                    ?`Reached — target date ${instShortDate(dl.deadline)}`
+                    :dl.overdue
+                      ?<span>Past its date · <span className="tnum">{fmt(dl.remain)}</span> still to go</span>
+                      :dl.onTrack
+                        ?<span>On track for {instShortDate(dl.deadline)} · needs <span className="tnum">{fmt(dl.requiredMonthly)}</span>/mo</span>
+                        :<span>Behind for {instShortDate(dl.deadline)} · <span className="tnum">{fmt(dl.monthly)}</span>/mo
+                           needs to be <span className="tnum">{fmt(dl.requiredMonthly)}</span>/mo</span>}
+                </div>}
+              {linkedBank&&
+                <div style={{fontSize:11,color:P.faint,marginBottom:14,lineHeight:1.5}}>
+                  This money sits in {linkedBank.name||"that account"}, so the Purchase Advisor
+                  won't count it twice.
+                </div>}
 
               <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Contributions</div>
               {(g.contributions||[]).filter(c=>!c.deletedAt).length>0?(

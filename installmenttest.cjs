@@ -741,8 +741,13 @@ t("27 · the field is absent by default, so migrate stays byte-identical",()=>{
   assert.ok(doc.installmentPayments.every(p=>!("fundedCatId"in p)),
     "absent means unfunded — defaulting it would cost every device a KV write");
   assert.equal(fingerprint(doc),fingerprint(migrate(clone(doc))));
-  assert.ok(!/fundedCatId/.test(slice("function migrate(d){","/* Bills Reserve = opening baseline")),
-    "migrate() must not default fundedCatId");
+  /* Comments are stripped before the search. The assertion is about CODE — and
+     migrate() now explains the absent-means-default rule in prose, naming
+     fundedCatId as the precedent it follows, which a bare substring check reads
+     as a violation of the very rule the comment is upholding. */
+  const migrateCode=slice("function migrate(d){","/* Bills Reserve = opening baseline")
+    .replace(/\/\*[\s\S]*?\*\//g,"").replace(/(^|[^:])\/\/.*$/gm,"$1");
+  assert.ok(!/fundedCatId/.test(migrateCode),"migrate() must not default fundedCatId");
 });
 
 t("28 · a funded payment merges across devices intact",()=>{

@@ -1,7 +1,138 @@
 # Current Status
 
-_Last updated: 2026-08-07 (Purchase Advisor — Build A, v1.31.0)_
+_Last updated: 2026-08-07 (Purchase Advisor Build A2 — account flags, goal deadlines, cached FX, v1.32.0)_
 
+---
+
+# 📋 SESSION NOTE — 2026-08-07 (v1.32.0) — Purchase Advisor Build A2
+
+**Built, tested and staged; NOT deployed.** A2 is the data-model half of the
+follow-up to Build A: it adds the fields and the Banks/Goals UI, and changes
+nothing in the advisor itself. A3 (the advisor consuming them) is the next
+build. Plan: `~/.claude/plans/greedy-crunching-sprout.md`.
+
+## Why
+
+Testing v1.31.0 showed the advisor's "Available" figure counting money that
+isn't available — Philippine accounts the household can't reach, and accounts
+that *are* the emergency fund. And "Save up for it instead" answered "when is
+the earliest?" rather than "can I make my date?", because `desiredDate` was
+captured and then never used in any calculation.
+
+## Four new fields, none defaulted in `migrate()`
+
+```
+banks[].accessible : false        // absent ⇒ accessible   (a capability)
+banks[].purpose    : "emergency"  // absent ⇒ ordinary     (a policy)
+goals[].bankId     : "<bank id>"  // absent ⇒ unlinked
+goals[].deadline   : "YYYY-MM-DD" // absent ⇒ no deadline
+```
+
+`accessible` and `purpose` are deliberately **two** concepts. "I can't reach it"
+and "I won't spend it" fail differently: the first is excluded outright, the
+second is withheld by default but releasable for one decision. Collapsing them
+into one flag would cost the emergency fund the only interesting thing about it
+— being able to ask what raiding it would cost.
+
+**Absence is the value.** Defaulting any of the four would rewrite every bank
+and goal on every device's first open, change the document, change the
+fingerprint, and buy a KV write per device for information nobody entered —
+the rule `goalId`, `fundedCatId` and expense `ord` already follow. Verified
+live: opening the new build on a v1.31.0 document writes none of the fields.
+
+None are added to `structuralDefaults()`, so the empty-document shape (which
+`importtest.cjs` and `cloudguardtest.cjs` slice) is unchanged.
+
+`banks` and `goals` were already synced collections — in `CONFLICT_COLLECTIONS`,
+hashed wholesale by `fingerprint()`, in `BACKUP_ARRAY_KEYS`, merged by
+`tryAutoMergeAll` — so adding a *field* needed no new touch point. An earlier
+claim in this session that it cost "eight touch points" was wrong.
+
+## FX rates are now cached in `data`
+
+`rates`/`ratesAt` moved out of `useState(null)` and into the document, beside
+`livePrice`/`prevClose`, and **into the `fingerprint()` exclusion list with
+them**. They were in-memory only, so every reload started with no FX at all:
+`convert()` returned null for everything until the network answered, and an
+offline cold start showed nothing in a foreign currency even though it had
+converted fine a minute earlier.
+
+Two things this required that the plan didn't anticipate:
+
+- **`QUOTES_STALE_MS`/`RATES_STALE_MS` moved to module scope.** The mount effect
+  now has to consult `RATES_STALE_MS` before App's body has finished executing;
+  a const further down that body is a temporal-dead-zone trap waiting for the
+  first reorder.
+- **The mount effect is gated on `loaded`.** See the bug below.
+
+## The bug the sandbox caught, which every test had passed
+
+The rates effect was written as a bare `[]` mount effect with a staleness check.
+It refetched on **every single app open** regardless — measured in the sandbox
+with a cache 80 seconds old inside a 6-hour window.
+
+Cause: App's initial state is an EMPTY document (`structuralDefaults()`); the
+stored one arrives later, in the load effect. A mount effect therefore reads
+`data.rates` before the document exists, finds nothing cached every time, and
+refetches. Gating on `loaded` (and depending on it) fixes it.
+
+The `fingerprint()` exclusion meant this never caused a KV write — the safety
+net held — but it defeated the entire point of caching, and it rewrote the
+document on every open. **Invisible to all nineteen runners**, because it is a
+fact about what the app's effects do after mount, not about any pure function.
+Third time this class of defect has only been caught by driving the app.
+
+## Also
+
+- `goalDeadlineStatus(goal, todayStr)` — module scope, pure, returns `null`
+  when there is no deadline so a goal without one renders exactly the card it
+  always did. Months are WHOLE months (`completedMonths`), rounding the
+  requirement **up**: with three and a half months left you are asked for the
+  three-month figure. `onTrack` compares the goal's **stated** `monthly`, never
+  recent actual contributions — plan-based, with actuals only ever a warning.
+- `addGoal(owner, patch)` gained an optional patch and now returns the new id,
+  the mirror of `addInstallment`. Called with one argument it behaves exactly as
+  before. Still the only way to create a goal.
+- `bankIsAccessible` / `bankIsReserved` / `BANK_PURPOSES` at module scope beside
+  `bankValue`, so the Banks tab and (in A3) the advisor cannot disagree.
+
+## Verification
+
+- `node parsecheck.cjs` — PARSE OK. All **nineteen** runners green
+  (`goaltest` 39/39, `banktest` 30/30). `node stage.cjs` — three sites agree.
+- `installmenttest.cjs` case 27 needed fixing, not the code: it asserts
+  `migrate()`'s source doesn't contain `fundedCatId`, and migrate's new comment
+  *names* it as the precedent being followed. Now strips comments before
+  searching — confirmed it still catches a real injected default.
+- Driven against `sandboxworker.cjs`:
+  1. A v1.31.0 document opened in the new build gains **none** of the four
+     fields. After the `loaded` fix, a second open changes the document **not at
+     all** — `changedAfterOpen: []`, not even `dataUpdatedAt`.
+  2. Repeated reloads no longer refetch rates.
+  3. Offline cold start (FX hosts blocked, cache aged to 30h) still renders
+     `PHP 895,972` from cache with the existing "Using last available exchange
+     rates" line. Before this change there were no rates at all.
+  4. Setting a flag writes **only** that field on **that** account; untouched
+     accounts still carry neither. Net Worth is unaffected — an account you
+     can't reach is still yours.
+  - Note: POSTs seen on the first run were the sandbox merging its own `GOOD`
+    document into the seeded one, not a change of mine. The unconfounded test
+    runs **unconnected**, where nothing but the app's own effects can touch the
+    document.
+- Goals detail sheet measured with `getBoundingClientRect` open: the deadline
+  date input and the account select are both **exactly 38px tall, same top,
+  same width**. Bank picker is owner-scoped (the joint account is absent).
+  Verdict arithmetic checked by hand: 10,000 remaining over 3 whole months →
+  3,333/mo required against a stated 1,000/mo → "Behind".
+
+## Carried forward
+
+- **A3 has not started.** Advisor still uses the old flat availability stack, so
+  the flags set in this build have no effect on it yet.
+- The per-bank `withheld = max(reserved, claimed)` rule is A3's, and is the
+  thing that stops an emergency fund tracked as *both* a bank and a goal being
+  subtracted twice.
+- Not yet verified against the real dataset on a phone.
 ---
 
 # 📋 SESSION NOTE — 2026-08-07 (v1.31.0) — Purchase Advisor, Build A

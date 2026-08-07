@@ -178,6 +178,28 @@ Two things learned worth reusing:
   (a newer build's unknown collections must pass) is asserted in
   `cloudguardtest.cjs` — keep it green.
 
+## Purchase Advisor — A DONE, A2 DONE, A3 NEXT, B NOT built
+
+Plan for A2/A3 at `~/.claude/plans/greedy-crunching-sprout.md` (grilling session
+2026-08-07, prompted by testing v1.31.0).
+
+- **A2 — account flags, goal deadlines, cached FX — DONE**, build
+  `2026.08.07.0005` / v1.32.0. Four new fields (`banks[].accessible`,
+  `banks[].purpose`, `goals[].bankId`, `goals[].deadline`), none defaulted in
+  `migrate()`; `goalDeadlineStatus`; Banks controls + badges; Goals deadline,
+  owner-scoped account picker and on-track verdict; `rates`/`ratesAt` cached in
+  `data` and excluded from `fingerprint()`. Nineteen runners green, sandbox
+  sync verification done, **staged not deployed**. See `current-status.md`.
+- **A3 — the advisor consumes them — NEXT, not started.** Rewrite
+  `purchaseAvailableStack` to per-bank withholding with
+  `withheld = max(reserved, claimed)` (the rule that stops an emergency fund
+  tracked as both a bank and a goal being subtracted twice); the three
+  `bankId`-resolution rules; `purchaseBucketsBetween` +
+  `purchaseSavingsPlan` so the "Save up for it" card gains a date-driven mode;
+  `includedBankIds` in the draft for opting a PH account into one purchase;
+  "Start saving for this" creating a Goal via `addGoal(owner, patch)`.
+  **Until A3 ships, the flags set in A2 have no effect on the advisor.**
+
 ## Purchase Advisor — Build A DONE (2026-08-07, v1.31.0) · Build B NOT built
 
 Planned in a grilling session 2026-08-07; plan at

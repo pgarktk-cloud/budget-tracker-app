@@ -35,13 +35,18 @@ const t=(name,fn)=>{n++;try{fn();console.log("  ok   "+name);}catch(e){fails++;c
 
 const ctx={};
 vm.createContext(ctx);
-vm.runInContext(slice("function applyGoalContribution(d,{",
-                      "/* Tracked-spending rollup for one owner"),ctx);
+/* completedMonths is sliced in rather than reimplemented: "how many whole
+   months until the deadline" is half of what goalDeadlineStatus answers, and a
+   local copy would only ever test the copy. */
+vm.runInContext(
+  slice("function completedMonths(fromStr,toStr){","/* Tiers are WHOLE-BALANCE")+"\n"+
+  slice("function applyGoalContribution(d,{","/* Tracked-spending rollup for one owner"),ctx);
 const{applyGoalContribution,applyGoalContributionDeleteByExpense,
   applyGoalContributionRestoreByExpense,applyGoalContributionDeleteByContribution,
-  applyGoalContributionRestoreByContribution,categoryGoalFor}=ctx;
+  applyGoalContributionRestoreByContribution,categoryGoalFor,goalDeadlineStatus}=ctx;
 assert.ok(typeof applyGoalContribution==="function","applyGoalContribution missing from the slice");
 assert.ok(typeof categoryGoalFor==="function","categoryGoalFor missing from the slice");
+assert.ok(typeof goalDeadlineStatus==="function","goalDeadlineStatus missing from the slice");
 
 /* The unaccounted classifier, lifted out of its useMemo so the "goal
    contributions are their own line" rule is asserted against the shipped
@@ -278,6 +283,151 @@ t("an unlinked transfer against the same category is untouched",()=>{
   const r=classify([{amount:5000,isTransfer:true,catId:"cat-lts"}],G);
   assert.equal(r.untrackedTransfers,5000);
   assert.equal(r.goalContribs,0);
+});
+
+/* ── goalDeadlineStatus (v1.32.0) ─────────────────────────────────────────
+   A target and a monthly figure can only say "~16 months at this pace". The
+   deadline is what turns that into "you will miss this", which is the question
+   somebody saving for a dated purchase is actually asking. */
+console.log("\ngoal deadlines\n");
+
+const TODAY="2026-08-07";
+const goal=(over={})=>({id:"gd",owner:"me",name:"MacBook",type:"tech",
+  target:5200,monthly:800,contributions:[{id:"c1",date:"2026-07-01",amount:2000}],...over});
+
+t("no deadline returns null — absence is the normal case, not an empty state",()=>{
+  assert.equal(goalDeadlineStatus(goal(),TODAY),null);
+  assert.equal(goalDeadlineStatus(goal({deadline:""}),TODAY),null);
+  assert.equal(goalDeadlineStatus(null,TODAY),null);
+});
+
+t("months remaining are WHOLE months, so the requirement rounds UP",()=>{
+  /* 7 Aug → 1 Dec is three and a half months. Asking for the four-month figure
+     would flatter the deadline; the honest ask is the three-month one. */
+  const s=goalDeadlineStatus(goal({deadline:"2026-12-01"}),TODAY);
+  assert.equal(s.monthsLeft,3);
+  assert.equal(s.remain,3200);
+  assert.ok(Math.abs(s.requiredMonthly-3200/3)<1e-9);
+});
+
+t("on track compares the STATED monthly, never recent actual contributions",()=>{
+  /* Plan-based, with actuals only ever a warning — the same rule the Purchase
+     Advisor's projections follow. A goal funded 800/mo against a 1,066/mo
+     requirement is behind even though it has been contributed to recently. */
+  assert.equal(goalDeadlineStatus(goal({deadline:"2026-12-01"}),TODAY).onTrack,false);
+  assert.equal(goalDeadlineStatus(goal({deadline:"2026-12-01",monthly:1100}),TODAY).onTrack,true);
+  // and a goal with no contributions at all is judged the same way
+  const bare=goalDeadlineStatus(goal({deadline:"2026-12-01",monthly:1100,contributions:[]}),TODAY);
+  assert.equal(bare.remain,5200);
+  assert.equal(bare.onTrack,false,"5,200 over 3 months needs more than 1,100/mo");
+});
+
+t("the boundary is exact — monthly EQUAL to the requirement is on track",()=>{
+  const s=goalDeadlineStatus(goal({deadline:"2026-11-07",monthly:0}),TODAY);
+  assert.equal(s.monthsLeft,3);
+  const exact=goalDeadlineStatus(goal({deadline:"2026-11-07",monthly:s.requiredMonthly}),TODAY);
+  assert.equal(exact.onTrack,true,"meeting the requirement exactly is not behind");
+  const under=goalDeadlineStatus(goal({deadline:"2026-11-07",monthly:s.requiredMonthly-0.01}),TODAY);
+  assert.equal(under.onTrack,false);
+});
+
+t("a deadline this month asks for the whole remainder now, never divides by zero",()=>{
+  const s=goalDeadlineStatus(goal({deadline:"2026-08-20"}),TODAY);
+  assert.equal(s.monthsLeft,0);
+  assert.equal(s.requiredMonthly,3200,"nothing left to spread it over");
+  assert.ok(isFinite(s.requiredMonthly));
+});
+
+t("reached counts as reached — a finished goal is never overdue or behind",()=>{
+  const done=goal({deadline:"2020-01-01",contributions:[{id:"c1",amount:5200}]});
+  const s=goalDeadlineStatus(done,TODAY);
+  assert.equal(s.done,true);
+  assert.equal(s.overdue,false,"a goal you finished early is not late");
+  assert.equal(s.onTrack,true);
+  assert.equal(s.requiredMonthly,0);
+  // over-funded is still just done, never a negative remainder
+  assert.equal(goalDeadlineStatus(goal({deadline:"2020-01-01",
+    contributions:[{id:"c1",amount:9999}]}),TODAY).remain,0);
+});
+
+t("an unmet deadline in the past is overdue, and overdue is never on track",()=>{
+  const s=goalDeadlineStatus(goal({deadline:"2026-07-01",monthly:99999}),TODAY);
+  assert.equal(s.overdue,true);
+  assert.equal(s.monthsLeft,0);
+  assert.equal(s.onTrack,false,"no monthly figure rescues a date that has passed");
+});
+
+t("deleted contributions don't count toward the goal",()=>{
+  const s=goalDeadlineStatus(goal({deadline:"2026-12-01",
+    contributions:[{id:"c1",amount:2000},{id:"c2",amount:9000,deletedAt:"2026-07-02T00:00:00.000Z"}]}),TODAY);
+  assert.equal(s.saved,2000);
+  assert.equal(s.remain,3200);
+});
+
+t("it is pure — same answer for the same todayStr, and the goal is untouched",()=>{
+  const g=goal({deadline:"2026-12-01"});
+  const before=JSON.stringify(g);
+  const a=goalDeadlineStatus(g,TODAY),b=goalDeadlineStatus(g,TODAY);
+  assert.deepEqual(JSON.parse(JSON.stringify(a)),JSON.parse(JSON.stringify(b)));
+  assert.equal(JSON.stringify(g),before,"must not mutate its argument");
+});
+
+/* ── the four new fields cost an existing document nothing ────────────────
+   banks[].accessible/purpose and goals[].bankId/deadline are deliberately NOT
+   defaulted in migrate(). Defaulting them would rewrite every bank and goal on
+   every device's first open, changing the document, changing the fingerprint,
+   and buying a Cloudflare KV write per device for information nobody entered.
+   Absence IS the value — the same rule goalId, fundedCatId and expense `ord`
+   already follow. */
+console.log("\nmigration is a no-op for an existing document\n");
+
+const migCtx={};
+vm.createContext(migCtx);
+Object.assign(migCtx,{defaultData:()=>({}),uid:()=>"stub"});
+vm.runInContext(
+  slice("const sortedById=arr=>",'/* "Did a *person* change anything?"')+"\n"+
+  slice("function migrate(d){","/* Bills Reserve = opening baseline")+`
+this.fingerprint=fingerprint;`,migCtx);
+const{migrate:migrateFn,fingerprint}=migCtx;
+
+t("migrate() adds none of the four new fields to an existing record",()=>{
+  const doc={plans:[],expenses:[],
+    banks:[{id:"b1",owner:"me",name:"Main",currency:"SAR",balance:100,
+      balanceAsOf:"2026-08-01",interest:null,updatedAt:"2026-08-01T00:00:00.000Z"}],
+    goals:[{id:"g1",owner:"me",name:"Trip",type:"savings",target:1000,monthly:100,
+      contributions:[],updatedAt:"2026-08-01T00:00:00.000Z"}]};
+  const out=migrateFn(JSON.parse(JSON.stringify(doc)));
+  ["accessible","purpose"].forEach(k=>
+    assert.ok(!(k in out.banks[0]),`migrate() must not write banks[].${k}`));
+  ["bankId","deadline"].forEach(k=>
+    assert.ok(!(k in out.goals[0]),`migrate() must not write goals[].${k}`));
+});
+
+t("the fingerprint of an upgraded document is unchanged — no KV write on open",()=>{
+  /* The property the whole absent-means-default rule exists to protect: a
+     device upgrading to this build must not discover it has "changes to save". */
+  const doc={plans:[],expenses:[],
+    banks:[{id:"b1",owner:"me",name:"Main",currency:"SAR",balance:100,
+      balanceAsOf:"2026-08-01",interest:null,updatedAt:"2026-08-01T00:00:00.000Z"}],
+    goals:[{id:"g1",owner:"me",name:"Trip",type:"savings",target:1000,monthly:100,
+      contributions:[],updatedAt:"2026-08-01T00:00:00.000Z"}]};
+  const once=migrateFn(JSON.parse(JSON.stringify(doc)));
+  const twice=migrateFn(JSON.parse(JSON.stringify(once)));
+  assert.equal(fingerprint(once),fingerprint(twice),"migrate() must be idempotent");
+  assert.equal(fingerprint(migrateFn(JSON.parse(JSON.stringify(doc)))),fingerprint(once));
+});
+
+t("cached FX rates are OUTSIDE the fingerprint — a rate tick can't dirty the doc",()=>{
+  /* loadRates() fires from a mount effect on every single app open. If rates
+     were inside the fingerprint, every open would mark the document dirty and
+     buy a KV write for a number nobody typed. */
+  const base=migrateFn({plans:[],expenses:[],banks:[],goals:[]});
+  const withRates={...base,rates:{USD:1,SAR:3.75,PHP:57.2},ratesAt:1754500000000};
+  const moved={...base,rates:{USD:1,SAR:3.76,PHP:58.9},ratesAt:1754600000000};
+  assert.equal(fingerprint(base),fingerprint(withRates),
+    "caching rates must not change the fingerprint");
+  assert.equal(fingerprint(withRates),fingerprint(moved),
+    "a rate moving must not change the fingerprint");
 });
 
 console.log("\n"+(fails?fails+"/"+n+" FAILED":n+"/"+n+" passed")+"\n");

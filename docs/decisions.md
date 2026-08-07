@@ -1,5 +1,105 @@
 # Architectural & Technical Decisions
 
+## "Can't reach it" and "won't spend it" are two fields, not one (2026-08-07, v1.32.0)
+
+The obvious design is a single "don't count this account" checkbox. It is wrong,
+and the two reasons a person gives for wanting it are what give it away.
+
+`accessible:false` is a **capability**. Money in a Philippine account this
+household cannot reach is not spendable no matter how anyone feels about it, so
+it is excluded outright — and reported, because an account silently missing from
+a total looks like the app is broken rather than careful.
+
+`purpose:"emergency"` is a **policy**. You *can* spend it; you have decided you
+shouldn't. So it stays counted, is withheld by default, and can be released for
+a single decision — the same shape the Purchase Advisor's protected goals
+already use.
+
+Collapse them and the emergency fund loses the only interesting thing about it:
+being able to ask what raiding it would cost. Merging them also loses the
+distinction in the UI, where one wants a checkbox and the other wants a
+releasable toggle in a different tab entirely.
+
+Both are advisor-only. **Net Worth, the Home cash card and every other total
+still count this money** — an account you can't reach today has not stopped
+being yours, and a "net worth" that quietly omitted it would be a different and
+much worse bug than the one being fixed.
+
+## Absence is the value, and it is worth protecting on purpose (2026-08-07)
+
+None of the four new fields (`banks[].accessible`, `banks[].purpose`,
+`goals[].bankId`, `goals[].deadline`) is defaulted in `migrate()`. This is not
+laziness — a default would be a regression.
+
+`banks` and `goals` are already synced collections, hashed wholesale by
+`fingerprint()`. Writing `accessible:true` onto every existing account states a
+fact the absence already states, but it changes the document, which changes the
+fingerprint, which marks every device dirty on first open, which buys a
+Cloudflare KV write per device for information nobody entered. The rule
+`goalId`, `fundedCatId` and expense `ord` already follow.
+
+The corollary is that a *prose mention* of a field inside `migrate()` is not a
+violation of that rule, but a substring check can't tell the two apart —
+`installmenttest.cjs` case 27 failed on a comment explaining the very rule it
+enforces. The assertion now strips comments first, verified still to catch a
+real injected default. The same trap had already bitten `purchasetest.cjs`
+earlier the same day; if a third one appears, the strip helper should be shared.
+
+## FX rates belong in `data`, and the mount effect can't see it (2026-08-07)
+
+Rates lived in `useState(null)`, so every reload began with no FX at all:
+`convert()` returned null for everything until the network answered, and an
+offline cold start showed nothing in a foreign currency even though it had
+converted fine a minute earlier. They now live in `data` beside
+`livePrice`/`prevClose` and are excluded from `fingerprint()` alongside them —
+the mechanism already existed, because cached market data had already posed
+exactly this question once.
+
+The interesting part is the bug that followed. The refresh was written as a
+mount effect with a staleness check, which looks obviously correct and refetched
+on **every single app open** regardless — measured with a cache 80 seconds old
+inside a six-hour window.
+
+App's initial state is an EMPTY document (`structuralDefaults()`); the stored one
+arrives later, in the load effect. So a `[]` mount effect reads `data.rates`
+before the document exists, finds nothing cached every time, and refetches.
+Gating on `loaded` fixes it. **Anything that consults persisted state from an
+effect must wait for `loaded`** — the empty initial document is a real value,
+not a momentary blank.
+
+Two things this reinforces. The `fingerprint()` exclusion meant the churn never
+cost a KV write, which is the safety net doing its job — but a safety net is not
+a substitute for the behaviour being right. And it was invisible to all nineteen
+runners, because it is a fact about what the app's effects do after mount rather
+than about any pure function. That is now the third defect of this exact shape
+(after `migrate()`'s missing collection defaults and the fingerprint-anchored
+provenance mark) that only appeared when the app was driven in a browser.
+
+## A deadline that nothing reads is the bug it was added to fix (2026-08-07)
+
+Build A collected a purchase date and used it for nothing — it prefilled the
+installment handoff and entered no calculation. That is precisely why "save up
+for it" answered the wrong question.
+
+So `goals[].deadline` ships **with** the Goals tab acting on it, not ahead of
+it. `goalDeadlineStatus` returns `null` when there is no deadline, so a goal
+without one renders exactly the card it always did — no empty state, nothing to
+dismiss — and a goal with one gains an on-track/behind verdict on both the card
+and the detail sheet.
+
+Two choices inside it:
+
+- **Whole months remaining**, via the existing `completedMonths`, which rounds
+  the requirement *up*: with three and a half months left you are asked for the
+  three-month figure. A deadline is a commitment; flattering it with a
+  part-month helps nobody.
+- **`onTrack` compares the goal's stated `monthly`**, never recent actual
+  contributions. Plan-based, with actuals only ever a warning — one month you
+  happened to skip is not evidence the plan is wrong, and quietly re-deriving
+  the plan from behaviour is how a budget stops being a decision. The same rule
+  the Purchase Advisor's projections follow.
+
+
 ## The Purchase Advisor is two builds, and Build A is the feature (2026-08-07, v1.31.0)
 
 "Should I buy this MacBook, and how?" reads like an AI question. It isn't. The

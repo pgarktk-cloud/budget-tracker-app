@@ -41,8 +41,10 @@ vm.createContext(ctx);
 // Function declarations attach themselves to the vm's global; top-level
 // `const` bindings do NOT, so the two constants have to be handed over
 // explicitly or they read as undefined here while working fine in the app.
-vm.runInContext(src+"\nthis.DEFAULT_BANK_INTEREST=DEFAULT_BANK_INTEREST;this.BANK_CREDITING=BANK_CREDITING;",ctx);
-const{bankValuation,bankValue,bankTierRate,settledBankPatch,dayNumber,completedMonths,DEFAULT_BANK_INTEREST}=ctx;
+vm.runInContext(src+"\nthis.DEFAULT_BANK_INTEREST=DEFAULT_BANK_INTEREST;this.BANK_CREDITING=BANK_CREDITING;"
+  +"this.BANK_PURPOSES=BANK_PURPOSES;",ctx);
+const{bankValuation,bankValue,bankTierRate,settledBankPatch,dayNumber,completedMonths,
+  DEFAULT_BANK_INTEREST,BANK_PURPOSES,bankIsAccessible,bankIsReserved}=ctx;
 
 const acct=(over={})=>Object.assign({
   id:"b1",balance:100000,balanceAsOf:"2026-01-01",
@@ -240,6 +242,63 @@ t("the shipped default block is 20% tax, daily, one tier",()=>{
   assert.strictEqual(d.taxPct,20);
   assert.strictEqual(d.crediting,"daily");
   assert.strictEqual(d.tiers.length,1);
+});
+
+/* ── Reachability and purpose (v1.32.0) ───────────────────────────────────
+   Two independent facts about an account, deliberately not one "don't spend
+   this" flag: `accessible:false` is a capability (money in a Philippine account
+   this household can't reach), `purpose:"emergency"` is a policy (you can spend
+   it; you've decided you shouldn't). Both read as absent-means-default, which
+   is what lets migrate() leave every existing record alone. */
+console.log("\nreachability and purpose\n");
+
+t("an untouched account is accessible and unreserved — absence is the value",()=>{
+  /* Every account saved before this build carries neither field. If the
+     defaults ever stopped being "reachable, ordinary", those accounts would
+     silently drop out of the Purchase Advisor's available cash. */
+  const legacy={id:"b1",owner:"me",currency:"SAR",balance:1000,interest:null};
+  assert.equal(bankIsAccessible(legacy),true);
+  assert.equal(bankIsReserved(legacy),false);
+  assert.ok(!("accessible" in legacy)&&!("purpose" in legacy),
+    "the fixture must not carry the fields — that is the whole point");
+});
+
+t("only an explicit false makes an account unreachable",()=>{
+  assert.equal(bankIsAccessible({accessible:false}),false);
+  assert.equal(bankIsAccessible({accessible:true}),true);
+  assert.equal(bankIsAccessible({accessible:null}),true,"cleared means reachable again");
+  assert.equal(bankIsAccessible({accessible:undefined}),true);
+  assert.equal(bankIsAccessible(null),false,"no account is not a reachable account");
+});
+
+t("only purpose \"emergency\" reserves an account",()=>{
+  assert.equal(bankIsReserved({purpose:"emergency"}),true);
+  assert.equal(bankIsReserved({purpose:""}),false);
+  assert.equal(bankIsReserved({purpose:null}),false);
+  assert.equal(bankIsReserved({purpose:"spending"}),false,"an unknown purpose is not reserved");
+  assert.equal(bankIsReserved({}),false);
+  assert.equal(bankIsReserved(null),false);
+});
+
+t("the two flags are independent, and neither touches valuation",()=>{
+  /* An account you can't reach is still worth what it is worth — Net Worth and
+     the Home cash card must be unaffected. Only the Purchase Advisor reads
+     these. */
+  const base={id:"b1",owner:"me",currency:"SAR",balance:10000,balanceAsOf:"2026-08-01",
+    interest:{enabled:true,taxPct:0,crediting:"daily",tiers:[{from:0,rate:5}]}};
+  const flagged={...base,accessible:false,purpose:"emergency"};
+  assert.equal(bankValue(base,"2026-09-01"),bankValue(flagged,"2026-09-01"),
+    "flags must not change what the account is worth");
+  assert.equal(bankIsAccessible(flagged),false);
+  assert.equal(bankIsReserved(flagged),true);
+});
+
+t("BANK_PURPOSES offers the empty default first, so the picker can clear it",()=>{
+  assert.ok(Array.isArray(BANK_PURPOSES)&&BANK_PURPOSES.length>=2);
+  assert.equal(BANK_PURPOSES[0][0],"","the first option must be the absent default");
+  assert.ok(BANK_PURPOSES.some(([v])=>v==="emergency"));
+  BANK_PURPOSES.forEach(([v])=>assert.equal(bankIsReserved({purpose:v}),v==="emergency",
+    `every offered purpose must have a defined meaning: "${v}"`));
 });
 
 console.log(`\n${n-fails}/${n} passed`);
