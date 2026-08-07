@@ -1,6 +1,49 @@
 # Current Status
 
-_Last updated: 2026-08-07 (fresh-device sync contamination fixed, v1.29.0)_
+_Last updated: 2026-08-07 (Reset auto-push hole closed, v1.29.1)_
+
+---
+
+# 📋 SESSION HANDOVER — 2026-08-07 (v1.29.1)
+
+**v1.29.0 shipped and is on both devices; the iPad was recovered by
+reinstalling the PWA, which used the new adopt path and matched the iPhone
+exactly.** v1.29.1 follows it.
+
+## Why v1.29.1 exists
+
+v1.29.0's own change to Settings' Reset — from "load sample data" to "empty
+this device" — was a quieter version of the bug that release fixed. Reset marks
+the document dirty, the idle autosave fires ~8s later, and the emptied device
+uploads itself, so the other phone empties too. See `docs/decisions.md`,
+"Reset was the same bug, quieter".
+
+## What changed
+
+- `PROVENANCE_KEY` now holds `"sample"` **or** `"reset"` — one behaviour, two
+  values. Reset calls `markResetData()`, so an emptied device cannot auto-push.
+- **Reset keeps preferences** (`resetToEmptyDoc`/`RESET_KEEPS`). Without this
+  the next pull returned the records but the owner names as "Me"/"My wife" —
+  the reset device's fresh settings stamps beat the cloud's in
+  `mergeSettingPaths`.
+- **The mark lifts on record count**, not on `stillDirty`
+  (`countLocalRecords(merged) <= countLocalRecords(remote)`). The obvious gate
+  left the reset device held forever.
+- Settings gained a line under Reset: "Empties this device only."
+
+## Verified
+
+18 runners green (`synconnecttest.cjs` now 33 cases), parsecheck, `stage.cjs`.
+In Chrome against `sandboxworker.cjs`:
+
+| Scenario | Result |
+|---|---|
+| Established device → Reset | **0 requests** over 25s despite the doc being dirty |
+| Reset → Pull | records **and** owner names recovered; mark cleared, device syncs again |
+| Sample loaded → Pull | demo records merge locally but mark **stays**; 0 requests over 22s |
+
+Both follow-on defects (settings loss, permanent hold) were found only by
+driving the app — the unit tests passed throughout.
 
 ---
 

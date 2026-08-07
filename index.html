@@ -2136,8 +2136,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.29.0";
-const BUILD_ID="2026.08.07.0001";
+const APP_VERSION="1.29.1";
+const BUILD_ID="2026.08.07.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3462,21 +3462,41 @@ const VIEW_PROFILE_KEY="allocation:viewProfile";
    seconds of load, so the mark cleared itself before anyone touched anything,
    and the demo dataset auto-pushed exactly as before.
 
-   So the question "has a person edited this?" is not asked at all. Sample data
-   stops being sample when somebody says so, at one of exactly three points:
+   So the question "has a person edited this?" is not asked at all. The mark
+   ends when somebody says so, at one of exactly three points:
      • an explicit Save to Cloud   (they chose to share it)
-     • Reset to empty              (it's gone)
      • adopting or merging a cloud document (it's been replaced or absorbed)
+     • loading sample data or resetting again (replaced by the other kind)
    Anything else keeps it local. A person who builds on the demo data has to
    press Save to Cloud once, which is precisely what the button's own message
    tells them — and the failure mode of being too sticky is a manual tap, while
    the failure mode of being too eager is somebody else's phone filling up with
-   fake accounts. */
+   fake accounts.
+
+   TWO marks, not one — "sample" and "reset". Both mean "this state was
+   manufactured on this device and may not travel on its own", and the push
+   guard treats them identically; they are distinguished only so the message
+   shown can name what is actually being held back.
+
+   `reset` was added 2026-08-07 after "Reset to empty" was found to be a
+   quieter version of the very bug this file exists to prevent. Reset marks the
+   document dirty, the idle autosave fires ~8s later, and the emptied device
+   uploads itself — so a button that reads as "clean up this device" reached
+   the other phone. The blast radius was smaller than it sounds (Reset writes
+   no tombstones, so the other device's next merge restores everything and
+   pushes it back), but it depended on another device being around to heal it,
+   and "your data reappears once you open the other phone" is not a thing
+   anybody should have to know. */
 const PROVENANCE_KEY="allocation:provenance";
+const MANUFACTURED=new Set(["sample","reset"]);
 const markSampleData=()=>{try{localStorage.setItem(PROVENANCE_KEY,"sample");}catch(e){}};
+const markResetData=()=>{try{localStorage.setItem(PROVENANCE_KEY,"reset");}catch(e){}};
 const clearSampleMark=()=>{try{localStorage.removeItem(PROVENANCE_KEY);}catch(e){}};
 const getProvenance=()=>{
-  try{return localStorage.getItem(PROVENANCE_KEY)==="sample"?"sample":"user";}catch(e){return "user";}
+  try{
+    const v=localStorage.getItem(PROVENANCE_KEY);
+    return MANUFACTURED.has(v)?v:"user";
+  }catch(e){return "user";}
 };
 
 /* theme is a per-device UI preference (see PROFILE_KEY / allocation:theme in
@@ -3864,6 +3884,25 @@ function countLocalRecords(d){
   return n;
 }
 
+/* ── "Reset to empty" — clears RECORDS, keeps preferences ─────────────────────
+   Emptying the preferences too looks tidier and is wrong twice over. A person
+   resetting a device means "clear my data", not "forget my name"; and on the
+   next pull the reset device's freshly-stamped defaults BEAT the cloud's real
+   settings in mergeSettingPaths, so the data came back while the owner names
+   came back as "Me"/"My wife" — observed 2026-08-07. Carrying the preferences
+   across means a reset device has nothing to disagree with the cloud about. */
+const RESET_KEEPS=["currency","owners","theme","payPeriods","homeDisplay","homeSettings",
+  "settings","investTarget","projection","billsSettings","fieldUpdatedAt"];
+function resetToEmptyDoc(prev){
+  const out=structuralDefaults();
+  const p=prev||{};
+  RESET_KEEPS.forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});
+  // splitMine is a preference living inside `household`, whose expenses are records.
+  if(p.household&&p.household.splitMine!==undefined)
+    out.household={...out.household,splitMine:p.household.splitMine};
+  return out;
+}
+
 /* Everything that is a *preference* rather than a record. Compared only to
    decide whether adopting the cloud silently is worth a one-line note — never
    to decide whether to push, so it stays out of both fingerprints. `theme` is
@@ -3901,15 +3940,18 @@ function syncConnectDecision(ctx){
   // An established device has a real ancestor, so the normal merge machinery
   // applies and nothing below changes for it. This branch must stay first.
   if(c.hasBaseline)return{action:"merge",post:true,banner:false};
+  /* A manufactured document — the demo dataset, or one emptied by Reset — may
+     not travel on its own, whichever of the two it is. Both are states this
+     device invented rather than received, and neither is something the other
+     phone asked for. */
+  const manufactured=c.provenance!=="user"&&c.provenance!==undefined;
   // Empty cloud: there is nothing to contaminate and somebody has to write
-  // first. Sample data still may not be what seeds a shared document.
-  if(!c.remoteExists)
-    return c.provenance==="sample"
-      ?{action:"onboard",post:false,banner:false}
-      :{action:"onboard",post:true,banner:false};
+  // first — but a manufactured document still may not be what seeds a shared
+  // one.
+  if(!c.remoteExists)return{action:"onboard",post:!manufactured,banner:false};
   // From here: no baseline, and the cloud already holds a real document.
-  // Untouched demo data has no claim on it whatsoever.
-  if(c.provenance==="sample")return{action:"adopt",post:false,banner:false};
+  // A manufactured document has no claim on it whatsoever.
+  if(manufactured)return{action:"adopt",post:false,banner:false};
   // Nothing a person made — adopt the cloud exactly. A settings-only
   // difference is worth a dismissible line, never a blocking dialog.
   if(!c.localHasRecords)return{action:"adopt",post:false,banner:!!c.localDiffersInSettings};
@@ -4629,6 +4671,8 @@ function App(){
               if(merged){
                 resolved=merged;
                 meta.hasUnsyncedChanges=fingerprint(merged)!==remoteFP;
+                // Nothing manufactured survived — see the same guard in pullFromCloud.
+                if(countLocalRecords(merged)<=countLocalRecords(remoteMigrated))clearSampleMark();
               }else if(!cancelled){
                 resolved=localResolved;
                 conflictShown=true;
@@ -4914,12 +4958,21 @@ function App(){
       setSyncMsg("Choose what to do with this device's data first");
       setTimeout(()=>setSyncMsg(""),4000);return;
     }
-    /* Untouched sample data never reaches the cloud on its own. Only a
-       deliberate Save to Cloud can share the demo dataset, and doing so ends
-       its sample status — it is somebody's real starting point from then on. */
-    if(getProvenance()==="sample"){
+    /* A manufactured document — the demo dataset, or an emptied one — never
+       reaches the cloud on its own. Only a deliberate Save to Cloud can share
+       it, and doing so ends the mark: from then on it is somebody's real
+       starting point.
+
+       The reset half of this is the important one. Without it, tapping "Reset
+       to empty" left the document dirty and the idle autosave uploaded the
+       emptied device ~8s later, so a button that reads as "clean up this
+       device" silently emptied the other phone too. */
+    const manufactured=getProvenance();
+    if(manufactured!=="user"){
       if(reason!=="manual"&&reason!=="gesture"){
-        setSyncMsg("Sample data won't sync — use Save to Cloud if you meant to");
+        setSyncMsg(manufactured==="reset"
+          ?"This device was reset — use Save to Cloud if you meant to clear the cloud too"
+          :"Sample data won't sync — use Save to Cloud if you meant to");
         setTimeout(()=>setSyncMsg(""),4000);return;
       }
       clearSampleMark();
@@ -5213,6 +5266,8 @@ function App(){
           setLocalRev(remoteRev);
           setCloudRev(remoteRev);
           setSyncStatus("synced");
+          // Identical to the cloud — nothing manufactured survives here either.
+          clearSampleMark();
           setSyncMsg("Already up to date ✓");
         }else{
           /* Before merging, ask whether merging is even the right verb. Without
@@ -5247,6 +5302,21 @@ function App(){
           if(merged){
             const mergedFP=fingerprint(merged);
             const stillDirty=mergedFP!==remoteFP;
+            /* A manufactured document stops being manufactured once none of it
+               survived the merge — which is what a reset device's first pull
+               achieves, and is what stops it being held back from syncing
+               forever.
+
+               The test is RECORD COUNT, not `stillDirty`. Gating on stillDirty
+               looked right and left the device held anyway: a reset device
+               keeps its preferences, so the merged result differs from a cloud
+               document that happens to carry fewer settings fields, and it is
+               never byte-equal no matter how correct it is. Counting records
+               asks the question that actually matters — did this device add
+               anything of its own? A reset device adds nothing; sample data
+               merged onto an established device adds fifteen categories and
+               must stay held. */
+            if(countLocalRecords(merged)<=countLocalRecords(remoteMigrated))clearSampleMark();
             stashPreCloudBackup(dataRef.current,"before merging cloud changes");
             skipSave.current=true;
             setData(merged);
@@ -14722,11 +14792,18 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             contamination bug through a second door: it replaced real data with
             sample records, the persist effect flagged the document dirty, and
             the idle autosave pushed the demo data to the other phone. */}
-        <button onClick={()=>confirm?(clearSampleMark(),setData(migrate(structuralDefaults())),flash("Reset — this device is now empty")):setConfirm(true)}
+        <button onClick={()=>confirm
+            ?(()=>{setData(d=>migrate(resetToEmptyDoc(d)));markResetData();setConfirm(false);
+                   flash(kvReady?"This device is now empty — the cloud still has your data":"This device is now empty");})()
+            :setConfirm(true)}
           style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
             background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
           <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to empty"}
         </button>
+        {kvReady&&
+          <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginTop:6}}>
+            Empties this device only. The cloud copy and your other device keep their data until you deliberately Save to Cloud.
+          </div>}
         {/* Sample data is explicit and marked. markSampleData() is what stops
             it from ever being auto-pushed; only a deliberate Save to Cloud can
             share it, and doing so ends its sample status. */}

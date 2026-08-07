@@ -514,15 +514,34 @@ The other outcomes are `adopt` (take the cloud document exactly, zero POST),
   baseline and offers an overwrite; from a device that has never synced, that
   button would destroy the other phone's entire dataset while being unable to
   show what it was destroying. The chooser offers merge-with-counts instead.
-- **Sample-data provenance is per-device `localStorage`** (`PROVENANCE_KEY`),
-  never a field in `data` — same reasoning as `VIEW_PROFILE_KEY`, plus: a
-  synced `provenance` would travel and make the receiving phone distrust its
-  own records. The mark is **sticky**, cleared only by an explicit Save to
-  Cloud, Reset to empty, or adopting/merging a cloud document. An earlier
-  version anchored it to the document's fingerprint so edits would clear it
-  automatically; the bills reconciler, daily snapshot and quote refresh all
-  mutate the document within seconds of load, so it cleared itself and the
-  demo dataset auto-pushed exactly as before. Do not reintroduce that.
+- **Provenance is per-device `localStorage`** (`PROVENANCE_KEY`), never a field
+  in `data` — same reasoning as `VIEW_PROFILE_KEY`, plus: a synced
+  `provenance` would travel and make the receiving phone distrust its own
+  records. Two values, `"sample"` and `"reset"`, meaning **this state was
+  manufactured on this device and may not travel on its own**; the push guard
+  treats them identically and they differ only so the message can name what is
+  held back. The mark is **sticky** — cleared by an explicit Save to Cloud, or
+  when a pull/merge leaves no manufactured record behind.
+  Two traps, both hit in practice on 2026-08-07:
+  - An earlier version anchored the mark to the document's fingerprint so any
+    edit would clear it automatically. The bills reconciler, daily snapshot and
+    quote refresh all mutate the document within seconds of load, so it cleared
+    itself and the demo dataset auto-pushed exactly as before. Don't.
+  - Clearing it after a merge is gated on **record count**
+    (`countLocalRecords(merged) <= countLocalRecords(remote)`), not on
+    `stillDirty`. A reset device keeps its preferences, so its merge result is
+    never byte-equal to a cloud document carrying fewer settings fields, and a
+    `stillDirty` gate left it held forever. Record count asks the question that
+    matters: did this device contribute anything of its own?
+- **"Reset to empty" clears RECORDS, keeps preferences** (`resetToEmptyDoc`,
+  `RESET_KEEPS`). Two reasons: a person resetting means "clear my data", not
+  "forget my name"; and a reset that wipes settings comes back from the next
+  pull with the reset device's freshly-stamped defaults **beating** the cloud's
+  real settings in `mergeSettingPaths`, so the data returns while the owner
+  names return as "Me"/"My wife". Reset also calls `markResetData()` — without
+  it, Reset marks the doc dirty and the idle autosave uploads the emptied
+  device ~8s later, so a button reading "clean up this device" empties the
+  other phone too.
 - `migrate()` now defaults `goals`/`investments`/`banks`/`assets` to `[]`.
   Without that, adopting a sparse cloud document left the device differing
   from the baseline just recorded for it, and it pushed a normalised copy

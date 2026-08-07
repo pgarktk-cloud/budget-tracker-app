@@ -1,5 +1,42 @@
 # Architectural & Technical Decisions
 
+## Reset was the same bug, quieter (2026-08-07, v1.29.1)
+
+v1.29.0 changed Settings' Reset from "load sample data" to "empty this
+device". That looked like a straightforward improvement and introduced a
+quieter version of the bug the release was fixing: Reset marks the document
+dirty, the idle autosave fires ~8s later, and the emptied device uploads
+itself. A button that reads as "clean up this device" reached the other phone.
+
+The blast radius was smaller than it sounds — Reset writes no tombstones, so
+the other device's next merge restores everything and pushes it back — but that
+depends on another device being around to heal it, and "your data comes back
+once you open the other phone" is not something anybody should have to know.
+The old behaviour was arguably safer for the wrong reason: pushing *sample
+records* is obviously wrong on sight, while pushing *nothing* is not.
+
+The fix reuses the mark built for sample data, so `PROVENANCE_KEY` now holds
+`"sample"` or `"reset"` — one behaviour, two values, distinguished only so the
+message can say which. Two follow-on corrections, both found by driving the
+real app rather than by reasoning:
+
+**Reset must keep preferences.** Emptying them too meant the next pull brought
+the records back but the owner names back as "Me"/"My wife": the reset device's
+freshly-stamped defaults beat the cloud's real settings in
+`mergeSettingPaths`. Keeping preferences leaves a reset device with nothing to
+disagree with the cloud about, which is both the correct merge behaviour and
+the correct reading of what "reset" means to a person.
+
+**Lifting the mark is gated on record count, not on cleanliness.** The obvious
+gate — clear it once the device is no longer dirty — left the reset device held
+forever, because a device that keeps its preferences is never byte-equal to a
+cloud document carrying fewer settings fields. `countLocalRecords(merged) <=
+countLocalRecords(remote)` asks the question that actually matters: did this
+device contribute anything of its own? A reset device contributes nothing;
+sample data merged onto an established device contributes fifteen categories
+and must stay held. Both verified in the browser: reset → pull recovers data
+and names and frees the device, sample → pull stays silent for 22s while dirty.
+
 ## A merge needs a shared ancestor (2026-08-07)
 
 A new Safari/PWA origin booted on the **sample dataset**, and entering the sync

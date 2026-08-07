@@ -72,13 +72,16 @@ this.countLocalRecords=countLocalRecords;
 this.settingsSignature=settingsSignature;
 this.syncConnectDecision=syncConnectDecision;
 this.markSampleData=markSampleData;
+this.markResetData=markResetData;
+this.resetToEmptyDoc=resetToEmptyDoc;
+this.RESET_KEEPS=RESET_KEEPS;
 this.clearSampleMark=clearSampleMark;
 this.getProvenance=getProvenance;
 this.RECORD_COLLECTIONS=RECORD_COLLECTIONS;
 `,ctx);
 
 const{structuralDefaults,sampleData,defaultData,migrate,countLocalRecords,
-  settingsSignature,syncConnectDecision,markSampleData,clearSampleMark,
+  settingsSignature,syncConnectDecision,markSampleData,markResetData,resetToEmptyDoc,RESET_KEEPS,clearSampleMark,
   getProvenance,RECORD_COLLECTIONS}=ctx;
 
 assert.ok(typeof syncConnectDecision==="function","syncConnectDecision was not sliced out");
@@ -357,6 +360,80 @@ t("provenance: absent means USER, never sample",()=>{
      the next connection. */
   clearSampleMark();
   assert.equal(getProvenance(),"user");
+});
+
+t("reset: an emptied device is held back from auto-push, exactly like sample",()=>{
+  /* "Reset to empty" was a quieter version of the original bug. It marks the
+     document dirty, the idle autosave fires ~8s later, and the emptied device
+     uploads itself — so a button reading "clean up this device" emptied the
+     other phone too. Both marks must be indistinguishable to the push guard. */
+  clearSampleMark();
+  markResetData();
+  assert.equal(getProvenance(),"reset");
+  const d=syncConnectDecision({hasBaseline:false,provenance:getProvenance(),
+    localHasRecords:false,localDiffersInSettings:false,remoteExists:true});
+  assert.equal(d.post,false,"an emptied device must not push");
+  const onto_empty=syncConnectDecision({hasBaseline:false,provenance:getProvenance(),
+    localHasRecords:false,localDiffersInSettings:false,remoteExists:false});
+  assert.equal(onto_empty.post,false,"...nor seed an empty cloud with its emptiness");
+  clearSampleMark();
+});
+
+t("reset: the two marks are distinct values but one behaviour",()=>{
+  /* Distinguished only so the on-screen message can name what is held back;
+     every decision must treat them the same. */
+  const forEach=p=>[true,false].map(remoteExists=>
+    syncConnectDecision({hasBaseline:false,provenance:p,localHasRecords:true,
+      localDiffersInSettings:true,remoteExists}));
+  deepEqual(forEach("reset"),forEach("sample"),
+    "a reset document and a sample one must reach identical decisions");
+  assert.ok(forEach("reset").every(d=>d.post===false),"neither may ever push");
+});
+
+t("reset: clears records but KEEPS preferences",()=>{
+  /* Emptying preferences too meant that on the next pull the reset device's
+     freshly-stamped defaults beat the cloud's real settings in
+     mergeSettingPaths: the data came back, but the owner names came back as
+     "Me"/"My wife". Observed in the browser 2026-08-07. */
+  const before=migrate(defaultData());
+  before.currency="PHP";
+  before.owners={me:"Jastine",wife:"Charlene"};
+  before.payPeriods.me.enabled=true;
+  const after=migrate(resetToEmptyDoc(before));
+
+  assert.equal(countLocalRecords(after),0,"every record must be gone");
+  assert.equal(after.currency,"PHP","currency is a preference, not data");
+  assert.equal(after.owners.me,"Jastine","a reset must not forget your name");
+  assert.equal(after.owners.wife,"Charlene");
+  assert.equal(after.payPeriods.me.enabled,true,"pay-period config survives");
+  assert.equal(after.household.splitMine,before.household.splitMine,
+    "splitMine is a preference living inside a record-bearing object");
+});
+
+t("reset: a reset device has nothing left to disagree with the cloud about",()=>{
+  /* The point of keeping preferences: settingsSignature must be unchanged, so
+     the settings merge has no conflict to resolve in the reset device's favour. */
+  const before=migrate(defaultData());
+  before.owners={me:"Jastine",wife:"Charlene"};
+  before.currency="PHP";
+  assert.equal(settingsSignature(migrate(resetToEmptyDoc(before))),settingsSignature(before),
+    "a reset must not change a single preference");
+});
+
+t("reset: every RESET_KEEPS key is one the empty shape actually has",()=>{
+  /* A typo here would silently drop a preference on every reset. */
+  const empty=structuralDefaults();
+  RESET_KEEPS.filter(k=>k!=="fieldUpdatedAt").forEach(k=>
+    assert.ok(k in empty,`RESET_KEEPS names "${k}", which structuralDefaults() does not produce`));
+});
+
+t("reset: an ESTABLISHED device that resets still merges — it is not stranded",()=>{
+  /* The mark blocks the automatic push, not syncing itself. A reset device with
+     a baseline still merges on its next pull, which is what brings its data
+     back down rather than leaving it empty forever. */
+  const d=syncConnectDecision({hasBaseline:true,provenance:"reset",
+    localHasRecords:false,localDiffersInSettings:false,remoteExists:true});
+  assert.equal(d.action,"merge","a reset established device must still reconcile");
 });
 
 t("provenance: a sample device is refused the cloud, and never pushes to it",()=>{
