@@ -45,6 +45,41 @@ In Chrome against `sandboxworker.cjs`:
 Both follow-on defects (settings loss, permanent hold) were found only by
 driving the app — the unit tests passed throughout.
 
+## Files touched across this whole session (v1.29.0 + v1.29.1)
+
+### Created
+
+| File | Purpose |
+|---|---|
+| `synconnecttest.cjs` | **Runner #18.** 33 assertions — `syncConnectDecision`, the record-vs-settings distinction, sample/reset provenance, `resetToEmptyDoc`, plus three *source-structure* assertions pinning guards that live in `App()` effects and cannot be sliced (the connect effect must not set `cloudConfirmedRef`; `pullFromCloud` must set it only after `cloudDocProblem`; the no-baseline guard must precede the conflict-retry merge). |
+| `samplescan.cjs` | Tooling, **not a runner** — finds demo records inside a real backup by value + cohort date, never by name. Reports only; `--remove` takes explicit ids and writes a separate `.cleaned.json`. Never run against real data yet. |
+
+### Modified
+
+| File | What |
+|---|---|
+| `index.html` | `defaultData()` split; `syncConnectDecision`, `countLocalRecords`, `settingsSignature`, `resetToEmptyDoc`, `RESET_KEEPS`, `RECORD_COLLECTIONS`; provenance helpers; `FirstConnectSheet`; `adoptCloudDoc`; the three connect call sites; `migrate()` defaults for `goals`/`investments`/`banks`/`assets`; Settings' Reset + Load-sample buttons |
+| `importtest.cjs`, `cloudguardtest.cjs` | Slice start marker moved to `function structuralDefaults(){`; cloudguard gained 2 cases (empty doc passes the gate; the empty shape carries no sample records) |
+| `sw.js`, `version.json` | Build ids, twice |
+| `CLAUDE.md` | New "Connecting a device" section; `defaultData` split; provenance and Reset rules; runner count 17 → 18 |
+| `docs/decisions.md` | Two entries: "A merge needs a shared ancestor", "Reset was the same bug, quieter" |
+| `docs/current-status.md` | This handover |
+
+**Commits:** `661269c` (v1.29.0), `e8ed2ee` (v1.29.1). Both **local only —
+`origin` has not been pushed.**
+
+## Left undone this session
+
+- **The live cloud document was never cleaned.** Prevention only, by choice.
+  `samplescan.cjs` exists for it and is waiting on a `Settings → Download`
+  export. Note the trap it was written around: `defaultData()`'s seed records
+  were authored from the user's real life ("Charlene", "Tuition Fee Wife",
+  "Braces", "Toyota Raize"), so name-matching would delete genuine records.
+- **v1.29.1 has not been verified on real hardware.** Every browser check was
+  desktop Chrome against `sandboxworker.cjs`. v1.29.0 *is* on both devices;
+  1.29.1 is deployed but unconfirmed on the phones.
+- No per-view onboarding empty states — a fresh device is blank-but-working.
+
 ---
 
 # 📋 SESSION HANDOVER — 2026-08-07
@@ -177,7 +212,46 @@ new origin in `ALLOWED_ORIGINS`), `suggesttest.cjs` (11 → 26 assertions),
 
 # ⚠️ KNOWN BUGS, LIMITATIONS AND UNFINISHED WORK
 
-_Current as of 2026-08-06. Supersedes the older list further down this file._
+_Current as of 2026-08-07. Supersedes the older list further down this file._
+
+## From the 2026-08-07 sync session
+
+- **Sample records may still be sitting in the live cloud document.** Not
+  cleaned, by choice. `samplescan.cjs` is committed and ready but has never
+  been run against real data. It needs a `Settings → Download` export, and
+  optionally an older pre-contamination export via `--before` for a third
+  signal. **Do not match on name** — see the note in the handover above.
+- **A device that loses `localStorage` but keeps nothing else becomes "new"
+  again.** The whole first-connection scheme keys on
+  `meta.lastCloudSnapshot != null`. iOS evicts PWA storage under pressure and
+  after long disuse, so a phone that has synced for months can present itself as
+  a fresh device. It **fails safe** — it routes to the blocking chooser, not to
+  silent contamination — but the chooser will occasionally appear to a
+  long-standing device and the copy doesn't anticipate that.
+- **`migrate()` may still be missing defaults for other collections.** Four
+  (`goals`/`investments`/`banks`/`assets`) were found missing only because
+  adopting a sparse cloud document exposed them. Nobody has audited the rest
+  against `BACKUP_ARRAY_KEYS`. The symptom is subtle: a device adopts, then
+  immediately pushes a normalised copy back.
+- **"Decide later" in `FirstConnectSheet` leaves a device unsynced
+  indefinitely.** Deliberate — the question genuinely hasn't been answered, and
+  it re-asks on the next pull — but nothing nags, so a device could sit
+  disconnected for weeks unnoticed.
+- **There is no longer a true factory reset.** Reset now keeps preferences by
+  design. Clearing currency/owners/pay-periods requires deleting site data.
+- **`sampleData()`'s demo records are indistinguishable from real ones by
+  shape.** The only reliable discriminators are exact values and shared cohort
+  dates. If the seed data is ever edited, `samplescan.cjs` follows it
+  automatically (it slices from `index.html`), but any *already-contaminated*
+  document becomes harder to clean.
+- **`sandboxworker.cjs` answers every POST with `conflict:true` and stores
+  nothing.** So a *successful* push has never been exercised against it — the
+  observed POST retries in testing were that artifact, not an app loop. Real
+  push success is only ever verified against the live Worker.
+- **Three of `synconnecttest.cjs`'s assertions match source text**, not
+  behaviour, because the guards they protect live inside `App()` effects.
+  They break loudly if that code is reworded — that is the intended trade, but
+  a future refactor should update them rather than delete them.
 
 ## Needs attention before it's forgotten
 
@@ -254,7 +328,26 @@ _Current as of 2026-08-06. Supersedes the older list further down this file._
 
 # ▶️ NEXT STEPS
 
-In rough order of value. Nothing is blocked on anything else.
+**Do these first — they close out 2026-08-07 and are cheap.**
+
+0a. **`git push`.** Two releases (`661269c`, `e8ed2ee`) are committed locally
+    and deployed to production, but `origin` has neither. Production is
+    currently running code that exists in exactly one place.
+0b. **Update both phones to v1.29.1** and confirm on real hardware: Settings →
+    "Update Available — Reload", swipe-close the PWA if it doesn't take.
+    v1.29.1 has only ever been verified in desktop Chrome. Worth doing before
+    anyone presses Reset on a device still running 1.29.0, which still has the
+    auto-push hole.
+0c. **Clean the sample records, if any survived.** `Settings → Download` on
+    either phone, then `node samplescan.cjs <file.json>` — it reports and
+    changes nothing. Review, then `--remove <ids>`, then import the cleaned
+    file through Settings → Import (which previews it and keeps a safety copy).
+    Soft-deletes, so the tombstones propagate correctly to the other device.
+0d. **Audit `migrate()` for the remaining missing defaults** — walk
+    `BACKUP_ARRAY_KEYS` and check each has a default. Same class of bug as the
+    four found this session, and the symptom (adopt-then-push-back) is quiet.
+
+Then, in rough order of value. Nothing below is blocked on anything else.
 
 1. **5b — plan-vs-actual in `UnaccountedSheet`.** Fully scoped in `roadmap.md`.
    Two inputs that are easy to miss: use base `e.budget` (extra funds are
@@ -272,8 +365,16 @@ In rough order of value. Nothing is blocked on anything else.
 
 **Deploying** is now `node stage.cjs && npx wrangler pages deploy site
 --project-name=whered-it-go --branch=main`. `stage.cjs` refuses to ship if the
-three `BUILD_ID` sites drift. Run `node parsecheck.cjs <babel-path>` and all 17
+three `BUILD_ID` sites drift. Run `node parsecheck.cjs <babel-path>` and all 18
 runners first — see `CLAUDE.md`.
+
+Two deploy notes from 2026-08-07: wrangler infers the branch from git, so
+omitting `--branch=main` still produced a Production deployment — but pass it
+anyway rather than relying on that. And **Cloudflare's edge caches
+`version.json` and `sw.js` on the bare URL**, so a curl straight after a deploy
+can show the *previous* build while the new one is live. Append a cache-busting
+query (`?cb=1`) before concluding a deploy failed; the app's own update check
+already does this.
 
 ---
 

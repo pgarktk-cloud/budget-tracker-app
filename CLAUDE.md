@@ -375,7 +375,7 @@ redeploy the Durable-Object-bearing Worker.
   for months, now enforced. It rebuilds `site/` from scratch each run so a stale
   file can't be published silently.
 - **`site/` is build output** (gitignored). The seven served files stay at the
-  repo root, because `parsecheck.cjs` and all 17 runners read `index.html` from
+  repo root, because `parsecheck.cjs` and all 18 runners read `index.html` from
   there. Never move the source into `site/`.
 - **The repo is not the website.** Only those seven files ship; the runners,
   `worker.js`, `wrangler.jsonc` and `docs/` are tooling. Add a served file to
@@ -608,11 +608,35 @@ and an error naming a collection the user has never heard of.
   no-baseline guards that live in `App()` effects rather than a pure function).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
+- **A green suite does not mean a sync change works.** The 2026-08-07 session
+  shipped three defects past a fully green suite, each found only by driving
+  the app in a browser: `migrate()` missing four collection defaults (so a
+  device "adopted the cloud exactly" and then immediately pushed a normalised
+  copy back), a provenance mark anchored to the document fingerprint (cleared
+  by the bills reconciler within seconds of load), and a hold that never lifted
+  (gated on `stillDirty`, which a preference-keeping device never reaches).
+  All three are invisible to a pure function under test, because they are about
+  what the app's *effects* do to the document afterwards. **Anything touching
+  sync must be driven against `sandboxworker.cjs` with the network log open,
+  watching for POSTs across a full autosave window (wait 15–25s, not 3).**
+- **`samplescan.cjs`** is tooling, not a runner — it finds `sampleData()`
+  records inside a real backup. **It never matches on name, and neither should
+  anything else**: `defaultData()`'s seed set was authored from this user's
+  real life ("Charlene", "Tuition Fee Wife", "Braces", "Toyota Raize" are real
+  categories, and Toyota Raize is also a real asset), so a name sweep deletes
+  genuine data while appearing to work. It scores exact value match (sliced
+  from `index.html`, name excluded from the fingerprint), a shared cohort date,
+  and absence from an older backup passed via `--before`. Reports only;
+  `--remove` takes explicit ids, soft-deletes, and writes a *separate* file.
 - **`sandboxworker.cjs`** serves a sandbox copy *and* impersonates the Worker's
   `/sync` endpoints, switching between a good and a deliberately corrupt
   document on the fly. It is how the cloud-validation branches (and the
   new-device and self-heal paths) get exercised without touching live data —
-  usage is in its header comment.
+  usage is in its header comment. **It answers every POST with
+  `conflict:true` and stores nothing**, so a *successful* push is the one thing
+  it cannot exercise: repeated POSTs while testing are that artifact, not a
+  retry loop in the app. Its `GOOD` document is also deliberately sparse, which
+  is what exposed the `migrate()` defaults gap — don't "fix" it by fattening it.
   - Three traps: `assert.deepStrictEqual` compares prototypes and therefore
     fails on anything built inside the vm — use `deepEqual`. Slice markers
     are plain `indexOf` on source text, so they break silently when the code

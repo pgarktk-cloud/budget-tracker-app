@@ -1,5 +1,32 @@
 # Architectural & Technical Decisions
 
+## Cleaning up demo records can't match on name (2026-08-07)
+
+`samplescan.cjs` deliberately never matches a record by its name, which looks
+like an obvious way to find demo data and would delete real records here.
+
+`defaultData()`'s seed set was not written as generic filler — it was authored
+from this user's actual financial life. "Charlene", "Tuition Fee Wife",
+"Braces", "Postpaid Bill" and "Toyota Raize" are real budget categories, and
+Toyota Raize is also a real asset. Any name-based sweep deletes genuine data
+while looking like it is working.
+
+So the tool scores three independent signals and never sums them into an
+automatic verdict: exact **value** match against `sampleData()` (sliced from
+`index.html`, so it cannot drift from what the app actually seeds, and
+deliberately excluding the name from the fingerprint); a **cohort date**, since
+every sample record carries the day the fresh device generated them and a real
+day rarely creates a bank, an asset, a goal and three investments at once; and
+**absence** from an older backup passed via `--before`. It reports; the person
+decides; `--remove` takes explicit ids. Removal is a soft delete to a *new*
+file, so it is reversible and its tombstones propagate correctly to the other
+device — a hard delete could not survive a merge.
+
+Verified against a fixture in which real records deliberately share names with
+seeded ones: all ten sample records were found, all four real ones left alone,
+and the one genuinely ambiguous record (an asset, which carries no date and so
+has no cohort signal) was reported as WEAK rather than silently removed.
+
 ## Reset was the same bug, quieter (2026-08-07, v1.29.1)
 
 v1.29.0 changed Settings' Reset from "load sample data" to "empty this
