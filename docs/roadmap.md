@@ -1,6 +1,32 @@
 # Implementation Roadmap
 
-## ▶ NEXT SESSION — Purchase Advisor Build B (Gemini narration), NOT started
+## ✅ Purchase Advisor Build B (Gemini narration) — DONE 2026-08-07, v1.36.0
+
+Shipped and deployed: Worker version `2897b1d2` first, then Pages build
+`2026.08.07.0009`. `aitest.cjs` (38 cases) and `aiburst.cjs` cover it; see
+`current-status.md` for the session note and `decisions.md` for the reasoning.
+
+The spec below is kept as the record of what was agreed and what was built. It
+was followed as written, with three additions the sandbox forced: the engine's
+own verdict is now sent explicitly (it was crossing the wire as `""`, leaving
+the model to judge for itself what counts as "thin"), the client carries its
+own 25s timeout above the Worker's 20s, and component-body declaration order is
+pinned by test after two temporal-dead-zone crashes.
+
+Two deviations from the spec as written, both deliberate:
+
+- **`rehydratePurchaseRefs` returns SEGMENTS, not React nodes.** The spec said
+  "a React fragment array"; segments (`{t:"text"|"ref", v}`) keep the function
+  a pure unit testable outside a browser, and let the caller choose the
+  emphasis element. The guarantee the spec was protecting — an array, never a
+  concatenated HTML string, no markdown renderer, no `dangerouslySetInnerHTML`
+  — holds exactly as stated. `aitest.cjs` case 4 asserts it.
+- **`buildPurchaseAiContext` takes one options object**, not
+  `(scenarios, stack, input)`. It needs the current bucket, the pay-period
+  config and the verdicts as well; the app's other multi-argument pure helpers
+  (`purchaseAvailableStack`) already take an object.
+
+### The original spec, as executed
 
 Everything needed to execute is in this section. The original grilling plan is
 at `~/.claude/plans/i-want-to-plan-majestic-pancake.md`, but that path is
@@ -8,8 +34,10 @@ machine-local and outside the repo — **treat this section as the spec**, and
 note that the engine has changed since that plan was written (see "What
 changed" below).
 
-Build B is the **only** remaining piece that touches `worker.js`, `wrangler.jsonc`
-or a secret. Builds A/A2/A3 deliberately touched none of them.
+Build B was the **only** piece that touches `worker.js`, `wrangler.jsonc` or a
+secret. Builds A/A2/A3 deliberately touched none of them. In the event
+`wrangler.jsonc` needed no change at all — the caps went onto the existing
+`SyncRoom` — so a deploy still cannot unbind `SYNC_ROOM` or `ALLOC_KV`.
 
 ### What it is, and what it is not
 
@@ -384,7 +412,7 @@ Two things learned worth reusing:
   (a newer build's unknown collections must pass) is asserted in
   `cloudguardtest.cjs` — keep it green.
 
-## Purchase Advisor — A, A2, A3 all DONE · B NOT built
+## Purchase Advisor — A, A2, A3 and B all DONE
 
 Follow-on fixes found by using it on real data:
 
@@ -420,7 +448,7 @@ Plan for A2/A3 at `~/.claude/plans/greedy-crunching-sprout.md` (grilling session
   present tense, so the flags appeared broken until this build. Recorded in
   `decisions.md` — don't split a feature so the visible half lands first.
 
-## Purchase Advisor — Build A DONE (2026-08-07, v1.31.0) · Build B NOT built
+## Purchase Advisor — Build A DONE (2026-08-07, v1.31.0) · Build B DONE (v1.36.0)
 
 Planned in a grilling session 2026-08-07; plan at
 `C:\Users\arjas\.claude\plans\i-want-to-plan-majestic-pancake.md`.

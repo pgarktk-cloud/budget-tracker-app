@@ -21,6 +21,16 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   investments, banks, etc.) do **not** require touching `worker.js`. Only touch
   it if the sync *protocol* itself changes (new endpoints, auth,
   request/response shape).
+  - Since 2026-08-07 it also serves **`POST /ai/advice`** (Build B), a one-shot
+    narration of the Purchase Advisor's output. It is schema-agnostic in the
+    opposite direction: it refuses anything that *looks* like document data, via
+    the flat `AI_CONTEXT_KEYS` allowlist walked over the whole request tree. The
+    app's `buildPurchaseAiContext` and that allowlist are two lists in two files
+    that must not drift — `aitest.cjs` case 1b pins them together. **Nothing on
+    this path is ever logged**: no prompt, context, response or figure, and
+    `wrangler.jsonc` has no `observability` block on purpose. Spend caps are
+    methods on the existing `SyncRoom` under their own `aiCounters` storage key
+    (never mixed into the document key, which would rewrite ~150KB per call).
   - Since 2026-08-05 sync lives in a **Durable Object** (`SyncRoom`), not plain
     KV: KV had no compare-and-swap, so the rev check was a race, and the three
     separate puts could tear. The whole document commits under **one** storage
@@ -452,6 +462,24 @@ redeploy the Durable-Object-bearing Worker.
 - Deployment is **direct upload**, deliberately — not Git-triggered. It gives
   immediate readable output, which is exactly what the GitHub pipeline never did.
 
+**Setting a Worker secret: the value goes on STDIN, never on the command line.**
+`npx wrangler secret put NAME` takes the *name* as its argument and prompts for
+the value. Passing the key as that argument creates a secret **named** after
+your key — and secret *names* are not encrypted: they come back in plaintext
+from `wrangler secret list`, the dashboard and the API. That happened on
+2026-08-07 with the Gemini key, which then had to be rotated.
+
+Two follow-ons, both learned the same day:
+- **`wrangler secret put` must be run in a REAL terminal.** Claude Code's `!`
+  prefix is non-interactive, so the `Enter a secret value:` prompt never
+  appears and wrangler silently takes an empty stdin — you get
+  `✨ Success! Uploaded secret` for an **empty** value. The tell is the absence
+  of the prompt line in the output. (Same mechanism makes destructive commands
+  auto-confirm: `🤖 Using fallback value in non-interactive context: yes`.)
+- An empty key is distinguishable from a wrong one at runtime without ever
+  reading it: `/ai/advice` answers **503** when `env.GEMINI_API_KEY` is falsy
+  and **502** when Google rejects it. `aiburst.cjs` reports which.
+
 **A new hosting origin needs a Worker change.** `ALLOWED_ORIGINS` in `worker.js`
 gates browser access; an origin missing from it loads the app fine and then
 fails every sync with a CORS error — the worst failure shape, because it looks
@@ -487,6 +515,22 @@ automation for reasons unrelated to the code.
 
 Autofocus is **conditional or it's a regression**: focusing a text field when
 the user's next step is a `<select>` buries the list behind the keyboard.
+
+## Declaration order inside a component body is load-bearing
+
+`const` in a component body is block-scoped, so reading one above its
+declaration is a **temporal-dead-zone throw at render time** — the app blanks
+into its error boundary and the console shows an error nobody is watching for.
+This is invisible to every runner, because each pure function still passes: it
+is a fact about the order of statements, not about any function's behaviour.
+Build B hit it twice in one session (`canAsk` reading `ready`, then
+`aiVerdicts` reading `cashVerdict`), both times only visible in a browser.
+
+Two consequences. When adding a `useMemo`/`useCallback` block to a long
+component, **insert it after everything it reads**, not at the logically tidy
+spot. And when the ordering matters, pin it: `aitest.cjs` case 7b2 asserts the
+source positions of five such pairs, comparing `indexOf` on comment-stripped
+source. Cheap, and it fails loudly instead of blanking the app.
 
 ## Navigation
 
@@ -649,7 +693,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are nineteen, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -675,7 +719,13 @@ and an error naming a collection the user has never heard of.
   and `purchasetest.cjs` (the Purchase Advisor engine: headroom vs the SLICED
   BudgetView expression, per-bank withholding, the savings plan, and three
   source-structure assertions pinning "touches no synced data" and "never
-  materialises a plan").
+  materialises a plan"),
+  and `aitest.cjs` (Build B's narration path — and the **first runner to cover
+  `worker.js` at all**, which is why it slices from two files: the context's
+  no-leak property proven by ABSENCE over a fixture stuffed with real names,
+  ids, dates and a token; the two allowlists pinned against cross-file drift;
+  the guard ORDER before the paid call; `tools` absent so grounding cannot be
+  prompt-enabled; and the component-body declaration order below).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -691,7 +741,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  nineteen" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -704,6 +754,14 @@ and an error naming a collection the user has never heard of.
   has one — the narrow case a fixture would most easily miss. It proves the two
   expressions agree with each other, not that either is right: confirm one row
   against the app's own Budget tab before trusting a clean run.
+- **`aiburst.cjs`** is tooling, not a runner — it makes **real, paid** Gemini
+  calls against the DEPLOYED Worker, so it must never join the sweep. It proves
+  the four `/ai/advice` rejections in cost order (401 unauthenticated, 413
+  oversized, 400 document-shaped keys, 429 at the 6th call in a minute) and is
+  the only thing that exercises the Durable Object's `aiCheck` — the DO handler
+  still has no unit test. A 7-call run costs well under a cent. **It takes the
+  passphrase on stdin and never as an argument**, which needs a real terminal;
+  see the secrets note under "Hosting" for why that distinction is load-bearing.
 - **`samplescan.cjs`** is tooling, not a runner — it finds `sampleData()`
   records inside a real backup. **It never matches on name, and neither should
   anything else**: `defaultData()`'s seed set was authored from this user's

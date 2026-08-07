@@ -1,5 +1,73 @@
 # Architectural & Technical Decisions
 
+## An allowlist you BUILD cannot leak; one you FILTER can (2026-08-07, v1.36.0)
+
+Build B sends a slice of the household's financial position to Google. The
+whole design question was how to guarantee what does *not* go.
+
+The obvious approach is a redactor: take the objects the advisor already has,
+strip names and ids, send the rest. That is a **filter**, and a filter has a
+failure mode that is invisible in review — someone adds a field upstream, the
+filter doesn't know about it, and it ships. The filter is correct on the day it
+is written and silently wrong afterwards.
+
+`buildPurchaseAiContext` instead **constructs a fresh object**, naming every
+field it emits. Nothing is copied from `data`. A new field upstream cannot
+appear in the payload by default; it can only appear if someone writes a line
+to put it there. The allowlist stops being a rule that must be maintained and
+becomes a property of the code's shape.
+
+Three consequences worth keeping:
+
+- **Category names never leave.** They become `{{ref1}}`, `{{ref2}}` … ordered
+  by amount, and the map from token to name stays on the device. The model can
+  say "trim `{{ref1}}`" without knowing it means Rent. Ordering by amount is
+  load-bearing: the model has no other way to tell them apart, so an arbitrary
+  order would make its suggestions arbitrary too.
+- **Bucket keys become indices.** A bucket key is a date, and a date is one
+  more identifying fact. The app labels them itself with the same
+  `bucketLabel` the cards use.
+- **Arrays that carry names become counts.** `reserved[]` and `inaccessible[]`
+  are per-account with names attached; only their lengths cross the wire.
+
+The Worker re-validates against a flat key allowlist walked over the whole
+tree. Not redundancy — the app is code running on a device, and "our client
+wouldn't send that" is not a security property. The two lists live in two files
+and would drift silently, so `aitest.cjs` case 1b walks the app's real output
+and asserts every key is one the Worker accepts.
+
+**The no-leak test is by ABSENCE.** It builds a context from a fixture stuffed
+with real names, ids, dates and a token, then asserts none of them appear
+anywhere in `JSON.stringify(ctx)`. Inspecting the builder proves what it meant
+to do; searching the output proves what it did. One caveat learned immediately:
+two-character owner keys like `"me"` occur inside honest field names
+(`perPayment`), so short tokens are checked as JSON values, not substrings — an
+assertion that fails on correct code is worse than no assertion.
+
+## Rejecting a whole narration beats repairing part of it (2026-08-07, v1.36.0)
+
+`validatePurchaseNarration` throws away the entire response if any single
+currency-shaped figure in the prose is absent from the context. It would be
+easy to strip the offending sentence instead. That would be worse.
+
+A narration that is mostly checked is unreadable as a trust signal: the reader
+cannot tell which sentence was the invented one, and nothing on screen marks
+the difference. Meanwhile the cards above are already correct and complete, so
+the cost of rejecting everything is *some prose*, not *some information*. The
+asymmetry is total, so the rule is total.
+
+This is what lets the panel render the model's text **verbatim**. It formats no
+figure of its own — it doesn't need to, because every figure in that text
+survived a check against the context. Had validation been partial, the panel
+would have had to re-derive numbers itself and the feature would have grown a
+second source of truth.
+
+Rounding is allowed (`SAR 3,213` for 3212.78) and is why the context rounds
+every float to 2dp before sending: a raw `3212.779999999999` can never be
+quoted back in a form that matches. Structural counts are deliberately not
+treated as currency — "over 4 periods" is the model describing what it was
+given, not quoting money.
+
 ## A derived record's identity must itself be derived (2026-08-07, v1.35.0)
 
 The Bills Reserve was reading exactly double, and the cause is worth stating in

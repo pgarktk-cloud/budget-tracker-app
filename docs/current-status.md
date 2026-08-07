@@ -1,22 +1,19 @@
 # Current Status
 
-_Last updated: 2026-08-07 (Bills Reserve double-count repaired, v1.35.0)_
+_Last updated: 2026-08-07 (Purchase Advisor Build B shipped, v1.36.0)_
 
 ## State of play — read this first
 
-**Live and verified: v1.35.0 / build `2026.08.07.0008`** at
-https://whered-it-go.pages.dev. Deployed and pushed; `main` is clean.
-All **nineteen** runners green.
+**Live and verified: v1.36.0 / build `2026.08.07.0009`** at
+https://whered-it-go.pages.dev, Worker version `2897b1d2`. All **twenty**
+runners green.
 
-**Next session: Purchase Advisor Build B (Gemini narration).** The full spec is
-at the top of `docs/roadmap.md` — self-contained, because the original plan
-file lives in `~/.claude/plans/` outside the repo. Read the "What changed in the
-engine since the plan was written" subsection before writing
-`buildPurchaseAiContext`: `purchaseAvailableStack` no longer has a `reserve`,
-and there is now a fourth `savings` scenario.
+**The Purchase Advisor is complete — A, A2, A3 and B all shipped.** There is no
+half-built feature carried into the next session for the first time in a while.
 
-Build B is the **only** remaining piece that touches `worker.js`,
-`wrangler.jsonc` or a secret. Deploy the Worker FIRST, then Pages.
+**Next session: pick from the open list below.** `5b — salary reconciliation`
+is the oldest unstarted item and the only one with a written rationale;
+everything else is a follow-up rather than a build.
 
 ### Shipped this session (2026-08-07)
 
@@ -27,16 +24,21 @@ Build B is the **only** remaining piece that touches `worker.js`,
 | A3 | 1.33.0 | The advisor uses the flags; per-bank `max(reserved, claimed)`; date-driven savings; goal handoff |
 | —  | 1.34.0 | Bills Reserve removed from the advisor |
 | —  | 1.35.0 | Bills Reserve double-count repaired (`billRowId` + `dedupeBillRows`) |
+| —  | —      | `headroomcheck.cjs`: advisor vs Budget on real data — 48 buckets, no drift |
+| B  | 1.36.0 | Gemini narration: `POST /ai/advice`, spend caps, the context builder, the validator, the panel |
 
 ### Open, carried forward — none blocking
 
 1. ~~**Cross-check the advisor's headroom against the Budget tab on REAL
-   data.**~~ **DONE 2026-08-07** — see the session note below. 48 buckets, both
-   owners, **no drift**. Build A's headline risk is closed and Build B is not
-   building on a wrong number. One cheap confirmation is still outstanding:
-   glance at Budget on a phone for Jastine's current period and check it reads
-   **Left 0.00**, since the check proves the two expressions agree with each
-   other rather than that either matches the UI.
+   data.**~~ **DONE 2026-08-07** — 48 buckets, both owners, **no drift**, and
+   confirmed against the Budget tab on a phone (Jastine's current period reads
+   `Left 0.00`, matching row 1). `headroomcheck.cjs` re-runs it on any backup.
+1b. **A live Gemini narration has never been seen in the app itself.** The five
+   real calls `aiburst.cjs` made were against a synthetic context from the
+   command line, and every in-app test used the sandbox's fake responses. The
+   first real end-to-end run is worth watching: check the prose quotes only
+   figures the cards show, and that category names read correctly (they are
+   substituted on-device from `{{refN}}`).
 2. **`purchaseHistoryWarning` is dark until ~Oct 2026** (needs
    `MIN_TREND_BUCKETS` = 3 completed periods). Re-check the first period it
    appears — same carried-forward action Home's two trend cards have.
@@ -53,6 +55,104 @@ Goal↔bank reconciliation warnings · multi-currency purchases · household sco
 chat/history · grounding · automatic discretionary detection · applying a
 recommendation as app changes · stored or synced analyses · a Home card for a
 goal that has fallen behind.
+
+---
+
+# 📋 SESSION NOTE — 2026-08-07 (v1.36.0) — Purchase Advisor Build B
+
+Gemini narration. **Deployed**: Worker `2897b1d2` first, then Pages. The model
+never computes — it receives figures that are already correct and explains
+them, and every failure path renders the cards without prose.
+
+## The property that shaped it, again
+
+Build A's was "it touches no synced data". Build B's is **"nothing identifying
+leaves the device"**, and it is structural rather than a filter:
+`buildPurchaseAiContext` BUILDS a fresh object and never copies from `data`, so
+a field cannot leak by being left in — only by being deliberately written.
+
+Category names become opaque `{{refN}}` tokens whose map stays on the device
+and is applied at render. Bucket keys become **indices**, because a date is one
+more identifying fact and the app can label them itself. `reserved[]` and
+`inaccessible[]` become **counts**, because they carry account names.
+
+The Worker re-validates all of it against a flat `AI_CONTEXT_KEYS` allowlist
+walked over the whole tree, because a client is code running on a device, not a
+security boundary. Two lists in two files that must not drift — `aitest.cjs`
+case 1b pins them together.
+
+**Measured, not argued:** the full request body was dumped from the sandbox and
+scanned — no category, account, goal or owner name, no record id, no date, no
+token. And across three AI calls plus a full 25-second autosave window the
+stored document stayed **byte-identical** with **zero POSTs to `/sync`**.
+
+## The load-bearing validation rule
+
+`validatePurchaseNarration` rejects the **whole** response — never repairs it —
+if any currency-shaped figure in the prose is absent from the context. That
+turns "the model invented a number" into a *detected* failure rather than a
+plausible sentence. Rounding a real figure is allowed (`SAR 3,213` for
+3212.78); `SAR 9,999` when 9999 was never sent is not.
+
+A partly-trusted narration is the worst outcome available: the reader cannot
+tell which sentence was the invented one, and the cards alone are already
+correct and complete. Hence whole-response rejection, and hence the panel
+formats **no figure of its own** — the model's text is rendered verbatim
+precisely because each figure in it was checked.
+
+Rendering goes through `rehydratePurchaseRefs`, which returns **segments**, not
+a string. No markdown renderer, no `dangerouslySetInnerHTML` — the app has
+never had one, and adding one is the only way to create an XSS here. A category
+named `<img onerror=…>` renders as those characters.
+
+## What the sandbox caught that twenty green runners did not
+
+Fourth session running, and the sharpest set yet:
+
+- **Every scenario verdict crossed the wire as `""`.** `purchaseVerdict` runs
+  in the VIEW, not on the scenario objects, so the model was handed figures and
+  left to decide what counts as "thin" — which is computing, the one thing it
+  must never do. Now passed explicitly.
+- **Two temporal-dead-zone crashes**, blanking the app into its error boundary.
+  `const` in a component body is block-scoped, so a `useMemo` inserted at the
+  tidy spot read `ready` / `cashVerdict` above their declarations. Invisible to
+  every pure test. See the new CLAUDE.md section; `aitest.cjs` now pins five
+  such source positions.
+- **No client-side timeout.** The Worker aborts at 20s, but a connection
+  stalled *before* reaching it left "Writing an explanation…" up forever. Now
+  25s client-side — longer than the Worker's on purpose, so a real 504 wins
+  whenever the Worker can answer at all.
+
+## Verified live, against the deployed Worker
+
+`aiburst.cjs`, in cost order: 401 unauthenticated · 413 on a 20KB body · 400 on
+document-shaped keys (`unexpected field: plans`) · five 200s then **429
+`scope=minute` at call 6**. The 429s returned in ~128ms against ~1000ms for a
+real call — the cap rejecting *before* the paid call, which is the whole point
+of the ordering.
+
+## The security incident, recorded because the lesson is general
+
+The Gemini key was first set with `npx wrangler secret put <the key>`, which
+makes the key the secret **name**. Secret names are not encrypted — they are
+returned in plaintext by `wrangler secret list`, the dashboard and the API. The
+key was rotated, the malformed secret deleted.
+
+The second attempt looked successful and was not: run through Claude Code's `!`
+prefix, `secret put` is **non-interactive**, never shows `Enter a secret
+value:`, and silently uploads an **empty** value while printing
+`✨ Success!`. Both traps and the 503-vs-502 way to tell an empty key from a
+rejected one are now in CLAUDE.md under "Hosting".
+
+## Carried forward
+
+- **No live narration has been seen in the app yet** — every in-app test used
+  the sandbox's fake responses. See open item 1b.
+- The Durable Object's `aiCheck` still has no unit test; `aiburst.cjs` against
+  the deployed Worker is its only coverage. Same gap the DO handler has had
+  since 3B — do not mistake the burst for a test suite.
+- Deliberately not built: chat, history, grounding, model escalation, stored or
+  synced analyses, any path where the model proposes a mutation.
 
 ---
 
