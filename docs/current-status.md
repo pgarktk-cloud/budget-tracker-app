@@ -52,8 +52,91 @@ in both directions, the visible-but-not-allocating row, both reopen paths, the
 three degrade cases, migration byte-equivalence and a two-device merge. All 41
 pass; all eighteen runners green.
 
-**Not yet done:** browser verification (see the Verification section of the
-plan), deploy, and confirmation on the two phones.
+## Verified in a browser (not just under test)
+
+Driven against a sandbox copy on a fresh port, per CLAUDE.md's rule that a green
+suite does not prove a change works:
+
+- Every field in the create sheet measures 38 high, both cells 206 wide, paired
+  tops identical, 10px gap — no overlap. Measured with `getBoundingClientRect`,
+  with the sheet **open** (a live-DOM check only sees mounted elements).
+- Shopping went to `Spent SAR 250.00 of SAR 1,250.00`.
+- The unaccounted sheet showed `Tracked spending − SAR 250.00` and **no**
+  Transfers-out line — counted once.
+- August's derived group read `SAR 0.00` with the row visible, struck through,
+  "Funded from Shopping — not allocated here".
+- Delete reopened the payment, cleared the mark and returned the group to
+  `SAR 250.00`; Restore re-derived it from the expense.
+- A payment due Sep 7 paid 20 Aug warned in the sheet, annotated the ledger row
+  `Shopping · covers September 2026`, and marked **September's** row.
+- `dataUpdatedAt` stable across 18s; no console errors.
+
+## Shipped
+
+**Committed `cc9b510` on `main` — local only, NOT pushed.** Deployed to
+`https://whered-it-go.pages.dev`; all three version sites confirmed in agreement
+on the live origin.
+
+## Known limitations and unfinished items
+
+- **Neither phone has been confirmed on real hardware for v1.29.1 or v1.30.0.**
+  Both are two builds behind anything verified outside desktop Chrome. This is
+  now the oldest outstanding item and it has grown by one release.
+- **The height fix is a measured constant, not a derived one.** `height:38` was
+  measured in desktop Chrome. It is correct there and should hold anywhere the
+  font metrics match, but a platform whose text input renders taller than 38
+  would clip. Worth a glance on the phones when they are updated. The schedule
+  rows carry the matching `height:32`.
+- **`appearance:none` on a date input is untested on real iOS Safari.** It is
+  the documented cure for the shadow-DOM min-width, and desktop Chrome is happy,
+  but Safari is the browser the bug was reasoned about and it has not been seen
+  there.
+- **`installmentFundingCategoryExists` is not month-scoped** — it asks whether
+  the owner has that category in *any* plan. Deliberate (see decisions.md), but
+  it means a category that exists only in a much later plan is offerable from an
+  early month. The picker itself is month-scoped, so this only matters to the
+  writer's guard.
+- **A funded payment is only ever offered at record time.** There is no way to
+  retro-fit a category onto an already-recorded payment except by deleting the
+  ledger row and recording it again. That round trip is tested and lossless, but
+  it is a round trip.
+- **The Expenses category filter now shows installment payments** under whatever
+  category funded them. That is the intent, but it does mean a Shopping filter
+  is no longer purely discretionary shopping.
+- **No cross-owner funding, by construction.** If the two of you ever want one
+  person's envelope to fund the other's installment, that is a deliberate design
+  reversal, not a missing feature — see the owner-scoping rationale.
+
+## Files created or modified this session
+
+| File | What changed |
+|---|---|
+| `index.html` | Both fixes. `INSTALLMENT_PROVIDERS` `bnpl` flag; `installmentFundingCategoryExists`; `applyInstallmentPayment` takes `fundedCatId`; delete/restore/unlink clear or re-derive it; `derivedInstallmentRowsFor` emits `fundedElsewhere`; `installmentTotal` excludes it; derived-group render; `fundingCategoriesFor` in `App`; `InstallmentPaymentSheet` picker + cross-bucket warning; `renderTxRow` annotation; `InstallmentEditSheet` layout; version constants |
+| `installmenttest.cjs` | Nine new cases (20–28) and the `withCats`/`fundedSeed` fixtures |
+| `sw.js` | `BUILD_ID` → `2026.08.07.0003` |
+| `version.json` | 1.30.0 / `2026.08.07.0003` |
+| `docs/decisions.md` | New "…except a payment funded from a budget category" section |
+| `docs/current-status.md` | This note |
+| `CLAUDE.md` | Date-input rule in Styling; `fundedCatId` in the Installments rules |
+
+Created and removed within the session: `sandbox2/`, `scratch-serve.cjs`. Neither
+is committed — the sandbox pattern is worth recreating rather than keeping, but
+if a *reusable* one is ever wanted, commit it (see CLAUDE.md on `baltest.cjs`).
+
+## Next steps
+
+1. **Update both phones and confirm v1.30.0 on real hardware.** Two things to
+   look at specifically, because desktop Chrome cannot answer either: the create
+   sheet's two-up rows on a narrow iOS Safari viewport (the `appearance:none`
+   and `height:38` fixes), and that a real Tabby purchase records payment #1
+   from Shopping end to end.
+2. **Decide whether to push `cc9b510`.** Three releases are now committed local
+   only.
+3. **Consider making the funding link editable after the fact** — the delete-and-
+   re-record round trip works but is the obvious next friction point.
+4. The pre-existing roadmap item about `derivedInstallmentRowsFor` and linked
+   categories (current-status item 355) is now partly addressed; re-read it
+   against what shipped before acting on it.
 
 ---
 

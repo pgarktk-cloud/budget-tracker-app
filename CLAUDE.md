@@ -274,6 +274,21 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
     "removes future planning, preserves history" one rule instead of two.
     `payoffExpenseId` on each is what lets deleting the payoff reopen exactly
     the set it closed.
+  - **A payment may optionally be funded from a budget category**
+    (`fundedCatId`, v1.30.0) — the BNPL downpayment taken out of this month's
+    Shopping. It is the ONE case where the shape above inverts: `catId` becomes
+    the **category** and `isTransfer` is **false**, so it consumes the envelope
+    and lands in `spentMap`. Safe only because nothing reads `catId` on an
+    installment expense; every reader keys on the link ids. Two halves that must
+    move together or you get a double-allocation: the ledger row stops being a
+    transfer **and** `installmentTotal` drops the row (it feeds the
+    untracked-envelope allocation). `unaccountedParts` needs no branch —
+    `isTransfer:false` already falls through to tracked spend, and adding one is
+    how it would break. `fundedElsewhere` is derived, never stored; the category
+    is resolved against live, **owner-scoped** categories *before* the write so
+    an unusable one degrades to a plain transfer without swallowing the
+    transaction; and delete/unlink clear the mark while restore re-derives it
+    from the expense. Not defaulted in `migrate()` — absent means unfunded.
   - **`household` is never an installment owner** (unlike investments/assets),
     and a linked chain's owner is fixed — moving one half of it is the
     corruption the module exists to prevent.
@@ -311,6 +326,24 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   **16** (`neu(16)`); smaller nested cards (envelope rows, etc.) use 14.
 - Delete/trash `IconButton`s use `opacity:.5` — keep new ones consistent
   with that rather than picking a new value per call site.
+- **`<input type="date">` needs three corrections or it will not line up with
+  the field beside it.** All three were found in one sheet (2026-08-07) and each
+  looks like the whole answer on its own:
+  - **`fontFamily:"inherit"`** — a bare date input renders in the *UA's* font
+    while `NumField` carries `tnum`, so a two-up row comes out uneven.
+  - **an explicit `height`** — even with the font matched it still measures
+    ~2px taller, because its shadow-DOM `-webkit-datetime-edit` contributes
+    content height that neither padding nor `line-height` reaches. Both were
+    measured in the browser; only the explicit height works. Put it on the
+    shared field style, and give any smaller reuse its own.
+  - **`appearance:none`** (all three prefixes) — Safari gives that shadow tree
+    a min-content width which *ignores* `width:100%`, so it visibly spills over
+    the neighbouring field. This is the one that reads as "overlapping".
+
+  A two-up row of fields should also carry `flexWrap:"wrap"` with
+  `flex:"1 1 150px"` cells rather than `flex:1`, so it stacks on a narrow phone
+  instead of colliding. **Verify by measuring `getBoundingClientRect` with the
+  sheet open** — a live-DOM check only sees mounted elements.
 - Shared small components worth reusing rather than reinventing: `.fab-btn`
   (floating action button), `.status-pill`/`.status-pill-fixed` (Tracked/
   Not-tracked-style toggle pills), `.seg-control`/`.seg-indicator`
