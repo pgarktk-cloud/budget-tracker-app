@@ -448,7 +448,27 @@ const AI_SYSTEM_PROMPT = [
 function geminiRequest(context) {
   const { product, ...figures } = context || {};
   const name = aiSafeProduct(product);
+
+  /* The enum is built from THIS request, not hardcoded. A static list always
+     advertised "financed" and "savings" — but there is no financed scenario
+     when the person chose to pay in full, and no savings scenario without a
+     target date. The model reads the enum as the menu, picked something that
+     was never sent, and the app rejected the whole answer with "recommended is
+     not a supplied scenario". Seen in the wild, twice.
+     "none" is always last and always present: it is the only valid answer when
+     nothing at all was offered. */
+  const offered = [
+    ...Object.keys(figures.scenarios || {}),
+    ...(Array.isArray(figures.options) ? figures.options.map(o => o && o.kind) : []),
+  ].filter(Boolean);
+  const recommendEnum = [...new Set([...offered, "none"])];
   const userText = [
+    /* Stated outright rather than left to be inferred from the JSON. Not all
+       scenarios exist in every request — there is no `financed` when the person
+       is paying cash, and no `savings` without a target date. */
+    "YOU MAY RECOMMEND EXACTLY ONE OF THESE, AND NOTHING ELSE:",
+    recommendEnum.join(", "),
+    "",
     "CONTEXT — every figure below is already correct:",
     JSON.stringify(figures),
     "",
@@ -469,11 +489,8 @@ function geminiRequest(context) {
         type: "object",
         properties: {
           headline: { type: "string" },
-          /* Scenario ids plus the engine's option ids (Build C2). The app
-             validates against what it ACTUALLY sent, which is narrower — this
-             enum only stops the obviously-wrong shape upstream. */
-          recommended: { type: "string", enum: ["cash", "financed", "savings", "earliest",
-            "trim", "shiftDate", "finance", "reducePrice", "none"] },
+          /* Exactly what this request offered, plus "none" — see above. */
+          recommended: { type: "string", enum: recommendEnum },
           scenarioNotes: {
             type: "array",
             items: {

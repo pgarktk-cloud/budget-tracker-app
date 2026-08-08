@@ -484,10 +484,8 @@ t("6 · tools is absent entirely, so grounding cannot be prompt-enabled",()=>{
 t("6b · structured output is pinned, scenarios AND options in the enum",()=>{
   const g=geminiRequest(buildCtx().context).generationConfig;
   assert.equal(g.responseMimeType,"application/json");
-  /* The upstream enum is the loose gate; the app validates against what it
-     ACTUALLY sent, which is narrower. Both must know the option ids (C2). */
   deepEqual(g.responseSchema.properties.recommended.enum,
-    ["cash","financed","savings","earliest","trim","shiftDate","finance","reducePrice","none"]);
+    ["cash","financed","earliest","savings","trim","shiftDate","finance","reducePrice","none"]);
   deepEqual(g.responseSchema.required,["headline","recommended","scenarioNotes","watchOuts"]);
   assert.equal(g.maxOutputTokens,700);
   assert.equal(g.thinkingConfig.thinkingLevel,"minimal",
@@ -498,6 +496,38 @@ t("6c · the system prompt states all four rules explicitly",()=>{
   const sys=geminiRequest(buildCtx().context).systemInstruction.parts[0].text;
   [/never compute/i,/\{\{refN\}\}/,/untrusted/i,/only the JSON schema|Output only the JSON/i]
     .forEach(re=>assert.ok(re.test(sys),"system prompt is missing: "+re));
+});
+
+t("6b2 · the enum offers ONLY what this request actually contains",()=>{
+  /* The second failure seen in the wild: "recommended is not a supplied
+     scenario". The enum was hardcoded, so it advertised `financed` when the
+     person was paying cash and `savings` when they gave no date. The model
+     reads the enum as the menu — of course it picked one. */
+  const cashOnly=buildPurchaseAiContext({
+    scenarios:{cash:SCENARIOS.cash},stack:STACK,input:{price:12000},
+    thisBucket:THIS_BUCKET,trimCats:TRIM_CATS,currency:"SAR",product:"Fridge",
+    payPeriods:CAL,owner:"me",nowBucket:NOW,horizon:[],options:[]}).context;
+  const e=geminiRequest(cashOnly).generationConfig.responseSchema.properties.recommended.enum;
+  deepEqual(e,["cash","none"],"nothing else was sent, so nothing else may be picked");
+  const sys=geminiRequest(cashOnly).contents[0].parts[0].text;
+  assert.ok(/YOU MAY RECOMMEND EXACTLY ONE OF THESE[\s\S]{0,40}cash, none/.test(sys),
+    "the offer must be stated outright, not left to be inferred from the JSON");
+  /* An empty request still has a legal answer. */
+  const nothing=buildPurchaseAiContext({scenarios:{},options:[],stack:{},input:{},
+    thisBucket:{},trimCats:[],currency:"SAR",payPeriods:CAL,owner:"me",
+    nowBucket:NOW,horizon:[]}).context;
+  deepEqual(geminiRequest(nothing).generationConfig.responseSchema.properties.recommended.enum,
+    ["none"]);
+});
+
+t("6b3 · the enum and the app's validator can never disagree",()=>{
+  /* They are two expressions of "what was offered", in two files. If the enum
+     is wider the model picks something the app rejects — which is exactly the
+     bug above, seen by a user rather than by a test. */
+  const{context}=buildCtx();
+  const e=geminiRequest(context).generationConfig.responseSchema.properties.recommended.enum;
+  e.forEach(id=>assert.ok(validatePurchaseNarration({...good,recommended:id},context).ok,
+    `the enum offers "${id}" but the app's validator refuses it`));
 });
 
 t("6c2 · the prompt forbids the failure the FIRST live C2 call actually produced",()=>{
