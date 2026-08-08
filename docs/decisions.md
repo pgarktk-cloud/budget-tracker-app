@@ -1,5 +1,47 @@
 # Architectural & Technical Decisions
 
+## Prompt defects are only visible in production, so pin each fix by test (2026-08-08, v1.38.0)
+
+C2 took three live Gemini calls to become usable, and all three defects were in
+the **prompt** — none was visible to any test, because no test can assert that
+advice is good.
+
+- It recommended `"none"` and argued against the purchase, while three options
+  that work sat unread. The prompt had described `"none"` as the answer "when
+  nothing is worth doing" and never said the options were already checked.
+- It printed the internal id as prose — *"We can choose reducePrice"* — and
+  picked the one option that means not getting the thing asked for.
+
+Both read as model failures and were prose failures. The general shape: **a
+model given a menu will answer the question your wording implies, not the one
+you meant.** Saying "recommend one of these" is not enough if another sentence
+quietly offers a way out.
+
+What makes this tractable is not better prompting but a discipline: **every
+prompt fix gets a source-structure assertion** (`aitest` 6c2, 6c3 — seven of
+them). They cannot check the model behaves; they check the instruction that
+made it behave is still there. Without that, the next person tidying the prompt
+silently reintroduces a defect that took a paid call to find.
+
+The corollary for cost: prompt work is empirical and each iteration is a real
+call. Budget for several, and record the rough edges you decide *not* to chase
+— guessing at a fix without verifying it is worse than documenting the flaw.
+
+## An allowlist is only as strong as its most innocent exception (2026-08-08, v1.38.0)
+
+C2 needed to send the engine's options, each carrying `id: "trim"`. The obvious
+move was to add `"id"` to the Worker's `AI_CONTEXT_KEYS`.
+
+That would have been the end of the guard. `id` is precisely the field name a
+record leak travels under — permitting it to carry `"trim"` at one depth
+permits `{id: "c1"}` at *every* depth, and the allowlist's entire job is to
+make record-shaped payloads impossible. The option's key became `kind` instead,
+and `id` stays banned outright.
+
+The rule: when an allowlist blocks something you need, **ask whether the name
+is the problem before widening the list.** Renaming the caller costs one line;
+widening the guard costs the guarantee.
+
 ## A safety rule can make a feature pointless without making it wrong (2026-08-08, v1.37.0)
 
 Build B's model was told: *never compute, never state a number that is not in

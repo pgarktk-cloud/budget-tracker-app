@@ -1,35 +1,30 @@
 # Implementation Roadmap
 
-## ▶ NEXT — decide whether Purchase Advisor C2 earns its place
+## ▶ NEXT — 5b, salary reconciliation
 
-**C1 shipped 2026-08-08 (v1.37.0)** — the options engine. The advisor now
-computes concrete moves itself: trim these categories by this much, wait until
-this period, split into this many payments, or spend this instead. Every figure
-is engine-computed and one tap fills the What-if levers.
+The Purchase Advisor is finished (A · A2 · A3 · B · C1 · C2). 5b is the oldest
+unstarted item and the only remaining one with a written rationale: planned
+figures beside the actuals in the Expenses unaccounted sheet.
 
-**C2 would have Gemini phrase the winning option** instead of describing the
-cards. It is deliberately gated on living with C1 first, and the honest
-possibility is that it is not needed: if the option cards read well on their
-own, **retiring the AI path entirely is a legitimate outcome**, not a failure.
-That would remove an API cost, a secret, a privacy surface and a validation
-layer. Weigh it after using C1 on real data for a while.
+**Read the 5a-2 note further down first.** A linked transfer counts as a Goal
+contribution, not "Transfers out" — both lines subtract so the sheet still
+reconciles, but hand-summing untracked envelopes against "Transfers out" is
+now short by whatever went through a linked category. 5b must account for it.
 
-If C2 does go ahead, the shape is small because C1 did the hard part:
+## ✅ Purchase Advisor C2 — DONE 2026-08-08, v1.38.0
 
-- `buildPurchaseAiContext` gains `options` — already-computed, ids and figures
-  only, no names. Add the new keys to **both** allowlists (`AI_CONTEXT_KEYS` in
-  `worker.js` and the builder); `aitest.cjs` case 1b pins them against drift.
-- The system prompt changes from *"explain"* to *"recommend one of these and
-  say why, in one short paragraph"*. It picks among supplied options and
-  phrases the trade-off. **`validatePurchaseNarration` needs no loosening at
-  all** — the model still may not produce a figure absent from the context.
-- `recommended` enum extends to the option ids; an id that was not sent is
-  rejected, exactly as scenario ids already are.
-- The panel becomes a one-line lead above the option rows rather than a
-  paragraph under the cards.
+The model chooses among the engine's options and phrases the trade-off.
+Worker `a714db20`, Pages `2026.08.08.0002`. `aitest.cjs` 43 cases;
+`c2check.cjs` makes the one live call that proves the path end to end.
 
-**Do not** let C2 reintroduce computing. The whole point of C1 is that the
-arithmetic is deterministic and tested; the model's only job is words.
+Took three live calls to become usable — every defect was in the prompt and
+none was visible to a test. See `current-status.md` for all three and
+`decisions.md` for why each fix is pinned by a source-structure assertion.
+
+**Retiring the AI path stays cheap and available.** The engine computes
+everything and the option cards render fine without prose; if the suggestions
+stop earning their keep, deleting `/ai/advice`, the secret and the validation
+layer is a small clean change rather than a loss.
 
 ---
 

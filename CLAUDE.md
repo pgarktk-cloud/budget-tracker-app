@@ -764,7 +764,10 @@ and an error naming a collection the user has never heard of.
   no-leak property proven by ABSENCE over a fixture stuffed with real names,
   ids, dates and a token; the two allowlists pinned against cross-file drift;
   the guard ORDER before the paid call; `tools` absent so grounding cannot be
-  prompt-enabled; and the component-body declaration order below).
+  prompt-enabled; the component-body declaration order below; and — cases 6c2
+  and 6c3 — the seven prompt rules that three live C2 calls proved necessary.
+  **A test cannot assert that advice is good, but it can stop a fix being
+  edited away**; that is the entire job of those two cases).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -793,6 +796,14 @@ and an error naming a collection the user has never heard of.
   has one — the narrow case a fixture would most easily miss. It proves the two
   expressions agree with each other, not that either is right: confirm one row
   against the app's own Budget tab before trusting a clean run.
+- **`c2check.cjs`** is tooling, not a runner — one **real, paid** Gemini call
+  against the deployed Worker, passphrase on stdin, so it must never join the
+  sweep. It proves what no unit test can: that the model picks one of the
+  engine's *options* rather than describing the cards, and that the app's own
+  `validatePurchaseNarration` — **sliced live out of `index.html`**, not
+  restated — accepts what comes back. Run it after ANY change to
+  `AI_SYSTEM_PROMPT`: C2 needed three live calls to become usable and every
+  defect was in the prompt, invisible to all twenty runners.
 - **`aiburst.cjs`** is tooling, not a runner — it makes **real, paid** Gemini
   calls against the DEPLOYED Worker, so it must never join the sweep. It proves
   the four `/ai/advice` rejections in cost order (401 unauthenticated, 413

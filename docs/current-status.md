@@ -1,29 +1,27 @@
 # Current Status
 
-_Last updated: 2026-08-08 (Purchase Advisor C1 — the options engine, v1.37.0)_
+_Last updated: 2026-08-08 (Purchase Advisor C2 — the model recommends, v1.38.0)_
 
 ## State of play — read this first
 
-**Live and verified: v1.37.0 / build `2026.08.08.0001`** at
-https://whered-it-go.pages.dev, Worker version `2897b1d2` (unchanged — C1
-touches no Worker code). All **twenty** runners green.
+**Live and verified: v1.38.0 / build `2026.08.08.0002`** at
+https://whered-it-go.pages.dev, Worker version `a714db20`. All **twenty**
+runners green.
 
-**The advisor now proposes concrete moves, not just verdicts.** Build B's
-narration turned out to only ever restate the cards — see the C1 session note
-for why that was the spec working as written, not a tuning failure.
+**The Purchase Advisor is finished: A · A2 · A3 · B · C1 · C2.** It computes
+concrete moves and the model picks between them in plain words. Nothing is
+half-built.
 
-**Next session: decide on C2 before building it.** C2 would have Gemini phrase
-the winning option instead of describing the cards. It is deliberately gated on
-living with C1 first: if the option cards are enough on their own, **retiring
-the AI path entirely is a legitimate outcome**, not a failure. Spec at the top
-of `roadmap.md`. Otherwise `5b — salary reconciliation` is the oldest unstarted
-item.
+**Next session: `5b — salary reconciliation`** (planned figures beside the
+actuals in `UnaccountedSheet`) — the oldest unstarted item and the only
+remaining one with a written rationale. Everything else open is a follow-up.
 
 ### Shipped 2026-08-08
 
 | Build | Version | What |
 |---|---|---|
 | C1 | 1.37.0 | The options engine: `purchaseSaveableBuckets` anchor fix, `data.trimPolicy`, `purchaseOptionsFor`, option cards with one-tap apply |
+| C2 | 1.38.0 | The model recommends among those options: `options` in the context under `kind`, the prompt turned from explain to recommend, `SUGGESTED` badge |
 
 ### Shipped 2026-08-07
 
@@ -76,6 +74,96 @@ Goal↔bank reconciliation warnings · multi-currency purchases · household sco
 chat/history · grounding · automatic discretionary detection · applying a
 recommendation as app changes · stored or synced analyses · a Home card for a
 goal that has fallen behind.
+
+---
+
+# 📋 SESSION NOTE — 2026-08-08 (v1.38.0) — Purchase Advisor C2
+
+The model now **chooses** among the engine's options and says why. Deployed:
+Worker `a714db20` first, then Pages `2026.08.08.0002`.
+
+## What C2 actually is
+
+C1 made the engine compute concrete moves. C2 gives the model the one job it is
+genuinely better at than a rule: weighing them and phrasing the trade-off.
+
+**The safety rule needed no loosening.** It still cannot state a figure the
+engine did not compute, and it now also cannot recommend an option that was not
+offered — inventing a course of action is the same class of failure as
+inventing a number, so `validatePurchaseNarration` checks `recommended` against
+the options actually sent.
+
+## `kind`, never `id` — and why that is not pedantry
+
+Options travel under `kind`. **`id` stays banned from `AI_CONTEXT_KEYS`
+entirely**, because it is precisely the field name a record leak would ride on:
+permitting it to carry `"trim"` would also permit `{id:"c1"}` anywhere in the
+tree. The allowlist is only as strong as its most innocent-looking exception.
+
+An option's picked categories become the same opaque `{{refN}}` tokens the
+candidate list uses, `bucketKey` becomes an index, and the `apply` payload —
+keyed by real record ids — is dropped before sending.
+
+## Three live calls, three real defects, none visible to any test
+
+This is the part worth remembering. Every defect was in the **prompt**, and
+each was found only by making a real call and reading the answer.
+
+**1 · It recommended `"none"` and advised against the purchase** — while three
+options that *work* sat unread in the request. Cause: the prompt described
+`"none"` as the answer "when nothing is worth doing", and never said the
+options had already been checked by the engine. Seeing `cash: bad` and
+`savings: bad`, it reasonably concluded "don't". It answered a question nobody
+asked — *whether* to buy — while three answers to the real question went unread.
+
+**2 · It wrote "We can choose reducePrice"** — the internal id as an English
+word — and picked the one option that means *not getting what was asked for*,
+over instalments that fit every period. Two defects: no plain-words translation
+of the ids, and a list of considerations that was never actually ranked.
+
+**3 · Serviceable.** Picked `shiftDate`, plain English, real reason.
+
+The fixes: bad scenarios are the REASON options exist rather than the
+conclusion; a non-empty options list compels a pick; `"none"` is only for an
+empty list; it never recommends against a purchase already decided on; each
+`kind` gets a plain-words gloss and the id is banned from the prose; and
+`reducePrice` ranks last because it is the only option that changes *what* you
+get. `aitest` 6c2 and 6c3 pin all seven.
+
+**A unit test cannot assert that advice is good — but it can stop a fix being
+edited away.** That is the whole role of those two cases.
+
+## Known rough edges, recorded rather than fixed
+
+- Watch-outs can be tautological: *"waiting 6 periods means holding off on the
+  purchase until then."*
+- It inferred "extra costs" about financing that carries **no fees** in the
+  fixture. Not an invented figure — a wrong characterisation, which validation
+  cannot catch by design.
+- It says "6 periods" where the app's own cards say "February 2027", because it
+  only ever receives a bucket index. That is the privacy rule working, and the
+  cards are beside it, so it was left alone.
+
+Each further prompt change costs another live call to verify, so these were
+recorded instead of guessed at.
+
+## The decision that was taken, and the one still open
+
+Offered a deterministic ranker (no AI at all) versus C2, the choice was C2.
+**Retiring the AI path remains cheap and available**: the engine computes
+everything, and the option cards render fine with no prose. If the suggestions
+stop earning their keep, deleting `/ai/advice`, the secret and the validation
+layer is a small, clean change — not a loss.
+
+## Verification
+
+- Twenty runners green (`aitest` 38 → 43). Parse OK. Three sites agree.
+- `npx wrangler deploy` × 3, each confirming `SYNC_ROOM` + `ALLOC_KV`.
+- `c2check.cjs`, committed as tooling: one live call, passphrase on stdin, and
+  it **slices `validatePurchaseNarration` out of `index.html`** rather than
+  restating it, so it exercises the shipped guard. Third such tool after
+  `aiburst` and `headroomcheck` — anything needing a real terminal, a real key
+  or real data is tooling, never a runner.
 
 ---
 
