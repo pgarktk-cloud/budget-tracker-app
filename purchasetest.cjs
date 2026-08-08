@@ -1098,18 +1098,22 @@ t("13n · shiftDate carries the SAVING it implies, not just the date",()=>{
     "both must be usable or the card falls back to saying nothing concrete");
 });
 
-t("13o · one description per option, shared by the row and the suggestion",()=>{
-  /* Two call sites phrasing the same option differently is how a suggestion
-     ends up disagreeing with the row it points at. */
+t("13o · one description per option, and no AI path left behind",()=>{
+  /* optionLine stayed extracted after the AI layer was deleted: it is still
+     the single place an option is put into words, which is what stops two call
+     sites describing the same option differently. */
   const view=slice("function PurchaseAdvisorView(","/* ── OVERVIEW VIEW ──");
   assert.ok(view.indexOf("const optionLine=useCallback")>=0,
     "the line builder must be extracted, not inlined in the map");
   assert.equal(view.split("Wait until ${label(").length-1,1,
     "the shiftDate wording exists in exactly one place");
-  assert.ok(/pickedLine=\{ai\.status==="ok"/.test(view),
-    "the panel must render the picked option's ENGINE line, not re-derive it");
-  assert.ok(view.indexOf("const optionLine=useCallback")<view.indexOf("pickedLine={"),
-    "declared before use, or it is a temporal-dead-zone throw at render");
+  /* The AI layer was removed in v1.41.0 — see decisions.md. A dangling
+     reference to any of it is a render-time ReferenceError that blanks the
+     tab, and the whole file must be clean, not just this view. */
+  ["purchaseAi","PurchaseNarration","validatePurchaseNarration","rehydratePurchaseRefs",
+   "buildPurchaseAiContext","fetchPurchaseNarration","ai/advice"]
+    .forEach(dead=>assert.ok(html.indexOf(dead)<0,
+      `"${dead}" survived the removal of the AI path`));
 });
 
 console.log(`\n${n-fails}/${n} passed`);
