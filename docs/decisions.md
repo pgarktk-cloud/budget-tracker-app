@@ -112,6 +112,35 @@ to use them and could not do arithmetic with them. **Check what the system
 actually sends before concluding it needs to send something different**; the
 real question was who computes, not what travels.
 
+## Understate rather than pro-rate: only full periods count (2026-08-08, v1.37.0)
+
+`purchaseHeadroomForBucket` is plan-based, so the current period reports its
+whole headroom on the 28th exactly as on the 1st. Both forward walks —
+`earliest` and `purchaseSavingsPlan` — then counted all of it as still savable,
+so every date they quoted was optimistic by up to a full period's spare.
+
+Three ways to fix it, and the choice matters:
+
+| | |
+|---|---|
+| **Use actual spending so far** | Most accurate, and rejected. It drags actuals into an engine that is plan-based *on purpose* — a plan is a decision, a trailing average is a description, and mixing them is how the two stop agreeing. |
+| **Pro-rate by days elapsed** | More precise, and rejected. It would be the first figure in this engine that moves with the clock rather than with the plan, and a savings target that changes every morning is not a target. |
+| **Count only FULL periods** | Chosen. `purchaseSaveableBuckets(n) → max(0, n−1)`: bucket 0 is part-spent and the bucket you buy in is part-elapsed, so what you can bank is buckets 1 … n−1. |
+
+The general rule: **when a figure cannot be known exactly, prefer the answer
+that is stable and errs safe over the one that is closest.** Understating what
+you can save is the safe direction for a date someone is about to commit to,
+and a stable number is one a person can actually plan against.
+
+One consequence to keep: a target in the very *next* period yields
+`saveable: 0` and reports infeasible, because there is no full period in
+between. That is mode `"plan"`, not `"beyondHorizon"` — the date is reachable,
+there is simply nothing to spread — and any new divisor has to guard it.
+
+Both walks share the one helper deliberately. They already shared the
+`max(0, headroom)` accumulator rule; letting them disagree about *which*
+buckets it applies to is exactly how two answers drift apart.
+
 ## Suggesting the wrong thing is worse than suggesting nothing (2026-08-08, v1.37.0)
 
 The advisor's trim candidates were ranked by amount, largest first — an obvious

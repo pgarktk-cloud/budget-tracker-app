@@ -299,6 +299,32 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   - `fingerprint()` emits the two collections **only when non-empty**, so
     `migrate()` adding them is byte-identical for an existing document and
     doesn't cost a KV write per device on first open.
+- **Only FULL periods count toward saving, and both forward walks must agree**
+  (2026-08-08, v1.37.0). `purchaseHeadroomForBucket` is plan-based, so bucket 0
+  reports its whole headroom on the 28th exactly as on the 1st — and `earliest`
+  and `purchaseSavingsPlan` used to treat all of it as still savable, promising
+  money the part-spent period could no longer supply. One helper,
+  **`purchaseSaveableBuckets(n)` → `max(0, n−1)`**, now answers "how many full
+  periods are there in between" for both, so they cannot drift apart.
+  - It **understates rather than pro-rating by days elapsed**, deliberately: a
+    pro-rated figure moves every day, this engine is plan-based on purpose (a
+    plan is a decision, a trailing average is a description), and understating
+    is the safe direction for a date someone is committing to. Don't "improve"
+    it into reading the clock or the actuals.
+  - A target in the very NEXT period therefore reports `saveable: 0` and
+    infeasible — there is no full period to spread anything over. That is
+    mode `"plan"`, not `"beyondHorizon"`: the date is reachable, there is simply
+    nothing to spread. Guard any new divisor against it.
+  - Changing this **changes figures already on screen**. Eight `purchasetest`
+    cases were re-derived by hand when it landed; re-derive, never re-baseline.
+- **`purchaseOptionsFor` is the advisor's answer to "now what?"** — ranked
+  concrete moves (trim / shiftDate / finance / reducePrice), each carrying its
+  own arithmetic and an `apply` payload naming **only existing draft levers**.
+  It returns `[]` when there is no gap. It must stay pure, must never reach
+  `setData` or the clock, and every option's figures must come from the
+  existing helpers (`purchaseHeadroomForBucket`, `buildPurchaseSchedule`,
+  `purchaseSavingsPlan`) rather than a second reduce — the rule A3 established.
+  `optionLine` in the view is the ONE place an option is put into words.
 - **`data.trimPolicy` decides what the Purchase Advisor may suggest cutting,
   and it is a MAP, not a record array** (2026-08-08). Shape is
   `{ "<catId|groupId>": {v:bool, updatedAt} }`, resolved **category → group →

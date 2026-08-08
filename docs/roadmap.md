@@ -1,16 +1,46 @@
 # Implementation Roadmap
 
-## ▶ NEXT — 5b, salary reconciliation
+## ▶ NEXT SESSION — 5b, salary reconciliation
 
 The Purchase Advisor is finished and engine-only (A · A2 · A3 · C1; B and C2
-were removed — see below). 5b is the oldest
-unstarted item and the only remaining one with a written rationale: planned
-figures beside the actuals in the Expenses unaccounted sheet.
+were removed — see below). Nothing is half-built, so this is a clean start.
 
-**Read the 5a-2 note further down first.** A linked transfer counts as a Goal
-contribution, not "Transfers out" — both lines subtract so the sheet still
-reconciles, but hand-summing untracked envelopes against "Transfers out" is
-now short by whatever went through a linked category. 5b must account for it.
+**What 5b is:** the Expenses unaccounted sheet (`UnaccountedSheet`) shows where a period's salary actually went. It shows
+*actuals* only. 5b puts the **planned** figure beside each line, so the sheet
+answers "did this period go the way I intended" rather than only "where did it
+go".
+
+**Read this before designing it — it is the trap 5a-2 left behind.** A transfer
+through a category with a `goalId` counts as a **Goal contribution**, not
+"Transfers out". Both lines subtract, so the sheet still reconciles — but
+hand-summing untracked envelopes against "Transfers out" is now short by
+whatever went through a linked category. Any "planned vs actual" arithmetic has
+to classify those rows explicitly or it will not balance, and the imbalance will
+look like a data problem rather than a classification one.
+
+**Other classification rules that must be honoured** (all in CLAUDE.md, all
+already load-bearing elsewhere):
+
+- `isExtraFunds` rows are money coming **IN**, stored as ordinary expenses. Any
+  new reduce over `expenses` must classify them explicitly — treating them as
+  spending is what once made "salary not yet spent" go *down* when money
+  arrived.
+- `isTransfer` is set by untracked transfers **and** goal contributions **and**
+  installment payments. An installment payment funded from a category
+  (`fundedCatId`) inverts the usual shape: `catId` is the category and
+  `isTransfer` is **false**.
+- The planned side must come from `resolvePlanForMonth` + `livePlanView`, never
+  from `activePlanId` directly — a past period may have materialised its own
+  plan, and the whole point is comparing against what was planned *then*.
+
+**Suggested shape**, consistent with how this app already works: a pure
+module-scope function taking `(plan, expenses, bucketKey, payPeriods, owner)`
+and returning per-line `{planned, actual, delta}`, sliced and unit-tested the
+way `unaccountedParts` already is. Do not compute it inside the component.
+
+**Where to start:** read `unaccountedParts` and the existing `UnaccountedSheet`
+render, then write the test first — this is arithmetic over a classifier that
+has bitten three times already.
 
 ## 🗑 Purchase Advisor Builds B and C2 (Gemini narration) — REMOVED 2026-08-08, v1.41.0
 
@@ -39,7 +69,7 @@ Shipped and deployed. `purchaseSaveableBuckets` (the current period no longer
 counts toward what you can still save), `data.trimPolicy` (nothing is
 suggestable until marked, category → group → false), `purchaseOptionsFor` (the
 ranked options), and option cards with one-tap apply into the existing What-if
-levers. `purchasetest.cjs` 52 → 68. See `current-status.md` for the session
+levers. `purchasetest.cjs` 52 → 70. See `current-status.md` for the session
 note and `decisions.md` for the three rules it established.
 
 ---
@@ -47,7 +77,7 @@ note and `decisions.md` for the three rules it established.
 ## 📄 Purchase Advisor Build B — the spec, for the record (REMOVED v1.41.0)
 
 Shipped and deployed: Worker version `2897b1d2` first, then Pages build
-`2026.08.07.0009`. `aitest.cjs` (38 cases) and `aiburst.cjs` cover it; see
+`2026.08.07.0009`, and removed again in v1.41.0 — its runners went with it. See
 `current-status.md` for the session note and `decisions.md` for the reasoning.
 
 The spec below is kept as the record of what was agreed and what was built. It

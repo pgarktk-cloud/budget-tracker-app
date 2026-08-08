@@ -41,38 +41,71 @@ remaining one with a written rationale.
 | —  | —      | `headroomcheck.cjs`: advisor vs Budget on real data — 48 buckets, no drift |
 | B  | 1.36.0 | Gemini narration: `POST /ai/advice`, spend caps, the context builder, the validator, the panel |
 
-### Open, carried forward — none blocking
+### Open — nothing blocking, nothing half-built
 
-0. **Mark which categories the advisor may suggest cutting** (Budget → the
-   scissors icon on a group header, or per category in the chevron panel).
+**Needs a person, not a build:**
+
+1. **Mark which categories the advisor may suggest cutting.** Budget → the
+   scissors icon on a group header, or per category in the chevron panel.
    Default is NO for everything, so until this is done the advisor offers
    dates, financing and a lower price but **never a trim** — the headline half
-   of C1 is silent on a fresh document. That is deliberate (see the session
-   note) but it is a real first-run gap.
-0b. **The savings and earliest figures got more conservative in v1.37.0** and
-   will look like a regression to anyone who remembers the old numbers. They
-   are the corrected ones — the current, part-spent period no longer counts
-   toward what you can still save.
+   of C1 is silent on a fresh document. Deliberate (an advisor that opens by
+   proposing you cut your rent is worse than one that says nothing), but it is
+   a real first-run gap.
+2. **Open the app on both phones on ≥ v1.41.0.** Two reasons: each repairs its
+   own duplicated bill rows so the canonical ids converge (v1.35.0), and both
+   pick up the current build.
+3. **Expect the savings and earliest figures to look worse than you remember.**
+   v1.37.0 stopped counting the current, part-spent period toward what you can
+   still save. Those are the corrected numbers, not a regression.
 
-1. ~~**Cross-check the advisor's headroom against the Budget tab on REAL
-   data.**~~ **DONE 2026-08-07** — 48 buckets, both owners, **no drift**, and
-   confirmed against the Budget tab on a phone (Jastine's current period reads
-   `Left 0.00`, matching row 1). `headroomcheck.cjs` re-runs it on any backup.
-1b. **A live Gemini narration has never been seen in the app itself.** The five
-   real calls `aiburst.cjs` made were against a synthetic context from the
-   command line, and every in-app test used the sandbox's fake responses. The
-   first real end-to-end run is worth watching: check the prose quotes only
-   figures the cards show, and that category names read correctly (they are
-   substituted on-device from `{{refN}}`).
-2. **`purchaseHistoryWarning` is dark until ~Oct 2026** (needs
-   `MIN_TREND_BUCKETS` = 3 completed periods). Re-check the first period it
-   appears — same carried-forward action Home's two trend cards have.
-3. **Open the app on both phones on ≥ v1.35.0** so each repairs its own bill
-   rows and the canonical ids converge. Until then the un-upgraded phone keeps
-   minting random-id rows; the reconciler collapses them on arrival, so the
-   reserve stays correct either way.
-4. **5b — salary reconciliation** in the Expenses unaccounted sheet. Predates
-   this work, still open, see `roadmap.md`.
+**Waiting on time:**
+
+4. **`purchaseHistoryWarning` is dark until ~Oct 2026** — it needs
+   `MIN_TREND_BUCKETS` = 3 completed periods. Re-check it the first period it
+   appears; Home's two trend cards carry the same action.
+
+**Work, in the order it makes sense:**
+
+5. **5b — salary reconciliation** in the Expenses unaccounted sheet. Oldest
+   unstarted item and the only one with a written rationale. See `roadmap.md`,
+   and read the 5a-2 classification note it must account for.
+6. **3C-3 — `payPeriods.actualStarts` has no merge rule.** Deferred twice, and
+   blocked on a design question rather than effort: clearing an override
+   *deletes* the key, so a union merge resurrects it. `trimPolicy` solved the
+   same problem by flipping entries instead of deleting them — that is probably
+   the answer here too.
+7. **Retire the Worker's KV rollback mirror.** Every accepted write still
+   mirrors to the three legacy KV keys so a rollback to the pre-Durable-Object
+   Worker resumes cleanly. Cheap, but it is duplicated state and should not
+   become permanent by accident.
+8. **The Durable Object still has no automated test.** It needs `wrangler dev`
+   plus a harness this repo does not have. It was covered only by cutover
+   verification, and `aiburst.cjs` — the one thing that exercised `SyncRoom`
+   over HTTP — was deleted with the AI path. Do not mistake the green suite for
+   coverage of `SyncRoom`.
+
+### Known limitations and sharp edges
+
+- **A target date in the very next period reports `saveable: 0`** and therefore
+  infeasible, because there is no *full* period in between to save in. Honest
+  and deliberate, but harsh — if it reads badly in practice, the fix is a
+  presentation one (say "there's no full period before then"), not an
+  arithmetic one.
+- **`trimPolicy` entries are flipped, never deleted**, so there is no way back
+  to "unanswered" once a category is marked. That is what makes it survive a
+  union merge; the cost is that the map only ever grows.
+- **`trimPolicy` is the eighth synced collection.** The forward-compatibility
+  case in `cloudguardtest.cjs` must stay green, or the first phone to upgrade
+  starts refusing the other's document.
+- **The trim cap is a flat 30% per category** (`PURCHASE_TRIM_MAX_PCT`), chosen
+  so a suggestion is never absurd. It is a guess, not a derived figure.
+- **`headroomcheck.cjs` needs a real backup**, which may not be committed. A
+  backup currently sits at the repo root, gitignored — delete it or keep it as
+  the fixture, but decide rather than let it drift.
+- **The Purchase Advisor's draft is per-device** (`PURCHASE_DRAFT_KEY`) and
+  never synced, by design. A purchase you are weighing on one phone is invisible
+  on the other.
 
 ### Deliberately deferred
 
@@ -80,6 +113,49 @@ Goal↔bank reconciliation warnings · multi-currency purchases · household sco
 chat/history · grounding · automatic discretionary detection · applying a
 recommendation as app changes · stored or synced analyses · a Home card for a
 goal that has fallen behind.
+
+---
+
+# 📁 SESSION INVENTORY — 2026-08-07 → 2026-08-08
+
+Thirteen commits, `46b101f..deedac7`. Six releases: v1.36.0 → v1.41.0, plus the
+`headroomcheck` tooling commit that opened the session.
+
+## Files created
+
+| File | Kept? | What it is |
+|---|---|---|
+| `headroomcheck.cjs` | **yes** | Tooling. Cross-checks the advisor's headroom against the sliced `BudgetView` "Left" expression over a real backup. Takes the backup path as an argument, so it never joins the sweep. |
+| `aitest.cjs` | deleted v1.41.0 | 46 cases over the AI path; the first runner to cover `worker.js`. |
+| `aiburst.cjs` | deleted v1.41.0 | Verified the deployed spend caps with real paid calls. **Also the only thing that ever exercised `SyncRoom` over HTTP** — see open item 8. |
+| `c2check.cjs` | deleted v1.41.0 | One live call proving the C2 path end to end. |
+
+## Files modified
+
+| File | What changed |
+|---|---|
+| `index.html` | **C1, kept:** `purchaseSaveableBuckets`, `trimPolicyFor` / `cuttableCategories`, `mergeTrimPolicy` (placed with the *merge* helpers, not the engine), `purchaseOptionsFor`, `bucketStartDate`, the Scissors icon, `setTrimPolicy`, Budget's group + category toggles, the options section with one-tap apply, `optionLine`. **B/C2, added then removed:** the whole narration module, `fetchPurchaseNarration`, both panel components. Net: the advisor gained an engine and lost a narrator. |
+| `worker.js` | Gained `POST /ai/advice`, `SyncRoom.aiCheck` and the Gemini helpers (v1.36.0); all removed again in v1.41.0, leaving a tombstone comment pointing at v1.40.0 and `decisions.md`. |
+| `purchasetest.cjs` | 52 → 70 cases. Eight expectations **re-derived by hand** for the anchor change, plus cuttability, the options engine, and three source-structure sweeps (no `setData`, no clock, no surviving AI reference). |
+| `budgettest.cjs` | 39 → 41. Trim marks survive a month copy; a document with no marks is not given an empty one. |
+| `sandboxworker.cjs` | Gained a fake `/ai/advice` with nine modes; removed with the feature. |
+| `CLAUDE.md` | `trimPolicy`'s conventions, the declaration-order section, the secrets lesson, runner count 19 → 20 → 19. |
+| `docs/*` | Session notes for C1, C2 and the removal; six new entries in `decisions.md`; `roadmap.md` re-headed to 5b. |
+| `.gitignore` | `mode.txt`, `aimode.txt`, `lastaictx.json` — local sandbox knobs. |
+| `sw.js`, `version.json` | Bumped with `index.html` each release. |
+
+## Infrastructure changed outside the repo
+
+- **Worker deployed six times.** Current: `d8b5b9ad`. Every deploy confirmed
+  both `SYNC_ROOM` and `ALLOC_KV` in the output.
+- **Pages deployed five times.** Current: `2026.08.08.0005`.
+- **`GEMINI_API_KEY` created, then deleted.** `wrangler secret list` now shows
+  exactly `SYNC_TOKEN` and `FINNHUB_KEY`.
+- **One key was exposed and rotated** — set as a secret *name* rather than a
+  value. See the "Hosting" section of CLAUDE.md; the rotated string is inert but
+  still sits in shell history.
+- `wrangler.jsonc` was **never touched**, so no deploy could unbind anything.
+
 
 ---
 
