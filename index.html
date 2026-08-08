@@ -2278,16 +2278,20 @@ function purchaseAiProduct(s){
    amount so ref1 is the biggest — the model has no other way to tell them
    apart, and an arbitrary order would make its suggestions arbitrary too. */
 function buildPurchaseAiRefs(trimCats){
-  const refs={};const list=[];
+  const refs={};const list=[];const byCatId={};
   [...(trimCats||[])].filter(c=>c&&Number(c.effAmt)>0)
     .sort((a,b)=>Number(b.effAmt)-Number(a.effAmt))
     .slice(0,12)
     .forEach((c,i)=>{
       const ref="ref"+(i+1);
       refs[ref]=String(c.name||"Category");
+      byCatId[c.id]=ref;
       list.push({ref,amount:purchaseAiNum(c.effAmt)});
     });
-  return{refs,trimCandidates:list};
+  /* byCatId never leaves — it is how an OPTION's picked categories become the
+     same opaque tokens the candidate list uses, so the model can say "trim
+     {{ref3}}" about a specific proposal without ever learning a name. */
+  return{refs,trimCandidates:list,byCatId};
 }
 
 /* Returns {context, refs}. `context` is what leaves the device; `refs` never
@@ -2297,9 +2301,9 @@ function buildPurchaseAiRefs(trimCats){
    from the same bucketLabel the cards use. */
 function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
                                  historyWarning,currency,product,payPeriods,owner,
-                                 nowBucket,horizon,verdicts}){
+                                 nowBucket,horizon,verdicts,options}){
   const s=scenarios||{},st=stack||{},i=input||{},vd=verdicts||{};
-  const{refs,trimCandidates}=buildPurchaseAiRefs(trimCats);
+  const{refs,trimCandidates,byCatId}=buildPurchaseAiRefs(trimCats);
   /* A bucket key is a date. Everything crossing the wire is the INDEX of the
      bucket relative to the one we're standing in, resolved with the same
      purchaseBucketsBetween the savings plan uses. */
@@ -2336,6 +2340,29 @@ function buildPurchaseAiContext({scenarios,stack,input,thisBucket,trimCats,
       planned:purchaseAiNum(h.planned),installmentTotal:purchaseAiNum(h.installmentTotal),
       headroom:purchaseAiNum(h.headroom)})),
     trimCandidates,
+    /* The options the ENGINE already computed. The model's job (C2) is to pick
+       one and say why — never to invent a fifth. Ids and figures only: the
+       picked categories become the same {{refN}} tokens, `bucketKey` becomes an
+       index, and `apply` is dropped entirely because it is keyed by record id.
+       Anything here that cannot be expressed without a name or an id simply
+       does not travel. */
+    options:(options||[]).map(o=>{
+      /* `kind`, never `id`. "id" stays BANNED from the allowlist because it
+         is precisely the field name a record leak would travel under —
+         permitting it here to carry "trim" would also permit {id:"c1"}
+         anywhere in the tree. */
+      const base={kind:String(o.id||"")};
+      if(o.id==="trim")return{...base,
+        perPeriod:purchaseAiNum(o.perPeriod),periods:Number(o.periods)||0,
+        freed:purchaseAiNum(o.freed),closesGap:!!o.closesGap,
+        refs:(o.picks||[]).map(p=>byCatId[p.id]).filter(Boolean)};
+      if(o.id==="shiftDate")return{...base,n:Number(o.n)||0};
+      if(o.id==="finance")return{...base,count:Number(o.count)||0,
+        perPayment:purchaseAiNum(o.perPayment),financedTotal:purchaseAiNum(o.financedTotal)};
+      if(o.id==="reducePrice")return{...base,
+        price:purchaseAiNum(o.price),saving:purchaseAiNum(o.saving)};
+      return base;
+    }),
   };
 
   if(s.cash)context.scenarios.cash={
@@ -2420,7 +2447,13 @@ function purchaseAiFigures(text,currency){
    complete. Returns {ok:true,value} or {ok:false,reason}. */
 function validatePurchaseNarration(res,context){
   const ctx=context||{};
-  const scenarioIds=Object.keys((ctx.scenarios)||{});
+  /* Scenarios describe what WOULD happen; options are the engine's concrete
+     moves. The model may recommend or annotate either, but only ones it was
+     actually sent — a recommendation naming something absent from the request
+     is the model inventing a course of action, which is the same failure as
+     inventing a figure. */
+  const optionIds=((ctx.options)||[]).map(o=>o&&o.kind).filter(Boolean);
+  const scenarioIds=[...Object.keys((ctx.scenarios)||{}),...optionIds];
   const allowedRefs=new Set(Object.keys(((ctx.trimCandidates)||[])
     .reduce((m,c)=>{m[c.ref]=1;return m;},{})));
   const numbers=purchaseAiContextNumbers(ctx);
@@ -3088,8 +3121,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.37.0";
-const BUILD_ID="2026.08.08.0001";
+const APP_VERSION="1.38.0";
+const BUILD_ID="2026.08.08.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -15287,12 +15320,12 @@ function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
         <button onClick={onAsk}
           style={{width:"100%",borderRadius:12,padding:"12px 0",fontSize:13,fontWeight:600,
             border:"none",background:"rgba(0,0,0,.05)",color:P.neuInk,minHeight:44}}>
-          Explain this in words
+          What should I do?
         </button>
       </section>);
 
   if(state.status==="loading")
-    return(<section style={card}><div style={note}>Writing an explanation…</div></section>);
+    return(<section style={card}><div style={note}>Thinking it through…</div></section>);
 
   if(state.status!=="ok"){
     /* Each failure says only what the reader can act on. A limit is temporary
@@ -15320,8 +15353,8 @@ function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
   return(
     <section style={card}>
       <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginBottom:10}}>
-        Explanation — written by AI from the figures above. The figures
-        themselves are calculated by the app.
+        Suggestion — written by AI, choosing between the options above. The
+        options and every figure in them are calculated by the app.
       </div>
       <div style={{fontSize:14,fontWeight:600,color:P.neuInk,lineHeight:1.5,marginBottom:10}}>
         <PurchaseNarrationText text={v.headline} refs={refs}/>
@@ -15518,9 +15551,9 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   const aiPayload=useMemo(()=>buildPurchaseAiContext({
     scenarios,stack,input,thisBucket,trimCats,historyWarning,currency:cur,
     product:draft.product,payPeriods,owner:budgetOwner,nowBucket:bucket,horizon,
-    verdicts:aiVerdicts,
+    verdicts:aiVerdicts,options,
   }),[scenarios,stack,input,thisBucket,trimCats,historyWarning,cur,draft.product,
-      payPeriods,budgetOwner,bucket,horizon,aiVerdicts]);
+      payPeriods,budgetOwner,bucket,horizon,aiVerdicts,options]);
 
   const[ai,setAi]=useState({status:"idle"});
   /* A stale explanation beside changed figures is the one genuinely misleading
@@ -16057,11 +16090,20 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                       sub:`${fmt(o.perPayment)} each, and every period still has room.`}
                     :{head:`Spend ${fmt(o.price)} instead`,
                       sub:`${fmt(o.saving)} less — what this plan actually reaches by your date.`};
+                /* The model's pick, when there is a validated one. It only ever
+                   marks an option the ENGINE produced — validatePurchaseNarration
+                   rejects a recommendation naming anything that wasn't sent. */
+                const picked=ai.status==="ok"&&ai.value.recommended===o.id;
                 return(
                   <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,
                     padding:"9px 0",borderTop:"1px solid rgba(0,0,0,.06)"}}>
                     <div style={{minWidth:0,flex:1}}>
-                      <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>{line.head}</div>
+                      <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>
+                        {line.head}
+                        {picked&&<span style={{marginLeft:8,fontSize:10,fontWeight:700,
+                          color:P.grD,background:P.grS,borderRadius:6,padding:"2px 6px",
+                          whiteSpace:"nowrap"}}>SUGGESTED</span>}
+                      </div>
                       <div style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
                     </div>
                     <button onClick={()=>applyOption(o)}

@@ -132,12 +132,26 @@ const SCENARIOS={
 const INPUT={price:12000,financed:true,desiredDate:"2026-12-01"};
 const THIS_BUCKET={bucketKey:NOW,income:22000,planned:18787.22,installmentTotal:0,headroom:3212.78};
 
+/* The engine's options, in the shape purchaseOptionsFor really returns —
+   including the parts that must NOT travel: catIds, picks[].id, bucketKey and
+   the whole `apply` payload. */
+const OPTIONS=[
+  {id:"trim",catIds:["c2","c1"],picks:[{id:"c2",amount:900},{id:"c1",amount:720}],
+   perPeriod:1620,periods:3,freed:4860,closesGap:false,
+   apply:{trims:{c2:900,c1:720}}},
+  {id:"shiftDate",bucketKey:"2027-02",n:6,apply:{desiredBucket:"2027-02"}},
+  {id:"finance",count:5,perPayment:2400,financedTotal:12000,
+   apply:{method:"financed",count:5}},
+  {id:"reducePrice",price:8500,saving:3500,apply:{price:8500}},
+];
+
 function buildCtx(over={}){
   return buildPurchaseAiContext({
     scenarios:SCENARIOS,stack:STACK,input:INPUT,thisBucket:THIS_BUCKET,
     trimCats:TRIM_CATS,historyWarning:null,currency:"SAR",
     product:"Samsung washing machine",payPeriods:CAL,owner:"me",nowBucket:NOW,
     horizon:[{n:0,income:22000,planned:18787.22,installmentTotal:0,headroom:3212.78}],
+    options:OPTIONS,
     ...over});
 }
 
@@ -221,6 +235,25 @@ t("1f2 · the engine's own verdict is sent, so the model never judges for itself
   assert.ok(AI_CONTEXT_KEYS.has("verdict"),"and the Worker must still accept it");
 });
 
+t("1f3 · an option's categories become tokens; its ids, dates and apply do not travel",()=>{
+  /* The C2 addition, and the riskiest one: purchaseOptionsFor's real shape
+     carries catIds, picks[].id, a bucketKey (a DATE) and an `apply` payload
+     keyed by record id. None of it may leave. */
+  const{context}=buildCtx();
+  const s=JSON.stringify(context.options);
+  ["c1","c2","c3","apply","trims","catIds","bucketKey","2027-02","desiredBucket"]
+    .forEach(bad=>assert.ok(!s.includes(bad),`"${bad}" leaked through an option`));
+  const trim=context.options.find(o=>o.kind==="trim");
+  deepEqual(trim.refs,["ref1","ref2"],
+    "the picked categories become the SAME opaque tokens the candidate list uses");
+  assert.equal(trim.periods,3);
+  assert.equal(trim.closesGap,false,"the model must be told when an option falls short");
+  assert.equal(context.options.find(o=>o.kind==="shiftDate").n,6,"a bucket INDEX, never its date");
+  assert.ok(context.options.every(o=>!("id" in o)),
+    "the key is `kind` — 'id' stays banned so a record-id leak has no field to ride");
+  assert.ok(context.options.every(o=>!("apply" in o)));
+});
+
 t("1g · floats are rounded so a quoted figure can be found again",()=>{
   const{context}=buildCtx({thisBucket:{...THIS_BUCKET,planned:18787.219999999999}});
   assert.equal(context.periodAllocation,18787.22);
@@ -280,6 +313,30 @@ t("3c · rejects recommended values outside the enum",()=>{
   assert.ok(validatePurchaseNarration({...good,recommended:"none"},CTX).ok,
     "\"none\" is always legitimate — there may be no good option");
   assert.ok(validatePurchaseNarration({...good,recommended:"savings"},CTX).ok);
+});
+
+t("3c2 · an option id may be recommended — but only one that was sent",()=>{
+  /* C2's whole point: the model picks a concrete move. Recommending something
+     absent from the request is inventing a course of action, which is the same
+     class of failure as inventing a figure. */
+  ["trim","shiftDate","finance","reducePrice"].forEach(id=>
+    assert.ok(validatePurchaseNarration({...good,recommended:id},CTX).ok,
+      `${id} was sent and must be recommendable`));
+  const noOptions=buildCtx({options:[]}).context;
+  const r=validatePurchaseNarration({...good,recommended:"trim"},noOptions);
+  assert.ok(!r.ok&&/not a supplied scenario/.test(r.reason),
+    "recommending an option that was never offered must be refused");
+  assert.ok(validatePurchaseNarration({...good,recommended:"none"},noOptions).ok);
+});
+
+t("3c3 · a note may annotate an option, and figures in it are still checked",()=>{
+  assert.ok(validatePurchaseNarration(
+    {...good,scenarioNotes:[{id:"finance",text:"Five payments of SAR 2,400."}]},CTX).ok,
+    "2400 is in the context via the finance option");
+  const r=validatePurchaseNarration(
+    {...good,scenarioNotes:[{id:"finance",text:"Five payments of SAR 2,401."}]},CTX);
+  assert.ok(!r.ok&&/not in the context/.test(r.reason),
+    "an option's figures are not a loophole in the anti-invention rule");
 });
 
 t("3d · THE load-bearing rule: an invented figure rejects the whole response",()=>{
@@ -404,11 +461,13 @@ t("6 · tools is absent entirely, so grounding cannot be prompt-enabled",()=>{
   assert.ok(!JSON.stringify(req).includes("googleSearch"));
 });
 
-t("6b · structured output is pinned, with the four-value enum plus none",()=>{
+t("6b · structured output is pinned, scenarios AND options in the enum",()=>{
   const g=geminiRequest(buildCtx().context).generationConfig;
   assert.equal(g.responseMimeType,"application/json");
+  /* The upstream enum is the loose gate; the app validates against what it
+     ACTUALLY sent, which is narrower. Both must know the option ids (C2). */
   deepEqual(g.responseSchema.properties.recommended.enum,
-    ["cash","financed","savings","earliest","none"]);
+    ["cash","financed","savings","earliest","trim","shiftDate","finance","reducePrice","none"]);
   deepEqual(g.responseSchema.required,["headline","recommended","scenarioNotes","watchOuts"]);
   assert.equal(g.maxOutputTokens,700);
   assert.equal(g.thinkingConfig.thinkingLevel,"minimal",
@@ -419,6 +478,38 @@ t("6c · the system prompt states all four rules explicitly",()=>{
   const sys=geminiRequest(buildCtx().context).systemInstruction.parts[0].text;
   [/never compute/i,/\{\{refN\}\}/,/untrusted/i,/only the JSON schema|Output only the JSON/i]
     .forEach(re=>assert.ok(re.test(sys),"system prompt is missing: "+re));
+});
+
+t("6c2 · the prompt forbids the failure the FIRST live C2 call actually produced",()=>{
+  /* The first real call recommended "none" and advised against buying, while
+     three options that WORK sat unread in the request. The cause was prose,
+     not the model: the prompt described "none" as "when nothing is worth
+     doing" and never said the options had already been checked. A unit test
+     cannot assert model behaviour, but it CAN stop the fix being edited away.
+     Comments stripped, so this reads the instruction the model receives. */
+  const sys=geminiRequest(buildCtx().context).systemInstruction.parts[0].text;
+  assert.ok(/ONLY correct when[\s\S]{0,40}empty/i.test(sys),
+    "\"none\" must be pinned to an EMPTY options list");
+  assert.ok(/MUST recommend one of them/i.test(sys),
+    "a non-empty options list must compel a pick");
+  assert.ok(/OFTEN[\s\S]{0,20}ALL BAD/i.test(sys),
+    "the prompt must say bad scenarios are the REASON for options, not the answer");
+  assert.ok(/[Nn]ever recommend against the purchase/.test(sys),
+    "the household already decided to buy; the model is not the gatekeeper");
+});
+
+t("6c3 · the prompt translates option ids and ranks reducePrice last",()=>{
+  /* Second live call: it recommended an option (the 6c2 fix worked) but wrote
+     "We can choose reducePrice" — the internal id as an English word — and
+     picked the one option that means NOT getting what they asked for, over
+     instalments that fit every period. Both are prompt defects. */
+  const sys=geminiRequest(buildCtx().context).systemInstruction.parts[0].text;
+  assert.ok(/NEVER write it in/i.test(sys),"the kind id must be banned from the prose");
+  ["trim","shiftDate","finance","reducePrice"].forEach(k=>
+    assert.ok(new RegExp("\\b"+k+"\\b[ \\t]+\\S").test(sys),
+      `${k} has no plain-words translation, so the model will print the id`));
+  assert.ok(/reducePrice` is the LAST resort/.test(sys),
+    "the only option that changes WHAT they buy must rank last");
 });
 
 t("6d · the endpoint and model are the paid flash-lite one",()=>{
