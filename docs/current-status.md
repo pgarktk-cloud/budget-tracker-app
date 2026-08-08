@@ -1,21 +1,31 @@
 # Current Status
 
-_Last updated: 2026-08-07 (Purchase Advisor Build B shipped, v1.36.0)_
+_Last updated: 2026-08-08 (Purchase Advisor C1 — the options engine, v1.37.0)_
 
 ## State of play — read this first
 
-**Live and verified: v1.36.0 / build `2026.08.07.0009`** at
-https://whered-it-go.pages.dev, Worker version `2897b1d2`. All **twenty**
-runners green.
+**Live and verified: v1.37.0 / build `2026.08.08.0001`** at
+https://whered-it-go.pages.dev, Worker version `2897b1d2` (unchanged — C1
+touches no Worker code). All **twenty** runners green.
 
-**The Purchase Advisor is complete — A, A2, A3 and B all shipped.** There is no
-half-built feature carried into the next session for the first time in a while.
+**The advisor now proposes concrete moves, not just verdicts.** Build B's
+narration turned out to only ever restate the cards — see the C1 session note
+for why that was the spec working as written, not a tuning failure.
 
-**Next session: pick from the open list below.** `5b — salary reconciliation`
-is the oldest unstarted item and the only one with a written rationale;
-everything else is a follow-up rather than a build.
+**Next session: decide on C2 before building it.** C2 would have Gemini phrase
+the winning option instead of describing the cards. It is deliberately gated on
+living with C1 first: if the option cards are enough on their own, **retiring
+the AI path entirely is a legitimate outcome**, not a failure. Spec at the top
+of `roadmap.md`. Otherwise `5b — salary reconciliation` is the oldest unstarted
+item.
 
-### Shipped this session (2026-08-07)
+### Shipped 2026-08-08
+
+| Build | Version | What |
+|---|---|---|
+| C1 | 1.37.0 | The options engine: `purchaseSaveableBuckets` anchor fix, `data.trimPolicy`, `purchaseOptionsFor`, option cards with one-tap apply |
+
+### Shipped 2026-08-07
 
 | Build | Version | What |
 |---|---|---|
@@ -28,6 +38,17 @@ everything else is a follow-up rather than a build.
 | B  | 1.36.0 | Gemini narration: `POST /ai/advice`, spend caps, the context builder, the validator, the panel |
 
 ### Open, carried forward — none blocking
+
+0. **Mark which categories the advisor may suggest cutting** (Budget → the
+   scissors icon on a group header, or per category in the chevron panel).
+   Default is NO for everything, so until this is done the advisor offers
+   dates, financing and a lower price but **never a trim** — the headline half
+   of C1 is silent on a fresh document. That is deliberate (see the session
+   note) but it is a real first-run gap.
+0b. **The savings and earliest figures got more conservative in v1.37.0** and
+   will look like a regression to anyone who remembers the old numbers. They
+   are the corrected ones — the current, part-spent period no longer counts
+   toward what you can still save.
 
 1. ~~**Cross-check the advisor's headroom against the Budget tab on REAL
    data.**~~ **DONE 2026-08-07** — 48 buckets, both owners, **no drift**, and
@@ -55,6 +76,141 @@ Goal↔bank reconciliation warnings · multi-currency purchases · household sco
 chat/history · grounding · automatic discretionary detection · applying a
 recommendation as app changes · stored or synced analyses · a Home card for a
 goal that has fallen behind.
+
+---
+
+# 📋 SESSION NOTE — 2026-08-08 (v1.37.0) — Purchase Advisor C1, the options engine
+
+Prompted by testing Build B: *"This doesn't make sense. It's already the same
+with what I can see in the data in the page."* Correct, and the cause is worth
+recording precisely.
+
+## Build B was not mistuned; it was correctly built to a self-defeating spec
+
+B's system prompt says *"you receive figures that are already correct — never
+compute, never state a number that is not in the context."* That rule is the
+whole safety story: it is what makes an invented figure a detected failure. It
+also **guarantees the output can only restate the cards**, because the model is
+forbidden from deriving anything new. The ambition and the constraint were in
+conflict, and it shipped anyway.
+
+The fix is not to loosen the rule — a wrong number about someone's money reads
+exactly like a right one. It is to **move the thinking into the engine**, where
+it is deterministic and testable, and leave the model only the phrasing (C2).
+
+One correction to the original diagnosis, worth keeping because it redirected
+the work: the model was **already** receiving six periods forward, plus every
+category's amount as an opaque token. The forward data was on the wire the
+whole time. It simply was not asked to use it and was not allowed to do
+arithmetic with it. So this was never "send different data" — it was "who
+computes the suggestion".
+
+## Two engine defects found in the grilling, both real regardless of the AI
+
+**1 · The forward walks over-counted the current period.**
+`purchaseHeadroomForBucket` is plan-based, so bucket 0 reports its full
+headroom on the 28th exactly as on the 1st — and both `earliest` and
+`purchaseSavingsPlan` then treated all of it as still savable. Every date they
+quoted was optimistic. `purchaseSaveableBuckets(n)` → `max(0, n−1)` now answers
+"how many FULL periods are there in between" for both walks, so they cannot
+drift apart.
+
+It **understates rather than pro-rating by days elapsed**, deliberately: a
+pro-rated figure moves every day, this engine is plan-based on purpose (a plan
+is a decision, a trailing average is a description), and understating is the
+safe direction for a date someone is about to commit to.
+
+This changed numbers already on screen. Eight `purchasetest` cases were
+**re-derived by hand, not re-baselined** — including 12d, whose deficit bucket
+had to move from August to September, because August is now excluded entirely
+and a deficit there would have proved nothing about the rule under test.
+
+**2 · Trim candidates were ranked by size alone.** On the real dataset the
+three largest are Rent 9,000, Tuition Fee Wife 3,000 and Groceries 2,400 — so
+the feature's first suggestion would have been to cut the rent. An advisor that
+says nothing is better than one that says that.
+
+## `data.trimPolicy` — a map, and outside `plans` on purpose
+
+`{ "<catId|groupId>": {v:bool, updatedAt} }`, resolving **category → group →
+false**. Absent means unanswered and the default is NO.
+
+Why not a field on the category record: cuttability is a property of the
+category as a concept, not of one month's plan. Writing it there means going
+through `editPlanForMonth` — the only legal budget writer — which
+**materialises a plan for whatever month is on screen** just to record a tag,
+and leaves earlier months inheriting a plan without it. `clonePlanRecord` runs
+with `{preserveIds:true}`, so category and group ids survive the month
+copy-on-write, which is exactly what makes an external map keyed by id safe.
+
+**Entries are flipped, never deleted.** A deletion cannot survive a union merge
+— the same reason `payPeriods.actualStarts` still has no merge rule. Setting
+`false` says the same thing and travels correctly.
+
+Being a **map** changes the touch-point list that CLAUDE.md states for a new
+collection: it must NOT go in `BACKUP_ARRAY_KEYS` (which asserts "if present it
+must be a list"), it needs no `CONFLICT_COLLECTIONS` entry (nothing to name in
+a diff) and no `purgeOldTombstones` entry (no tombstones). It gets its own
+`mergeTrimPolicy` (per-key newest-wins) and an object-shape check in
+`validateBackup`. `fingerprint` emits it only when non-empty, so an existing
+document stays byte-identical.
+
+`mergeTrimPolicy` lives beside `mergeArrayById`/`mergeSettingPaths`, **not**
+with the purchase engine — `tryAutoMergeAll` calls it, and `synctest` and
+`mergetest` slice that region. Putting it with the engine broke three runners
+at once; the fix was to move the function, not to widen three slices.
+
+## `purchaseOptionsFor` — the actual feature
+
+Ranked options, each with its own arithmetic and an `apply` payload naming only
+existing draft levers: **trim** (greedy over permitted categories, capped at
+`PURCHASE_TRIM_MAX_PCT` = 30% each so it never proposes gutting one),
+**shiftDate** (reuses the `earliest` walk rather than a second loop),
+**finance** (fewest payments that fit every bucket, via the same
+`buildPurchaseSchedule` real installments use), **reducePrice**. Empty list when
+there is no gap to close.
+
+One rounding subtlety worth keeping: the per-period trim rounds the remaining
+need **up** to the cent. Rounding to nearest made 700/3 into 233.33, which is
+699.99 over three periods — a cent short, so the option reported itself as *not*
+closing the gap while being right in every way a person can see.
+
+"Try this" fills `draft.trims` / `desiredDate` / `count` / `price` and nothing
+else. Trims merge rather than replace, so suggestions stack, and the existing
+Clear reverses the lot.
+
+## What the sandbox caught — fifth session running
+
+`BudgetView` **read `trimPolicy` without destructuring it**: a render-time
+`ReferenceError` that blanked the entire Budget tab while all twenty runners
+stayed green. Root cause was mundane and worth naming — a `node -e` script
+applying two replacements threw on the second, so `writeFileSync` never ran and
+the first edit was silently lost. The tests passed because the *engine* was
+fine; only the component was broken.
+
+`purchasetest` case 13m2 now asserts that a component whose body names a prop
+also declares it in its signature **and** is passed it at the mount site.
+
+## Verification
+
+- Twenty runners green, `purchasetest` 52 → 68. Parse OK. Three sites agree.
+- `headroomcheck.cjs` **48/48, no drift** — confirming the anchor fix stayed
+  inside the savings walks and did not leak into `purchaseHeadroomForBucket`,
+  which Budget's own "Left" shares.
+- Driven in a browser: marking a group cuttable left `monthlyPlans` at 0 and
+  `plans` at 2 — **no plan materialised**; the trim named only Eating out and
+  Shopping, capped at 30%, and said so when it fell short; one tap moved
+  capacity 24,000 → 25,800, exactly 600 × 3; and across a full 25-second
+  autosave window the document stayed **byte-identical with zero POSTs**.
+- Deployed to Pages. **Note:** the production URL served the previous
+  `version.json` for a few seconds after deploy — a stale CDN copy, not a
+  failed deploy. Re-check with a fresh cache-buster before concluding anything.
+
+## Carried forward
+
+- Nothing is suggestable until marked — see open item 0.
+- C2 is deliberately not started. Decide whether it earns its place now that
+  the engine does the thinking.
 
 ---
 

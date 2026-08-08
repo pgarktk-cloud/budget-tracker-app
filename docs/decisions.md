@@ -1,5 +1,84 @@
 # Architectural & Technical Decisions
 
+## A safety rule can make a feature pointless without making it wrong (2026-08-08, v1.37.0)
+
+Build B's model was told: *never compute, never state a number that is not in
+the context.* Every word of that is right — it is what turns an invented figure
+into a detected failure rather than a plausible sentence.
+
+It also made the feature useless, and the two facts are the same fact. A model
+forbidden from deriving anything can only restate what it was given. B shipped,
+was tested, and the verdict was immediate: *"it's already the same with what I
+can see in the data in the page."*
+
+The lesson is not "loosen the rule". A wrong figure about someone's money reads
+exactly like a right one, so the rule stays. The lesson is that **a constraint
+that guarantees safety can also guarantee emptiness, and the design has to be
+checked against both.** The question to have asked at spec time was not "is
+this safe?" but "given this constraint, what is the most this can possibly
+say?" — the answer was "nothing new", and that was knowable before it was
+built.
+
+The resolution moves the thinking to where it can be checked: the engine
+computes concrete options deterministically, and the model is left only the
+phrasing. Same safety rule, unchanged; the value now comes from somewhere it
+can be tested.
+
+A corollary worth keeping. The original diagnosis was "it should read next
+month's budget, not this month's". That turned out to be already true — the
+model was receiving six periods forward the whole time. It simply was not asked
+to use them and could not do arithmetic with them. **Check what the system
+actually sends before concluding it needs to send something different**; the
+real question was who computes, not what travels.
+
+## Suggesting the wrong thing is worse than suggesting nothing (2026-08-08, v1.37.0)
+
+The advisor's trim candidates were ranked by amount, largest first — an obvious
+choice, since the biggest categories free the most money. On the real dataset
+the top three are Rent, Tuition Fee Wife and Groceries. The feature's opening
+line would have been a proposal to cut the rent.
+
+So cuttability is now **explicit and defaults to no**. `data.trimPolicy`
+resolves category → group → `false`; nothing is ever proposed until someone
+marks it. The cost is real and was accepted deliberately: on a fresh document
+the headline half of the feature is silent until the person marks a group. The
+alternative — a heuristic guessing which categories are discretionary — is
+exactly the kind of guess that produces the rent suggestion.
+
+Group-level defaults with per-category overrides are what keep the setup cost
+to one tap per group rather than one per category. That mirrors how the user
+already thinks about the budget: groups are the fixed frame, categories are
+what gets reorganised.
+
+## Where a classification lives decides what writing it costs (2026-08-08, v1.37.0)
+
+`trimPolicy` is a map in `data`, keyed by category or group id — deliberately
+not a field on the category record, which is the obvious place for it.
+
+A category lives inside a plan, and the only legal way to write a plan is
+`editPlanForMonth`. That function **copy-on-writes the inherited plan for the
+viewed month**. So tagging a category as cuttable would materialise a plan for
+whatever month happened to be on screen — and leave every earlier month
+inheriting a plan without the tag. A property of the category *as a concept*
+would have become month-scoped, and merely browsing to a month and tagging
+something would have created a plan record.
+
+The general rule: **before storing a fact, ask what the write costs in the
+structure that would hold it.** Here the fact is timeless and the container is
+month-scoped, so the container was wrong.
+
+An external map is only safe because `clonePlanRecord` runs with
+`{preserveIds:true}` — category and group ids survive the month copy-on-write.
+Had ids been reminted per month, the map would have silently lost its links,
+the same trap `installmentRowId` exists to avoid.
+
+Two consequences of it being a **map** rather than a record array: it needs its
+own per-key merge (`mergeTrimPolicy`, newest-wins per key, so two people
+answering for different categories both survive), and the "eight touch points"
+list in CLAUDE.md does not apply as written — `BACKUP_ARRAY_KEYS` would reject
+it for not being a list, and it has no tombstones to purge or names to show in
+a conflict diff.
+
 ## An allowlist you BUILD cannot leak; one you FILTER can (2026-08-07, v1.36.0)
 
 Build B sends a slice of the household's financial position to Google. The

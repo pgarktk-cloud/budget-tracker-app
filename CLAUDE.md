@@ -309,6 +309,30 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   - `fingerprint()` emits the two collections **only when non-empty**, so
     `migrate()` adding them is byte-identical for an existing document and
     doesn't cost a KV write per device on first open.
+- **`data.trimPolicy` decides what the Purchase Advisor may suggest cutting,
+  and it is a MAP, not a record array** (2026-08-08). Shape is
+  `{ "<catId|groupId>": {v:bool, updatedAt} }`, resolved **category → group →
+  `false`** by module-scope `trimPolicyFor`. Absent means unanswered and the
+  default is NO — ranked by size alone the top candidates on this user's real
+  data are Rent, Tuition and Groceries, so a permissive default opens the
+  feature by proposing you cut your rent.
+  - **Not a field on the category record**, deliberately. A category lives in a
+    plan, the only legal plan writer is `editPlanForMonth`, and that
+    copy-on-writes the *viewed* month — so tagging one would materialise a plan
+    just to record a timeless fact, and leave earlier months untagged. Safe as
+    an external map only because `clonePlanRecord` runs with
+    `{preserveIds:true}`, so ids survive the month clone.
+  - **Entries are flipped, never deleted** — a deletion cannot survive a union
+    merge (the reason `payPeriods.actualStarts` still has no merge rule).
+  - Being a map changes the eight-touch-point list below: it must **not** go in
+    `BACKUP_ARRAY_KEYS` (which asserts "if present, a list"), needs no
+    `CONFLICT_COLLECTIONS` or `purgeOldTombstones` entry, and gets its own
+    per-key newest-wins `mergeTrimPolicy` plus an object check in
+    `validateBackup`. `fingerprint` emits it only when non-empty.
+  - **`mergeTrimPolicy` lives with `mergeArrayById`/`mergeSettingPaths`, not
+    with the purchase engine** — `tryAutoMergeAll` calls it, and `synctest`/
+    `mergetest` slice that region by text. Defining it elsewhere broke three
+    runners at once; move the function, don't widen three slices.
 - **`data.txTemplates` are pinned transaction shortcuts — chosen, not
   observed.** Flat and id-keyed like every other synced collection.
   Deliberately NOT derived from history the way the Repeat chips are: a
@@ -531,6 +555,21 @@ component, **insert it after everything it reads**, not at the logically tidy
 spot. And when the ordering matters, pin it: `aitest.cjs` case 7b2 asserts the
 source positions of five such pairs, comparing `indexOf` on comment-stripped
 source. Cheap, and it fails loudly instead of blanking the app.
+
+**The same blank-screen failure comes from a prop referenced but never
+destructured** — `trimPolicy is not defined` took out the whole Budget tab in
+C1 while all twenty runners stayed green, because the engine was fine and only
+the component was broken. `purchasetest.cjs` case 13m2 pins it: if a
+component's body names a prop, its signature must declare it *and* the mount
+site must pass it.
+
+Its root cause is worth its own warning. A `node -e` script doing several
+`String.replace`s **must write the file before it can throw** — one that
+validates all replacements in a loop and calls `writeFileSync` afterwards
+silently discards the edits that already succeeded when a later one fails. The
+console then shows a plausible error for the *last* edit while the earlier ones
+have vanished. Prefer the `Edit` tool for anything with awkward quoting; when
+scripting, verify with `grep` afterwards rather than trusting the exit code.
 
 ## Navigation
 

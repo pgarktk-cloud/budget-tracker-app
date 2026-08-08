@@ -1,5 +1,49 @@
 # Implementation Roadmap
 
+## ▶ NEXT — decide whether Purchase Advisor C2 earns its place
+
+**C1 shipped 2026-08-08 (v1.37.0)** — the options engine. The advisor now
+computes concrete moves itself: trim these categories by this much, wait until
+this period, split into this many payments, or spend this instead. Every figure
+is engine-computed and one tap fills the What-if levers.
+
+**C2 would have Gemini phrase the winning option** instead of describing the
+cards. It is deliberately gated on living with C1 first, and the honest
+possibility is that it is not needed: if the option cards read well on their
+own, **retiring the AI path entirely is a legitimate outcome**, not a failure.
+That would remove an API cost, a secret, a privacy surface and a validation
+layer. Weigh it after using C1 on real data for a while.
+
+If C2 does go ahead, the shape is small because C1 did the hard part:
+
+- `buildPurchaseAiContext` gains `options` — already-computed, ids and figures
+  only, no names. Add the new keys to **both** allowlists (`AI_CONTEXT_KEYS` in
+  `worker.js` and the builder); `aitest.cjs` case 1b pins them against drift.
+- The system prompt changes from *"explain"* to *"recommend one of these and
+  say why, in one short paragraph"*. It picks among supplied options and
+  phrases the trade-off. **`validatePurchaseNarration` needs no loosening at
+  all** — the model still may not produce a figure absent from the context.
+- `recommended` enum extends to the option ids; an id that was not sent is
+  rejected, exactly as scenario ids already are.
+- The panel becomes a one-line lead above the option rows rather than a
+  paragraph under the cards.
+
+**Do not** let C2 reintroduce computing. The whole point of C1 is that the
+arithmetic is deterministic and tested; the model's only job is words.
+
+---
+
+## ✅ Purchase Advisor C1 (the options engine) — DONE 2026-08-08, v1.37.0
+
+Shipped and deployed. `purchaseSaveableBuckets` (the current period no longer
+counts toward what you can still save), `data.trimPolicy` (nothing is
+suggestable until marked, category → group → false), `purchaseOptionsFor` (the
+ranked options), and option cards with one-tap apply into the existing What-if
+levers. `purchasetest.cjs` 52 → 68. See `current-status.md` for the session
+note and `decisions.md` for the three rules it established.
+
+---
+
 ## ✅ Purchase Advisor Build B (Gemini narration) — DONE 2026-08-07, v1.36.0
 
 Shipped and deployed: Worker version `2897b1d2` first, then Pages build
