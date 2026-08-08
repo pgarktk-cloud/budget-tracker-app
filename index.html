@@ -755,6 +755,7 @@ const I={
   Wallet:Ic([<path key="a" d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/>,<path key="b" d="M3 5v14a2 2 0 0 0 2 2h16v-5"/>,<path key="c" d="M18 12a2 2 0 0 0 0 4h4v-4z"/>]),
   Layers:Ic([<polygon key="a" points="12 2 2 7 12 12 22 7 12 2"/>,<polyline key="b" points="2 17 12 22 22 17"/>,<polyline key="c" points="2 12 12 17 22 12"/>]),
   Target:Ic([<circle key="a" cx="12" cy="12" r="10"/>,<circle key="b" cx="12" cy="12" r="6"/>,<circle key="c" cx="12" cy="12" r="2"/>]),
+  Scissors:Ic([<circle key="a" cx="6" cy="6" r="3"/>,<circle key="b" cx="6" cy="18" r="3"/>,<line key="c" x1="20" y1="4" x2="8.12" y2="15.88"/>,<line key="d" x1="14.47" y1="14.48" x2="20" y2="20"/>,<line key="e" x1="8.12" y1="8.12" x2="12" y2="12"/>]),
   Trending:Ic([<polyline key="a" points="23 6 13.5 15.5 8.5 10.5 1 18"/>,<polyline key="b" points="17 6 23 6 23 12"/>]),
   Gem:Ic([<path key="a" d="M6 3h12l4 6-10 13L2 9z"/>,<path key="b" d="M11 3 8 9l4 13 4-13-3-6"/>,<path key="c" d="M2 9h20"/>]),
   Swap:Ic([<polyline key="a" points="17 1 21 5 17 9"/>,<path key="b" d="M3 11V9a4 4 0 0 1 4-4h14"/>,<polyline key="c" points="7 23 3 19 7 15"/>,<path key="d" d="M21 13v2a4 4 0 0 1-4 4H3"/>]),
@@ -1157,6 +1158,16 @@ function bucketLabel(bucketKey,payPeriods,owner){
   if(cfg&&cfg.enabled&&cfg.payday)return periodLabel(bucketKey,cfg);
   const[y,mo]=bucketKey.split("-");
   return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+}
+/* The first day of a bucket, as a YYYY-MM-DD a <input type="date"> accepts.
+   A pay-period bucket key ALREADY is that date — its nominal payday start — so
+   it is returned unchanged; a calendar bucket is "YYYY-MM" and gains a day.
+   Round-trips through bucketKeyFor by construction, which is what lets the
+   advisor turn "shift to this bucket" back into a date the person can see. */
+function bucketStartDate(bucketKey,payPeriods,owner){
+  const k=String(bucketKey||"");
+  if(/^\d{4}-\d{2}-\d{2}$/.test(k))return k;
+  return/^\d{4}-\d{2}$/.test(k)?`${k}-01`:"";
 }
 function bucketShift(bucketKey,payPeriods,owner,n){
   const cfg=(payPeriods||{})[owner];
@@ -1923,16 +1934,22 @@ function projectPurchaseScenarios(ctx,input){
       perPayment:sched.rows.length?Number(sched.rows[0].scheduledAmount)||0:0};
   }
 
+  /* Only FULL periods count toward saving — see purchaseSaveableBuckets. The
+     accumulation is therefore one bucket behind the test: when we ask whether
+     bucket n is affordable, what has actually been banked is buckets 1 … n−1.
+     Before v1.37.0 this folded in bucket 0 as well, which promised money the
+     current part-spent period could no longer supply. */
   let earliest=null,cumulative=0;
   for(let n=0;n<=PURCHASE_HORIZON_BUCKETS;n++){
     const key=bucketShift(nowBucket,c.payPeriods,c.owner,n);
     if(available+cumulative>=price){
       const shortfall=Math.max(0,price-available);
-      earliest={id:"earliest",bucketKey:key,n,cumulative,shortfall,
-        requiredPerBucket:n>0?shortfall/n:0};
+      const saveable=purchaseSaveableBuckets(n);
+      earliest={id:"earliest",bucketKey:key,n,saveable,cumulative,shortfall,
+        requiredPerBucket:saveable>0?shortfall/saveable:0};
       break;
     }
-    cumulative+=Math.max(0,purchaseHeadroomForBucket(c,key).headroom);
+    if(n>=1)cumulative+=Math.max(0,purchaseHeadroomForBucket(c,key).headroom);
   }
 
   const savings=purchaseSavingsPlan(c,{price,available,desiredDate:i.desiredDate});
@@ -1952,6 +1969,65 @@ function purchaseBucketsBetween(fromBucket,toBucket,payPeriods,owner){
     if(String(bucketShift(fromBucket,payPeriods,owner,n))===String(toBucket))return n;
   }
   return null;
+}
+
+/* ── Which categories may the advisor propose cutting? ─────────────────────
+   `data.trimPolicy` is a MAP, not a record array: `{ "<catId|groupId>":
+   {v:true|false, updatedAt} }`. Resolution for a category is **its own entry →
+   its group's entry → false**. Absent means "not answered", and the default is
+   NO — so nothing is ever suggested until someone says it may be, and the
+   feature cannot open by proposing you cut your rent.
+
+   Why not a field on the category record. Cuttability is a property of the
+   category as a concept, not of one month's plan. Writing it onto the record
+   means going through `editPlanForMonth` — the only legal budget writer —
+   which MATERIALISES a plan for the viewed month just to tag something, and
+   leaves every earlier month inheriting a plan without the flag. Because
+   `clonePlanRecord` is called with `{preserveIds:true}`, category and group
+   ids survive that copy-on-write, which is exactly what makes an external map
+   keyed by id safe.
+
+   Entries are never deleted, only flipped. A deletion cannot survive a union
+   merge (the other device's copy resurrects it) — the same reason
+   `payPeriods.actualStarts` still has no merge rule. Flipping to `false` says
+   the same thing and travels correctly. */
+function trimPolicyFor(trimPolicy,cat,groupId){
+  const p=trimPolicy||{};
+  const own=cat&&p[cat.id];
+  if(own&&typeof own.v==="boolean")return own.v;
+  const g=groupId!=null?p[groupId]:(cat&&p[cat.groupId]);
+  if(g&&typeof g.v==="boolean")return g.v;
+  return false;
+}
+
+
+/* The categories the advisor is allowed to touch, biggest first — the order
+   `buildPurchaseAiRefs` and the options engine both rely on. */
+function cuttableCategories(trimCats,trimPolicy){
+  return (trimCats||[])
+    .filter(c=>c&&Number(c.effAmt)>0&&trimPolicyFor(trimPolicy,c,c.groupId))
+    .slice()
+    .sort((a,b)=>Number(b.effAmt)-Number(a.effAmt));
+}
+
+/* How many periods can you ACTUALLY still save in, to have the money by bucket
+   `n`? Both forward walks ask this, and both used to answer `n`, counting the
+   period we are standing in as if all of its headroom were still ahead of us.
+   It is not: on the 7th of a period most of that month's spare has already
+   been committed or spent, and a plan-based engine cannot see how much.
+
+   The honest answer is the number of FULL periods in between — bucket 0 is
+   part-spent, and the bucket you buy in is part-elapsed when you buy, so what
+   you can bank is buckets 1 … n−1. One helper, because the two walks sharing
+   the `max(0, headroom)` rule and then disagreeing about which buckets it
+   applies to is exactly how they would drift.
+
+   This deliberately UNDERSTATES rather than pro-rating by days elapsed: a
+   pro-rated figure moves every day, and this engine is plan-based on purpose
+   (a plan is a decision; a trailing average is a description). Understating is
+   also the safe direction for a date someone is about to commit to. */
+function purchaseSaveableBuckets(n){
+  return Math.max(0,(Number(n)||0)-1);
 }
 
 /* "I want it by this date — what do I set aside, and can I?"
@@ -1978,21 +2054,130 @@ function purchaseSavingsPlan(ctx,{price,available,desiredDate}){
      savings plan — there is nothing left to spread it over. Say so and point at
      the cash answer rather than dividing by zero. */
   if(String(targetBucket)<=String(nowBucket))
-    return{id:"savings",mode:"now",targetBucket,n:0,shortfall,
+    return{id:"savings",mode:"now",targetBucket,n:0,saveable:0,shortfall,
       requiredPerBucket:shortfall,capacity:0,tightest:null,feasible:shortfall<=0};
   const n=purchaseBucketsBetween(nowBucket,targetBucket,c.payPeriods,c.owner);
-  if(n==null)return{id:"savings",mode:"beyondHorizon",targetBucket,n:null,shortfall,
+  if(n==null)return{id:"savings",mode:"beyondHorizon",targetBucket,n:null,saveable:0,shortfall,
     requiredPerBucket:0,capacity:0,tightest:null,feasible:false};
+  /* Buckets 1 … n−1: the full periods between now and the target. Bucket 0 is
+     part-spent and the target's own bucket is part-elapsed. */
+  const saveable=purchaseSaveableBuckets(n);
   let capacity=0,tightest=null;
-  for(let k=0;k<n;k++){
+  for(let k=1;k<n;k++){
     const key=bucketShift(nowBucket,c.payPeriods,c.owner,k);
     const h=purchaseHeadroomForBucket(c,key);
     capacity+=Math.max(0,h.headroom);
     if(!tightest||h.headroom<tightest.headroom)tightest={key,headroom:h.headroom,income:h.income};
   }
-  return{id:"savings",mode:"plan",targetBucket,n,shortfall,
-    requiredPerBucket:shortfall/n,capacity,tightest,
+  /* A target in the very next period leaves no full period to save in. That is
+     not "beyond the horizon" — the date is reachable, there is simply nothing
+     to spread — so it stays mode:"plan" and reports saveable:0, and the UI can
+     say why instead of dividing by zero. */
+  return{id:"savings",mode:"plan",targetBucket,n,saveable,shortfall,
+    requiredPerBucket:saveable>0?shortfall/saveable:0,capacity,tightest,
     feasible:capacity>=shortfall};
+}
+
+/* ── The options engine (Build C1) ─────────────────────────────────────────
+   Build B could only ever restate the cards, because it was forbidden to
+   compute — which is what made it safe. So the computing moves HERE, where it
+   is deterministic and testable, and the model (C2) is left only to phrase the
+   winner. Every figure a person reads is produced by this function.
+
+   It answers "I can't have it when I want it — now what?" with concrete moves,
+   and returns [] when there is nothing to solve. Each option carries its own
+   arithmetic and an `apply` payload naming the EXISTING draft levers, so the
+   UI never has to re-derive anything and nothing here writes to `data`.
+
+   No option is ever invented that the person hasn't authorised: trims come
+   only from `cuttableCategories`, which defaults to nothing. */
+const PURCHASE_TRIM_MAX_PCT=30;   // never propose gutting a category
+const PURCHASE_MAX_FINANCE_COUNT=24;
+
+function purchaseOptionsFor(ctx,input){
+  const c=ctx||{},i=input||{};
+  const price=Number(i.price)||0;
+  const available=Number((c.stack||{}).available)||0;
+  const out=[];
+  if(price<=0)return out;
+
+  const nowBucket=bucketKeyFor(c.todayStr,c.payPeriods,c.owner);
+  const sav=i.savings||null;
+  /* The gap is defined by the DATE they asked for. With no date there is no
+     "too short" to solve, so only the affordability gap remains. */
+  const shortfall=Math.max(0,price-available);
+  const dated=!!(sav&&sav.mode==="plan");
+  const gap=dated?Math.max(0,shortfall-(Number(sav.capacity)||0)):shortfall;
+  if(gap<=0)return out;
+
+  /* 1 · TRIM — greedy over the categories that are allowed to be cut, biggest
+     first, each capped so the option is realistic rather than arithmetically
+     convenient. `periods` is what the savings plan says is actually available
+     to save in, so the freed total is directly comparable to the gap. */
+  const periods=dated?Math.max(0,Number(sav.saveable)||0):0;
+  const cuttable=cuttableCategories(i.trimCats,c.trimPolicy);
+  if(periods>0&&cuttable.length){
+    let need=gap/periods,perPeriod=0;
+    const picks=[],trims={};
+    for(const cat of cuttable){
+      if(need<=0.005)break;
+      const room=roundTo(Number(cat.effAmt)*(PURCHASE_TRIM_MAX_PCT/100),2);
+      /* Round the remaining need UP to the cent before taking it. Rounding to
+         nearest leaves 700/3 as 233.33, which is 699.99 over three periods —
+         a cent short, so the option would report itself as NOT closing the gap
+         while being right in every way a person can see. Up is also the safe
+         direction: setting aside a hair more than needed always works. */
+      const take=roundTo(Math.min(room,Math.ceil(need*100)/100),2);
+      if(take<=0)continue;
+      picks.push({id:cat.id,amount:take});
+      trims[cat.id]=take;
+      perPeriod=roundTo(perPeriod+take,2);
+      need=roundTo(need-take,2);
+    }
+    if(picks.length)out.push({id:"trim",catIds:picks.map(p=>p.id),picks,
+      perPeriod,periods,freed:roundTo(perPeriod*periods,2),
+      closesGap:perPeriod*periods>=gap-0.005,
+      apply:{trims}});
+  }
+
+  /* 2 · SHIFT THE DATE — reuses the earliest walk's answer rather than a
+     second forward loop, which is how the two would drift apart. */
+  const e=i.earliest;
+  if(e&&e.bucketKey&&(!dated||String(e.bucketKey)>String(sav.targetBucket)))
+    out.push({id:"shiftDate",bucketKey:e.bucketKey,n:e.n,
+      apply:{desiredBucket:e.bucketKey}});
+
+  /* 3 · FINANCE — the fewest payments whose per-bucket obligation fits inside
+     the headroom of every bucket it lands in. Delegates the split to the SAME
+     generateInstallmentSchedule real installments use. */
+  for(let count=2;count<=PURCHASE_MAX_FINANCE_COUNT;count++){
+    const sched=buildPurchaseSchedule({price,downPayment:0,feesOrInterest:0,
+      count,firstDueDate:i.firstDueDate||c.todayStr});
+    const byBucket=new Map();
+    sched.rows.forEach(r=>{
+      const k=bucketKeyFor(r.dueDate,c.payPeriods,c.owner);
+      byBucket.set(k,(byBucket.get(k)||0)+(Number(r.scheduledAmount)||0));
+    });
+    let fits=true;
+    byBucket.forEach((obligation,k)=>{
+      if(purchaseHeadroomForBucket(c,k).headroom-obligation<0)fits=false;
+    });
+    if(fits){
+      out.push({id:"finance",count,
+        perPayment:sched.rows.length?Number(sched.rows[0].scheduledAmount)||0:0,
+        financedTotal:sched.financed,apply:{method:"financed",count}});
+      break;
+    }
+  }
+
+  /* 4 · SPEND LESS — the largest price this plan actually reaches. Only worth
+     saying when it is meaningfully below what they asked for. */
+  const reachable=roundTo(available+(dated?(Number(sav.capacity)||0):0),2);
+  if(reachable>0&&reachable<price*0.995)
+    out.push({id:"reducePrice",price:reachable,saving:roundTo(price-reachable,2),
+      apply:{price:reachable}});
+
+  return out;
 }
 
 /* Two axes, module-scope thresholds, not a setting: cash-flow risk (does any
@@ -2903,8 +3088,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.36.0";
-const BUILD_ID="2026.08.07.0009";
+const APP_VERSION="1.37.0";
+const BUILD_ID="2026.08.08.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3989,6 +4174,12 @@ function validateBackup(obj){
     errors.push(`"owners" should be a pair of names, but it isn't.`);
   if(obj.currency!==undefined&&typeof obj.currency!=="string")
     errors.push(`"currency" should be a currency code.`);
+  /* A map, not a list — so deliberately NOT in BACKUP_ARRAY_KEYS, which would
+     reject it as "should be a list". Absent is normal and needs no entry in
+     BACKUP_OPTIONAL_KEYS either: an unknown key already passes, which is the
+     forward-compatibility property cloudguardtest.cjs pins. */
+  if(obj.trimPolicy!==undefined&&(obj.trimPolicy===null||typeof obj.trimPolicy!=="object"||Array.isArray(obj.trimPolicy)))
+    errors.push(`"trimPolicy" should be an object, but it isn't.`);
   if(obj.household!==undefined&&(obj.household===null||typeof obj.household!=="object"||Array.isArray(obj.household)))
     errors.push(`"household" should be an object, but it isn't.`);
   else if(obj.household&&obj.household.expenses!==undefined&&!Array.isArray(obj.household.expenses))
@@ -4536,6 +4727,8 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
       installments:(rest.installments||[]).length?sortedById(rest.installments):undefined,
       installmentPayments:(rest.installmentPayments||[]).length?sortedById(rest.installmentPayments):undefined,
       txTemplates:(rest.txTemplates||[]).length?sortedById(rest.txTemplates):undefined,
+      /* Same undefined-when-empty rule: a map, so measured by key count. */
+      trimPolicy:Object.keys(rest.trimPolicy||{}).length?rest.trimPolicy:undefined,
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
       history:sortedByKey(hist,h=>h.month||""),
@@ -4825,6 +5018,25 @@ function mergeSettingPaths(local,remote,out){
   return merged;
 }
 
+/* Per-key newest-wins. Each entry carries its own stamp, so two people
+   answering for different categories both survive — the property
+   `mergeSettingPaths` provides for the fixed setting list, over an open key
+   set. Returns undefined when there is nothing on either side, so a document
+   that has never used the feature stays byte-identical. */
+function mergeTrimPolicy(local,remote){
+  const l=local||{},r=remote||{};
+  const keys=[...new Set([...Object.keys(l),...Object.keys(r)])];
+  if(!keys.length)return undefined;
+  const out={};
+  keys.sort().forEach(k=>{
+    const a=l[k],b=r[k];
+    if(!a){out[k]=b;return;}
+    if(!b){out[k]=a;return;}
+    out[k]=(String(a.updatedAt||"")>=String(b.updatedAt||""))?a:b;
+  });
+  return out;
+}
+
 /* Full cross-field auto-merge. Every record-bearing collection is merged by
    id (or by month/owner key where there's no id), so additions made on both
    devices always survive together — not just expenses. Plain settings are no
@@ -4968,6 +5180,7 @@ function tryAutoMergeAll(local,remote){
       installments:mergeArrayById(local.installments,remote.installments),
       installmentPayments:mergeArrayById(local.installmentPayments,remote.installmentPayments),
       txTemplates:mergeArrayById(local.txTemplates,remote.txTemplates),
+      trimPolicy:mergeTrimPolicy(local.trimPolicy,remote.trimPolicy),
       monthlyPlans:mergeKeyedByTs(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
@@ -6748,6 +6961,16 @@ function App(){
     });
   };
 
+  /* Cuttability — a plain map write, deliberately NOT routed through
+     editPlanForMonth. This is a fact about the category as a concept, not
+     about one month's plan, and going through the plan writer would
+     materialise a plan for whatever month happens to be on screen just to
+     record it. Entries are flipped, never deleted: a deletion cannot survive a
+     union merge. See trimPolicyFor at module scope. */
+  const setTrimPolicy=(id,value)=>setData(d=>({...d,
+    trimPolicy:{...(d.trimPolicy||{}),
+      [id]:{v:!!value,updatedAt:new Date().toISOString()}}}));
+
   const removePlanForMonth=(mo,owner=budgetOwner)=>setData(d=>({
     ...d,monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:null,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}]
   }));
@@ -7786,7 +8009,8 @@ function App(){
         <TabPane tab={tab}>
           {tab==="home"&&<HomeView {...{budgetOwner,setBudgetOwner,profile,setProfile:setProfileSynced,owners:data.owners,netWorth,banks,invSar,invSarForOwner,assetSar,liabSar,convert,sarRate,ratesAt,ratesErr,isOnline,data,invs,livePrice,livePriceAt,prevClose,portHistory,snapshots,plans,activePlanId,goals,fmt:fmt2,cur,setTab,setGlobalAddTrigger,contributeToGoal,history,planForMonth,expenses,payPeriods:data.payPeriods,mp2RatesByYear,includeMp2Estimate,setExpensesFilterRequest}}/>}
           {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current(),
-            installments,installmentPayments,onOpenInstallment:openInstallment,goals}}/>}
+            installments,installmentPayments,onOpenInstallment:openInstallment,goals,
+            trimPolicy:data.trimPolicy,setTrimPolicy}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
             installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates:data.txTemplates}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
@@ -7809,7 +8033,8 @@ function App(){
             installments,installmentPayments,banks,goals,expenses,planForMonth,
             payPeriods:data.payPeriods,convert,ratesStaleDays,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
-            addInstallment,addGoal,openInstallment,setTab,isOnline}}/>}
+            addInstallment,addGoal,openInstallment,setTab,isOnline,
+            trimPolicy:data.trimPolicy}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -9123,7 +9348,7 @@ function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth
 }
 
 /* ── BUDGET VIEW — month-aware, percentage shown inline beside amount ── */
-function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow,installments,installmentPayments,onOpenInstallment,goals}){
+function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,investTarget,setInvestTarget,syncNow,installments,installmentPayments,onOpenInstallment,goals,trimPolicy,setTrimPolicy}){
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -9589,6 +9814,14 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
               <input value={g.name} onChange={e=>renameGroup(g.id,e.target.value)} className="bare" style={{fontSize:14,fontWeight:600,color:P.neuInk}}/>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
                 <span style={{fontSize:13,fontWeight:600,color:P.neuSub}} className="tnum">{fmt(groupTotal)}</span>
+                {/* The Purchase Advisor default for everything in this group.
+                    Categories still override it either way from their own
+                    chevron panel; this is the one tap that covers a set. */}
+                <IconButton icon={I.Scissors}
+                  label={`${trimPolicyFor(trimPolicy,null,g.id)?"Stop suggesting":"Allow suggesting"} cuts in ${g.name||"this group"} when planning a purchase`}
+                  onClick={()=>setTrimPolicy(g.id,!trimPolicyFor(trimPolicy,null,g.id))} size={14}
+                  style={{color:trimPolicyFor(trimPolicy,null,g.id)?P.grD:P.neuSub,
+                          opacity:trimPolicyFor(trimPolicy,null,g.id)?1:.4}}/>
                 <IconButton icon={I.Trash} label={`Delete ${g.name||"group"}`} onClick={()=>setConfirmDelete({type:"group",id:g.id,name:g.name||"this group"})} size={14} style={{color:P.wine,opacity:.5}}/>
               </div>
             </div>
@@ -9685,6 +9918,23 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
                             </select>
                           </label>
                         )}
+                        {/* ── May the Purchase Advisor propose cutting this? ──
+                            Default is NO for everything, so the advisor cannot
+                            open by suggesting you cut your rent. This toggle
+                            writes data.trimPolicy, not the category record —
+                            see setTrimPolicy for why that distinction matters.
+                            The group's own toggle sets the default for its
+                            whole set; this overrides it either way. */}
+                        <button onClick={()=>setTrimPolicy(c.id,!trimPolicyFor(trimPolicy,c,c.groupId))}
+                          aria-pressed={trimPolicyFor(trimPolicy,c,c.groupId)}
+                          title="Whether the Purchase Advisor may suggest reducing this when you are planning a purchase"
+                          className="status-pill" style={{cursor:"pointer",
+                            border:`1px solid ${trimPolicyFor(trimPolicy,c,c.groupId)?P.grS:P.line}`,
+                            background:trimPolicyFor(trimPolicy,c,c.groupId)?P.grS:"transparent",
+                            color:trimPolicyFor(trimPolicy,c,c.groupId)?P.grD:P.neuSub}}>
+                          <I.Scissors size={13}/>
+                          {trimPolicyFor(trimPolicy,c,c.groupId)?"Can trim":"Won't trim"}
+                        </button>
                         <button onClick={()=>setConfirmDelete({type:"cat",id:c.id,name:c.name||"this category"})}
                           aria-label={`Delete ${c.name||"category"}`}
                           className="status-pill" style={{marginLeft:"auto",cursor:"pointer",
@@ -15102,7 +15352,7 @@ function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
 function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
   banks,goals,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
   fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab,
-  isOnline}){
+  isOnline,trimPolicy}){
   const todayStr=todayISO();
   const bucket=bucketNow(payPeriods,budgetOwner);
 
@@ -15125,8 +15375,8 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   const trims=draft.trims||{};
 
   const engineCtx=useMemo(()=>({monthlyPlans,plans,activePlanId,installments,installmentPayments,
-    payPeriods,owner:budgetOwner,trims}),
-    [monthlyPlans,plans,activePlanId,installments,installmentPayments,payPeriods,budgetOwner,trims]);
+    payPeriods,owner:budgetOwner,trims,trimPolicy}),
+    [monthlyPlans,plans,activePlanId,installments,installmentPayments,payPeriods,budgetOwner,trims,trimPolicy]);
 
   const thisBucket=useMemo(()=>purchaseHeadroomForBucket(engineCtx,bucket),[engineCtx,bucket]);
 
@@ -15165,7 +15415,9 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
 
   const trimCats=useMemo(()=>{
     const plan=resolvePlanForMonth(monthlyPlans,bucket,budgetOwner,activePlanId,plans).plan;
-    return((plan&&plan.categories)||[]).map(c=>({id:c.id,name:c.name,effAmt:categoryEffectiveAmt(c)}))
+    /* groupId travels too: cuttability resolves category -> group -> false,
+       so dropping it here would silently make every group default unreadable. */
+    return((plan&&plan.categories)||[]).map(c=>({id:c.id,name:c.name,groupId:c.groupId,effAmt:categoryEffectiveAmt(c)}))
       .filter(c=>c.effAmt>0);
   },[monthlyPlans,bucket,budgetOwner,activePlanId,plans]);
   const trimTotal=trimCats.reduce((s,c)=>s+purchaseTrimFor(trims,c.id,c.effAmt),0);
@@ -15212,6 +15464,33 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      to its earliest-possible mode. */
   const sav=scenarios.savings;
   const savingsVerdict=purchaseVerdict(sav,{});
+  /* ── What to do about it (Build C1) ──
+     Placed after the verdicts because it reads `sav`, and a const read above
+     its declaration is a temporal-dead-zone throw at render time — see
+     CLAUDE.md. Everything it proposes is computed here, deterministically; the
+     model (Build C2) only phrases the winner. */
+  const options=useMemo(()=>purchaseOptionsFor(
+    {...engineCtx,stack,todayStr},
+    {price,trimCats,savings:sav,earliest:scenarios.earliest,firstDueDate:draft.firstDue}),
+    [engineCtx,stack,todayStr,price,trimCats,sav,scenarios.earliest,draft.firstDue]);
+
+  /* One tap fills the EXISTING draft levers and nothing else — the advisor is
+     a scratchpad, and `draft` is localStorage-only and never synced. Trims are
+     merged rather than replaced so two suggestions can be stacked, and the
+     existing Clear reverses the lot. */
+  const applyOption=useCallback(o=>{
+    const a=(o&&o.apply)||{};
+    setDraft(d=>{
+      const next={...d};
+      if(a.trims)next.trims={...(d.trims||{}),...a.trims};
+      if(a.desiredBucket)next.desiredDate=bucketStartDate(a.desiredBucket,payPeriods,budgetOwner);
+      if(a.method)next.method=a.method;
+      if(a.count!=null)next.count=a.count;
+      if(a.price!=null)next.price=a.price;
+      return next;
+    });
+  },[payPeriods,budgetOwner]);
+
   /* ── Narration (Build B) ──
      The horizon is capped at six buckets on purpose: the model needs the SHAPE
      of the next few periods, and sending twenty-four is more identifying data
@@ -15749,6 +16028,49 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                     fontWeight:600,padding:"8px 4px",minHeight:40}}>Clear</button>}
             </div>
           </section>
+
+          {/* ── What to do about it (C1) ──
+                 The answer to "I can't have it when I want it — now what?".
+                 Every figure here is engine-computed; "Try this" fills the
+                 What-if levers and never touches the budget. */}
+          {options.length>0&&
+            <section style={card}>
+              <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:2}}>What would make this work</div>
+              <div style={{fontSize:11,color:P.faint,marginBottom:10}}>
+                These fill the What-if levers below. Nothing here edits your budget.
+              </div>
+              {options.map(o=>{
+                const names=(o.picks||[]).map(p=>{
+                  const c=trimCats.find(x=>x.id===p.id);
+                  return`${(c&&c.name)||"a category"} −${fmt(p.amount)}`;
+                });
+                const line=
+                  o.id==="trim"
+                    ?{head:`Free up ${fmt(o.perPeriod)} a period`,
+                      sub:`${names.join(", ")} — for ${o.periods} ${o.periods===1?"period":"periods"}`
+                        +(o.closesGap?"":", which still won't quite cover it")}
+                  :o.id==="shiftDate"
+                    ?{head:`Wait until ${label(o.bucketKey)}`,
+                      sub:`The first period your plan reaches the full amount.`}
+                  :o.id==="finance"
+                    ?{head:`Split it over ${o.count} payments`,
+                      sub:`${fmt(o.perPayment)} each, and every period still has room.`}
+                    :{head:`Spend ${fmt(o.price)} instead`,
+                      sub:`${fmt(o.saving)} less — what this plan actually reaches by your date.`};
+                return(
+                  <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,
+                    padding:"9px 0",borderTop:"1px solid rgba(0,0,0,.06)"}}>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>{line.head}</div>
+                      <div style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
+                    </div>
+                    <button onClick={()=>applyOption(o)}
+                      style={{flexShrink:0,borderRadius:10,padding:"8px 12px",fontSize:12,
+                        fontWeight:600,border:"none",background:"rgba(0,0,0,.05)",
+                        color:P.neuInk,minHeight:40}}>Try this</button>
+                  </div>);
+              })}
+            </section>}
 
           {/* ── The explanation, last: it is commentary on everything above,
                  and it is the only part that can be absent without the tab

@@ -53,16 +53,23 @@ vm.runInContext(
   /* MIN_TREND_BUCKETS, which purchaseHistoryWarning gates on */
   slice("const MIN_TREND_BUCKETS=3;","function bucketHistoryFor(")+"\n"+
   /* bank valuation, which the availability stack values accounts through */
+  /* mergeTrimPolicy lives with the OTHER merge helpers, not with the
+     purchase engine — tryAutoMergeAll calls it, and synctest/mergetest
+     slice that region. Sliced in here so this file can test it too. */
+  slice("function mergeTrimPolicy(local,remote){","/* Full cross-field auto-merge")+"\n"+
   slice("function dayNumber(str){","/* Reconcile: fold the accrued estimate")+`
 this.PURCHASE_HORIZON_BUCKETS=PURCHASE_HORIZON_BUCKETS;
 this.PURCHASE_THIN_PCT=PURCHASE_THIN_PCT;
 this.MIN_TREND_BUCKETS=MIN_TREND_BUCKETS;
-this.INSTALLMENT_ROUND_TOL=INSTALLMENT_ROUND_TOL;`,ctx);
+this.INSTALLMENT_ROUND_TOL=INSTALLMENT_ROUND_TOL;
+this.PURCHASE_TRIM_MAX_PCT=PURCHASE_TRIM_MAX_PCT;`,ctx);
 
 const{
   categoryEffectiveAmt,purchaseTrimFor,purchasePlannedTotal,purchaseHeadroomForBucket,
   purchaseAvailableStack,buildPurchaseSchedule,projectPurchaseScenarios,purchaseVerdict,
   purchaseHistoryWarning,purchaseBucketsBetween,purchaseSavingsPlan,goalSavedTotal,
+  purchaseSaveableBuckets,trimPolicyFor,mergeTrimPolicy,cuttableCategories,
+  purchaseOptionsFor,PURCHASE_TRIM_MAX_PCT,
   bankIsAccessible,bankIsReserved,
   resolvePlanForMonth,derivedInstallmentRowsFor,bucketKeyFor,bucketShift,
   generateInstallmentSchedule,scheduleDiff,scheduleTotal,roundTo,addMonthsISO,
@@ -364,10 +371,14 @@ function walkCtx(over={}){
 
 t("7 · earliest finds the first bucket whose accumulated headroom reaches the price",()=>{
   const s=projectPurchaseScenarios(walkCtx({stack:{available:0}}),{price:500});
-  assert.equal(s.earliest.n,5,"100 a period, 500 to find");
-  assert.equal(s.earliest.bucketKey,"2027-01","five buckets on from 2026-08");
+  /* Five FULL periods of 100 are needed, and the earliest bucket at which
+     five have completed is bucket 6 — bucket 0 is part-spent and banks
+     nothing. Before v1.37.0 this read 5, counting the current period. */
+  assert.equal(s.earliest.n,6,"100 a period, 500 to find, from bucket 1 onward");
+  assert.equal(s.earliest.bucketKey,"2027-02","six buckets on from 2026-08");
+  assert.equal(s.earliest.saveable,5,"buckets 1-5 are the ones that can bank");
   near(s.earliest.shortfall,500);
-  near(s.earliest.requiredPerBucket,100);
+  near(s.earliest.requiredPerBucket,100,"500 over the 5 periods that can save");
   // already affordable → n = 0, and no waiting is proposed
   const now=projectPurchaseScenarios(walkCtx({stack:{available:900}}),{price:500});
   assert.equal(now.earliest.n,0);
@@ -384,8 +395,11 @@ t("7b · an installment ENDING inside the horizon brings the answer forward on i
     walkCtx({installments:[short.inst],installmentPayments:short.rows}),{price:500});
   const b=projectPurchaseScenarios(
     walkCtx({installments:[long.inst],installmentPayments:long.rows}),{price:500});
+  /* short: buckets 1-2 give 50, then 100 — 500 banked by bucket 7.
+     long: every bucket in the window gives 50, so 10 full periods are needed
+     and the answer lands at bucket 11. */
   assert.equal(a.earliest.n,7);
-  assert.equal(b.earliest.n,10);
+  assert.equal(b.earliest.n,11);
   assert.ok(a.earliest.n<b.earliest.n,
     "a plan that finishes must free its money up without being asked");
 });
@@ -406,9 +420,13 @@ t("7d · beyond the horizon it returns null rather than extrapolating",()=>{
   const s=projectPurchaseScenarios(walkCtx(),{price:1000000});
   assert.equal(s.earliest,null);
   // exactly at the horizon it still answers
-  const edge=projectPurchaseScenarios(walkCtx(),{price:100*PURCHASE_HORIZON_BUCKETS});
+  /* The horizon holds HORIZON−1 saving periods, not HORIZON, because bucket 0
+     banks nothing — so the largest reachable price drops by exactly one
+     period's headroom. */
+  const reach=100*(PURCHASE_HORIZON_BUCKETS-1);
+  const edge=projectPurchaseScenarios(walkCtx(),{price:reach});
   assert.equal(edge.earliest.n,PURCHASE_HORIZON_BUCKETS);
-  const justOver=projectPurchaseScenarios(walkCtx(),{price:100*PURCHASE_HORIZON_BUCKETS+1});
+  const justOver=projectPurchaseScenarios(walkCtx(),{price:reach+1});
   assert.equal(justOver.earliest,null);
 });
 
@@ -479,8 +497,8 @@ t("8b · the forward walk steps in the owner's periods, not calendar months",()=
   const PP={me:{enabled:true,payday:28,actualStarts:{}},
             wife:{enabled:false,payday:1,actualStarts:{}}};
   const s=projectPurchaseScenarios(walkCtx({payPeriods:PP}),{price:300});
-  assert.equal(s.earliest.n,3);
-  assert.equal(s.earliest.bucketKey,bucketShift(bucketKeyFor(TODAY,PP,"me"),PP,"me",3));
+  assert.equal(s.earliest.n,4,"three full periods, reached at bucket 4");
+  assert.equal(s.earliest.bucketKey,bucketShift(bucketKeyFor(TODAY,PP,"me"),PP,"me",4));
   assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(s.earliest.bucketKey),"a pay-period key, not YYYY-MM");
 });
 
@@ -549,8 +567,8 @@ t("10c · trims flow through headroom and move the earliest date",()=>{
   near(purchaseHeadroomForBucket(c,"2026-08").headroom,5500);
   const before=projectPurchaseScenarios({...walkCtx()},{price:500});
   const after=projectPurchaseScenarios({...walkCtx(),trims:{c1:400}},{price:500});
-  assert.equal(before.earliest.n,5);
-  assert.equal(after.earliest.n,1,"headroom 500 a period reaches 500 in one");
+  assert.equal(before.earliest.n,6);
+  assert.equal(after.earliest.n,2,"headroom 500 reaches 500 in ONE full period, i.e. bucket 2");
 });
 
 /* ── 11 · account flags and per-bank withholding (A3) ─────────────────────
@@ -693,30 +711,76 @@ t("12b · it plans from AVAILABLE cash, not from zero",()=>{
   const s=purchaseSavingsPlan(walkCtx(),{price:1200,available:1000,desiredDate:"2026-10-15"});
   assert.equal(s.mode,"plan");
   assert.equal(s.n,2,"Aug → Oct");
+  assert.equal(s.saveable,1,"only September is a FULL period in between");
   assert.equal(s.shortfall,200,"1,200 − 1,000, not 1,200");
-  assert.equal(s.requiredPerBucket,100);
+  assert.equal(s.requiredPerBucket,200,"200 to find, one period to find it in");
+  assert.equal(s.feasible,false,"one period of 100 spare cannot supply 200");
 });
 
 t("12c · feasibility is capacity across the window, not every bucket alone",()=>{
   /* Saving more in a fat period to cover a lean one is a real plan. 100 spare
      a period over 4 periods reaches 400 even though no single period could. */
-  const s=purchaseSavingsPlan(walkCtx(),{price:400,available:0,desiredDate:"2026-12-15"});
+  const s=purchaseSavingsPlan(walkCtx(),{price:300,available:0,desiredDate:"2026-12-15"});
   assert.equal(s.n,4);
-  assert.equal(s.capacity,400);
+  assert.equal(s.saveable,3,"Sep, Oct, Nov — not the part-spent August");
+  assert.equal(s.capacity,300,"three full periods at 100");
   assert.equal(s.feasible,true);
   assert.equal(s.requiredPerBucket,100);
-  const tight=purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:"2026-12-15"});
-  assert.equal(tight.capacity,400);
-  assert.equal(tight.feasible,false,"400 of capacity cannot reach 500");
+  const tight=purchaseSavingsPlan(walkCtx(),{price:400,available:0,desiredDate:"2026-12-15"});
+  assert.equal(tight.capacity,300);
+  assert.equal(tight.feasible,false,"300 of capacity cannot reach 400");
 });
 
 t("12d · a deficit bucket contributes 0 to capacity and never subtracts",()=>{
-  const sink=instal("i1",{amount:600,count:1,first:"2026-08-15"});
+  /* The sink is in SEPTEMBER, not August: August is bucket 0 and no longer
+     counted at all, so a deficit there would prove nothing about this rule. */
+  const sink=instal("i1",{amount:600,count:1,first:"2026-09-15"});
   const c=walkCtx({installments:[sink.inst],installmentPayments:sink.rows});
   const s=purchaseSavingsPlan(c,{price:300,available:0,desiredDate:"2026-12-15"});
   assert.equal(s.n,4);
-  assert.equal(s.capacity,300,"buckets 1–3 give 100 each; the −500 bucket gives 0");
+  assert.equal(s.saveable,3);
+  assert.equal(s.capacity,200,"Oct and Nov give 100 each; the −500 September gives 0");
   assert.equal(s.tightest.headroom,-500,"reported, so the UI can warn — but not summed in");
+});
+
+t("12d2 · the CURRENT period never contributes, in months or in pay periods",()=>{
+  /* The anchor rule (v1.37.0). purchaseHeadroomForBucket is plan-based, so
+     bucket 0 reads its full headroom on the 28th exactly as on the 1st — and
+     treating that as still-savable promised money the period could no longer
+     supply. Both forward walks now start at bucket 1. */
+  assert.equal(purchaseSaveableBuckets(0),0);
+  assert.equal(purchaseSaveableBuckets(1),0,"a target in the very next period banks nothing");
+  assert.equal(purchaseSaveableBuckets(4),3);
+
+  // months: Aug → Oct is 2 buckets, of which only September is a full period
+  const m=purchaseSavingsPlan(walkCtx(),{price:1000,available:0,desiredDate:"2026-10-15"});
+  assert.equal(m.capacity,100,"September alone, NOT August + September");
+
+  // the same must hold when a bucket is a pay period rather than a month
+  const PP={me:{enabled:true,payday:28,actualStarts:{}},
+            wife:{enabled:false,payday:1,actualStarts:{}}};
+  const now=bucketKeyFor(TODAY,PP,"me");
+  const target=bucketShift(now,PP,"me",3);
+  const p=purchaseSavingsPlan(walkCtx({payPeriods:PP}),
+    {price:1000,available:0,desiredDate:target});
+  assert.equal(p.n,3);
+  assert.equal(p.saveable,2);
+  assert.equal(p.capacity,200,"two full pay periods at 100, not three");
+});
+
+t("12d3 · a target in the next period reports saveable 0 and never divides by zero",()=>{
+  const s=purchaseSavingsPlan(walkCtx(),{price:500,available:0,desiredDate:"2026-09-15"});
+  assert.equal(s.mode,"plan","the date IS reachable — there is simply nothing to spread");
+  assert.equal(s.n,1);
+  assert.equal(s.saveable,0);
+  assert.equal(s.capacity,0);
+  assert.equal(s.requiredPerBucket,0);
+  assert.ok(isFinite(s.requiredPerBucket),"must never be Infinity or NaN");
+  assert.equal(s.feasible,false);
+  // and when there is nothing left to find, no saving is needed either
+  const covered=purchaseSavingsPlan(walkCtx(),{price:100,available:500,desiredDate:"2026-09-15"});
+  assert.equal(covered.shortfall,0);
+  assert.equal(covered.feasible,true,"capacity 0 still covers a shortfall of 0");
 });
 
 t("12e · a date already here, or past, is not a savings plan",()=>{
@@ -839,6 +903,182 @@ t("S3 · the advisor's render path can never materialise a plan",()=>{
   assert.ok(engine.indexOf("localStorage")<0,"the engine is pure — no storage");
   assert.ok(!/new Date\(\)|Date\.now\(\)|todayISO\(\)/.test(engine),
     "the engine must take todayStr, never read the clock");
+});
+
+/* ── 13 · cuttability and the options engine (C1) ─────────────────────────
+   The rule this section exists for: the advisor must never open by proposing
+   you cut your rent. Trim candidates were ranked by size alone, and on the
+   real dataset the three biggest are Rent, Tuition and Groceries. Nothing is
+   suggestable until someone says it is. */
+console.log("\n13 · cuttability and the options engine\n");
+
+const POL=o=>Object.fromEntries(Object.entries(o)
+  .map(([k,v])=>[k,{v,updatedAt:"2026-08-01T00:00:00.000Z"}]));
+const TRIMCATS=[
+  {id:"c1",groupId:"gEss",name:"Rent",effAmt:9000},
+  {id:"c2",groupId:"gEss",name:"Groceries",effAmt:2400},
+  {id:"c3",groupId:"gFun",name:"Eating out",effAmt:1200},
+  {id:"c4",groupId:"gFun",name:"Shopping",effAmt:800},
+];
+
+t("13 · default is NO — nothing is suggestable until it is marked",()=>{
+  assert.equal(trimPolicyFor(undefined,{id:"c1",groupId:"gEss"}),false,
+    "an absent policy must never read as permission");
+  assert.equal(trimPolicyFor({},{id:"c1",groupId:"gEss"}),false);
+  deepEqual(cuttableCategories(TRIMCATS,{}),[],"no policy, no candidates");
+});
+
+t("13b · category beats group, group beats default",()=>{
+  const p=POL({gFun:true,gEss:false,c1:true,c3:false});
+  assert.equal(trimPolicyFor(p,{id:"c1",groupId:"gEss"}),true,"own entry wins over its group");
+  assert.equal(trimPolicyFor(p,{id:"c3",groupId:"gFun"}),false,"and wins when it says NO too");
+  assert.equal(trimPolicyFor(p,{id:"c4",groupId:"gFun"}),true,"falls through to the group");
+  assert.equal(trimPolicyFor(p,{id:"c2",groupId:"gEss"}),false);
+  assert.equal(trimPolicyFor(p,{id:"cX",groupId:"gUnknown"}),false,"unknown group is not permission");
+});
+
+t("13c · candidates are biggest-first, and a zero-amount category never appears",()=>{
+  const p=POL({gFun:true,gEss:true});
+  const got=cuttableCategories([...TRIMCATS,{id:"c9",groupId:"gFun",name:"Dormant",effAmt:0}],p);
+  deepEqual(got.map(c=>c.id),["c1","c2","c3","c4"]);
+});
+
+t("13d · the policy map merges per key, newest wins",()=>{
+  const local={c1:{v:true,updatedAt:"2026-08-02T00:00:00.000Z"},
+               c2:{v:true,updatedAt:"2026-08-01T00:00:00.000Z"}};
+  const remote={c1:{v:false,updatedAt:"2026-08-05T00:00:00.000Z"},
+                c3:{v:true,updatedAt:"2026-08-03T00:00:00.000Z"}};
+  const m=mergeTrimPolicy(local,remote);
+  assert.equal(m.c1.v,false,"the newer answer wins");
+  assert.equal(m.c2.v,true,"an entry only one device has still survives");
+  assert.equal(m.c3.v,true,"in both directions");
+  assert.equal(mergeTrimPolicy(undefined,undefined),undefined,
+    "a document that has never used it stays byte-identical");
+  assert.equal(mergeTrimPolicy({},{}),undefined);
+});
+
+/* walkCtx has headroom 1000-900 = 100 a bucket, flat; TODAY is 2026-08-10. */
+function optCtx(over={}){return{...walkCtx(),trimPolicy:POL({gFun:true}),...over};}
+function optIn(over={}){
+  const c=over.ctx||optCtx();
+  const price=over.price===undefined?1000:over.price;
+  const date=over.desiredDate===undefined?"2026-12-15":over.desiredDate;
+  const available=Number((c.stack||{}).available)||0;
+  return{price,trimCats:TRIMCATS,
+    savings:purchaseSavingsPlan(c,{price,available,desiredDate:date}),
+    earliest:projectPurchaseScenarios(c,{price}).earliest};
+}
+
+t("13e · nothing to solve returns an empty list",()=>{
+  const rich=optCtx({stack:{available:5000}});
+  deepEqual(purchaseOptionsFor(rich,optIn({ctx:rich})),[],
+    "cash already covers it — no options, and the UI says so in one line");
+  const c=optCtx();
+  deepEqual(purchaseOptionsFor(c,optIn({ctx:c,price:0})),[],"no price, no advice");
+});
+
+t("13f · a trim option only ever names categories that were marked cuttable",()=>{
+  const c=optCtx();                       // only the gFun group is cuttable
+  const trim=purchaseOptionsFor(c,optIn({ctx:c})).find(o=>o.id==="trim");
+  assert.ok(trim,"expected a trim option");
+  trim.catIds.forEach(id=>assert.ok(["c3","c4"].includes(id),
+    `proposed cutting ${id}, which was never marked cuttable`));
+  assert.ok(!trim.catIds.includes("c1"),"Rent must never be proposed unmarked");
+});
+
+t("13g · no trim option at all when nothing is marked",()=>{
+  const c=optCtx({trimPolicy:{}});
+  assert.equal(purchaseOptionsFor(c,optIn({ctx:c})).find(o=>o.id==="trim"),undefined);
+});
+
+t("13h · a trim is capped so it never guts a category",()=>{
+  const c=optCtx({trimPolicy:POL({gEss:true,gFun:true})});
+  const trim=purchaseOptionsFor(c,optIn({ctx:c,price:100000})).find(o=>o.id==="trim");
+  assert.ok(trim,"expected a trim option");
+  trim.picks.forEach(p=>{
+    const cat=TRIMCATS.find(x=>x.id===p.id);
+    assert.ok(p.amount<=cat.effAmt*(PURCHASE_TRIM_MAX_PCT/100)+1e-9,
+      `${p.id}: proposed ${p.amount} of ${cat.effAmt}, past the ${PURCHASE_TRIM_MAX_PCT}% cap`);
+  });
+});
+
+t("13i · the trim spreads over SAVEABLE periods, and is honest when it falls short",()=>{
+  /* price 1000, available 0, Dec target: n=4, saveable=3, capacity 300.
+     gap = 1000 − 300 = 700, over 3 periods = 233.34 a period.
+     gFun room: 1200×.30=360 plus 800×.30=240 = 600, so it reaches. */
+  const c=optCtx();
+  const trim=purchaseOptionsFor(c,optIn({ctx:c})).find(o=>o.id==="trim");
+  assert.equal(trim.periods,3,"saveable periods, not the raw bucket count");
+  near(trim.perPeriod,233.34);
+  assert.equal(trim.closesGap,true);
+  const big=purchaseOptionsFor(c,optIn({ctx:c,price:100000})).find(o=>o.id==="trim");
+  assert.equal(big.closesGap,false,"honest about falling short rather than silent");
+});
+
+t("13j · every option carries an apply payload naming an existing draft lever",()=>{
+  const c=optCtx();
+  const opts=purchaseOptionsFor(c,optIn({ctx:c}));
+  assert.ok(opts.length,"expected options");
+  const allowed=["trims","desiredBucket","method","count","price"];
+  opts.forEach(o=>{
+    assert.ok(o.apply&&typeof o.apply==="object",`${o.id} has no apply payload`);
+    Object.keys(o.apply).forEach(k=>assert.ok(allowed.includes(k),
+      `${o.id} would write "${k}", which is not a draft lever`));
+  });
+});
+
+t("13k · shiftDate is only offered when it is LATER than the date asked for",()=>{
+  const c=optCtx();
+  const inp=optIn({ctx:c});
+  const shift=purchaseOptionsFor(c,inp).find(o=>o.id==="shiftDate");
+  if(shift)assert.ok(String(shift.bucketKey)>String(inp.savings.targetBucket),
+    "proposing a date no later than the one already chosen is not an option");
+});
+
+t("13l · reducePrice reports what the plan actually reaches",()=>{
+  const c=optCtx();
+  const opt=purchaseOptionsFor(c,optIn({ctx:c})).find(o=>o.id==="reducePrice");
+  assert.ok(opt,"expected a reducePrice option");
+  near(opt.price,300,"available 0 plus capacity 300");
+  near(opt.saving,700);
+});
+
+t("13m2 · every component that USES trimPolicy is actually given it",()=>{
+  /* A prop referenced but not destructured is a ReferenceError at render — the
+     whole tab blanks into the error boundary, and no pure test sees it because
+     every function under test still passes. Caught in the sandbox, twice in
+     this feature. Cheap to pin: if a component's body names the prop, its
+     signature must too, and the mount site must pass it. */
+  const sigOf=name=>{
+    const i=html.indexOf(`function ${name}(`);
+    assert.ok(i>=0,`${name} not found`);
+    return html.slice(i,html.indexOf("){",i));
+  };
+  ["BudgetView","PurchaseAdvisorView"].forEach(name=>{
+    const start=html.indexOf(`function ${name}(`);
+    const end=html.indexOf("\nfunction ",start+1);
+    const body=html.slice(start,end<0?html.length:end);
+    if(/[^.\w]trimPolicy\b/.test(body.slice(body.indexOf("){"))))
+      assert.ok(/\btrimPolicy\b/.test(sigOf(name)),
+        `${name} reads trimPolicy but never destructures it — a render-time ReferenceError`);
+  });
+  assert.ok(/\bsetTrimPolicy\b/.test(sigOf("BudgetView")),
+    "BudgetView renders the toggles, so it needs the setter");
+  // and the mount sites must actually hand them over
+  assert.ok(/<BudgetView[\s\S]{0,900}?trimPolicy:data\.trimPolicy/.test(html),
+    "BudgetView is never passed trimPolicy");
+  assert.ok(/<BudgetView[\s\S]{0,900}?setTrimPolicy/.test(html),
+    "BudgetView is never passed setTrimPolicy");
+  assert.ok(/<PurchaseAdvisorView[\s\S]{0,900}?trimPolicy:data\.trimPolicy/.test(html),
+    "PurchaseAdvisorView is never passed trimPolicy");
+});
+
+t("13m · the options engine writes nothing and never reads the clock",()=>{
+  const src=slice("function purchaseOptionsFor(ctx,input){","/* Two axes, module-scope");
+  ["setData","editPlanForMonth","localStorage"].forEach(bad=>
+    assert.ok(src.indexOf(bad)<0,`the options engine must not reference ${bad}`));
+  assert.ok(!/new Date\(\)|Date\.now\(\)|todayISO\(\)/.test(src),
+    "it must take todayStr, never read the clock");
 });
 
 console.log(`\n${n-fails}/${n} passed`);
