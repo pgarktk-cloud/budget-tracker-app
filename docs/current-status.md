@@ -1,20 +1,23 @@
 # Current Status
 
-_Last updated: 2026-08-08 (Purchase Advisor C2 — the model recommends, v1.38.0)_
+_Last updated: 2026-08-08 (AI narration removed; the advisor is engine-only, v1.41.0)_
 
 ## State of play — read this first
 
-**Live and verified: v1.38.0 / build `2026.08.08.0002`** at
-https://whered-it-go.pages.dev, Worker version `a714db20`. All **twenty**
-runners green.
+**Live and verified: v1.41.0 / build `2026.08.08.0005`** at
+https://whered-it-go.pages.dev, Worker version `d8b5b9ad`. All **nineteen**
+runners green (aitest, aiburst and c2check were deleted with the feature).
 
-**The Purchase Advisor is finished: A · A2 · A3 · B · C1 · C2.** It computes
-concrete moves and the model picks between them in plain words. Nothing is
-half-built.
+**The Purchase Advisor is finished and is engine-only.** It computes concrete
+options — trim, wait, finance, spend less — shows exactly what to set aside
+and until when, and one tap fills the What-if levers. **The Gemini narration
+was removed in v1.41.0** after five rounds of real use: every guard held, but
+it was a thin layer over figures the app already stated. See the session note
+and `decisions.md` — the design is in git at v1.40.0 if it is ever wanted back.
 
 **Next session: `5b — salary reconciliation`** (planned figures beside the
 actuals in `UnaccountedSheet`) — the oldest unstarted item and the only
-remaining one with a written rationale. Everything else open is a follow-up.
+remaining one with a written rationale.
 
 ### Shipped 2026-08-08
 
@@ -22,6 +25,9 @@ remaining one with a written rationale. Everything else open is a follow-up.
 |---|---|---|
 | C1 | 1.37.0 | The options engine: `purchaseSaveableBuckets` anchor fix, `data.trimPolicy`, `purchaseOptionsFor`, option cards with one-tap apply |
 | C2 | 1.38.0 | The model recommends among those options: `options` in the context under `kind`, the prompt turned from explain to recommend, `SUGGESTED` badge |
+| —  | 1.39.0 | The validator fired on correct prose (a shortfall stated positive); the rejection now names its rule |
+| —  | 1.40.0 | shiftDate carries the saving it implies; the picked option renders engine figures |
+| —  | 1.41.0 | **The AI narration removed entirely** — B and C2 deleted, secret revoked |
 
 ### Shipped 2026-08-07
 
@@ -74,6 +80,76 @@ Goal↔bank reconciliation warnings · multi-currency purchases · household sco
 chat/history · grounding · automatic discretionary detection · applying a
 recommendation as app changes · stored or synced analyses · a Home card for a
 goal that has fallen behind.
+
+---
+
+# 📋 SESSION NOTE — 2026-08-08 (v1.41.0) — The AI narration removed
+
+Builds B and C2 are gone. **Every guard held** — nothing leaked, no invented
+figure ever reached the screen, the caps worked, the endpoint was never logged.
+It was deleted for not earning its place, which is a different question from
+whether it worked. Full reasoning in `decisions.md`.
+
+## What five rounds of real use actually produced
+
+| # | What went wrong | Fix |
+|---|---|---|
+| 1 | Recommended `"none"` and argued against buying, while three working options sat unread | prompt |
+| 2 | Printed the internal id as prose; picked the option that abandons what you wanted | prompt |
+| 3 | Rejected a **correct** sentence because a shortfall was stated positive | **app — kept** |
+| 4 | Offered a menu item that was not in the request (hardcoded enum) | worker |
+| 5 | Vague where it structurally *could not* be specific | **app — kept** |
+
+Every fix was sound and pinned by a test. The defects kept coming because they
+were not bugs in a program — they were mismatches between a prompt and a
+payload, and that surface is unbounded.
+
+**Two of the five were app fixes and were kept**: `|x|` of a real figure counts
+as that figure, and the picked option renders the engine's own numbers. Both
+improved the product regardless of the AI.
+
+**The tell was defect 5.** Asked "when can I buy it, how much should I save",
+the model could not answer — it is never given a calendar date, only a bucket
+index, deliberately. The answer had to come from the engine. At that point it
+was commenting on an answer the app could already give in full.
+
+## What was removed, and what stayed
+
+Removed: `POST /ai/advice`, `SyncRoom.aiCheck` and its `aiCounters` key, the
+Gemini constants and helpers, the whole app-side narration module (~22k
+characters), both panel components, `aitest.cjs`, `aiburst.cjs`, `c2check.cjs`,
+the sandbox's fake endpoint, and the `GEMINI_API_KEY` secret. `wrangler secret
+list` now shows only `SYNC_TOKEN` and `FINNHUB_KEY`.
+
+Stayed: **all of C1.** The advisor still computes trim / wait / finance /
+spend-less, still says what to set aside and until when, and one tap still
+fills the What-if levers.
+
+One dependency had to be untangled first — C1's `shiftDate` used
+`purchaseAiNum` for rounding, and now uses the existing `roundTo`. Worth
+noticing in general: a feature being deleted had quietly become load-bearing
+for one that stays.
+
+## The guard against a half-removal
+
+`purchasetest` 13o asserts that **the whole of `index.html`** contains no
+reference to any removed function. A dangling one is a render-time
+`ReferenceError` that blanks the tab — the exact failure this feature produced
+three times while every runner stayed green — so a source sweep is the only
+thing that catches it.
+
+Driven in a browser, because a deletion this size is precisely what a green
+suite cannot vouch for: the advisor renders, all four options are intact,
+"Try this" applies a trim, Budget's scissors toggles work, and nothing of the
+AI remains in the DOM.
+
+## Verification
+
+- Nineteen runners green. Parse OK. `headroomcheck` 48/48. Three sites agree.
+- Worker `d8b5b9ad`, both bindings confirmed. Pages `2026.08.08.0005`.
+- Note: an unauthenticated `POST /ai/advice` still answers **401**, not 404 —
+  `authOk()` runs before routing, so that curl proves nothing about the route.
+  The removal is verified by source and by the deploy, not by that status.
 
 ---
 

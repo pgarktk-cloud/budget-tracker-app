@@ -2,7 +2,8 @@
 
 ## ▶ NEXT — 5b, salary reconciliation
 
-The Purchase Advisor is finished (A · A2 · A3 · B · C1 · C2). 5b is the oldest
+The Purchase Advisor is finished and engine-only (A · A2 · A3 · C1; B and C2
+were removed — see below). 5b is the oldest
 unstarted item and the only remaining one with a written rationale: planned
 figures beside the actuals in the Expenses unaccounted sheet.
 
@@ -11,20 +12,24 @@ contribution, not "Transfers out" — both lines subtract so the sheet still
 reconciles, but hand-summing untracked envelopes against "Transfers out" is
 now short by whatever went through a linked category. 5b must account for it.
 
-## ✅ Purchase Advisor C2 — DONE 2026-08-08, v1.38.0
+## 🗑 Purchase Advisor Builds B and C2 (Gemini narration) — REMOVED 2026-08-08, v1.41.0
 
-The model chooses among the engine's options and phrases the trade-off.
-Worker `a714db20`, Pages `2026.08.08.0002`. `aitest.cjs` 43 cases;
-`c2check.cjs` makes the one live call that proves the path end to end.
+Built, deployed, iterated five times, then deleted. Every guard held; it was
+removed for not earning its place, which was the stated criterion when C2 was
+chosen over a deterministic ranker.
 
-Took three live calls to become usable — every defect was in the prompt and
-none was visible to a test. See `current-status.md` for all three and
-`decisions.md` for why each fix is pinned by a source-structure assertion.
+**Do not rebuild it from scratch.** The working design is in git at v1.40.0 —
+reviving it is a revert, not a rebuild. Read `decisions.md` first: the five
+real-use defects, the reasoning behind each guard, and why the last one was
+unfixable in principle (the model is never given a calendar date, so it could
+not answer "when can I buy it" — that answer had to come from the engine).
 
-**Retiring the AI path stays cheap and available.** The engine computes
-everything and the option cards render fine without prose; if the suggestions
-stop earning their keep, deleting `/ai/advice`, the secret and the validation
-layer is a small clean change rather than a loss.
+Two of the five fixes were app-side and were **kept**: the magnitude of a real
+figure counts as that figure, and the picked option renders the engine's own
+numbers.
+
+The spec that follows this section is the record of what was agreed and built.
+It is kept for the reasoning, not as a plan.
 
 ---
 
@@ -39,7 +44,7 @@ note and `decisions.md` for the three rules it established.
 
 ---
 
-## ✅ Purchase Advisor Build B (Gemini narration) — DONE 2026-08-07, v1.36.0
+## 📄 Purchase Advisor Build B — the spec, for the record (REMOVED v1.41.0)
 
 Shipped and deployed: Worker version `2897b1d2` first, then Pages build
 `2026.08.07.0009`. `aitest.cjs` (38 cases) and `aiburst.cjs` cover it; see

@@ -1,5 +1,44 @@
 # Architectural & Technical Decisions
 
+## Deleting a working feature is a legitimate outcome (2026-08-08, v1.41.0)
+
+The Gemini narration (Builds B and C2) was built, deployed, iterated five
+times, and then removed. Every guard held: nothing leaked, no invented figure
+ever reached the screen, the spend caps worked, the endpoint was never logged.
+**It was deleted for not earning its place, which is a different question from
+whether it worked.**
+
+Worth recording precisely, because the pull to keep something you have already
+paid for is strong and it is the wrong instinct.
+
+**What it cost.** Five rounds of real-use defects, none of which any test could
+catch: it recommended "none" and argued against buying; it printed an internal
+id as prose; it rejected a correct sentence over a minus sign; it offered a
+menu item that was not in the request; it was vague where it structurally could
+not be specific. Each fix was sound and pinned by test. The defects kept coming
+because they were not bugs in a program — they were mismatches between a
+prompt and a payload, and that surface is unbounded.
+
+**What it added.** One sentence of judgement above cards that already stated
+every figure. Two of the five fixes (the sign rule, and rendering the picked
+option's own numbers) were improvements to the *app* and were kept.
+
+**The tell.** The last defect was the honest one: the user asked "when can I
+buy it, how much should I save" and the model could not answer, because it is
+never given a calendar date — only a bucket index, deliberately. The answer had
+to come from the engine. At that point the model was commenting on an answer
+the app was already capable of giving in full.
+
+**The rule.** When a component is a thin layer over work something else already
+does, and its failure modes are open-ended rather than enumerable, the cost is
+permanent and the value is marginal. Delete it. Reviving it later is a revert,
+not a rebuild — the code is at v1.40.0 and the reasoning is in this file.
+
+A corollary about sunk cost in a solo project: the decision to build C2 was
+made *knowing* a deterministic ranker was the cheaper alternative, and it was
+still right to try — one live call taught more than an hour of reasoning. The
+error would have been keeping it afterwards.
+
 ## Prompt defects are only visible in production, so pin each fix by test (2026-08-08, v1.38.0)
 
 C2 took three live Gemini calls to become usable, and all three defects were in
