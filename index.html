@@ -2415,8 +2415,15 @@ function purchaseAiContextNumbers(v,out){
   const acc=out||new Set();
   if(v==null)return acc;
   if(typeof v==="number"&&isFinite(v)){
-    acc.add(Math.round(v*100)/100);
-    acc.add(Math.round(v));
+    const exact=Math.round(v*100)/100,whole=Math.round(v);
+    acc.add(exact);acc.add(whole);
+    /* Magnitudes too. A shortfall is stored as `remainingAfter:-37000` and any
+       honest sentence says "short by SAR 37,000" — the same figure with the
+       sign carried by the words instead of the digits. Rejecting that made the
+       guard fire on correct prose, which is how a safety check stops being
+       trusted. It admits |x| of a REAL figure only, never a derived one, so
+       inventing an unrelated number is still caught. */
+    acc.add(Math.abs(exact));acc.add(Math.abs(whole));
     return acc;
   }
   if(Array.isArray(v)){v.forEach(x=>purchaseAiContextNumbers(x,acc));return acc;}
@@ -3121,8 +3128,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.38.0";
-const BUILD_ID="2026.08.08.0002";
+const APP_VERSION="1.39.0";
+const BUILD_ID="2026.08.08.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -6930,11 +6937,34 @@ function App(){
     if(!source)return null;
     const cloned=clonePlanRecord(source,uid,owner,label,mo);
     cloned.updatedAt=new Date().toISOString();
-    setData(d=>({
-      ...d,
-      plans:[...d.plans,cloned],
-      monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:cloned.id,updatedAt:new Date().toISOString()}]
-    }));
+    /* This is the ONE clone that remints ids (editPlanForMonth preserves
+       them), so it is also the one place a category can lose its trimPolicy
+       answer and quietly become un-suggestable. Carry the marks across.
+       clonePlanRecord maps both arrays positionally, so index i in the source
+       is index i in the clone — the same property groupIdMap relies on. */
+    const carry={};
+    const pair=(src,dst)=>(src||[]).forEach((rec,i)=>{
+      const to=(dst||[])[i];
+      if(to&&rec&&rec.id!==to.id)carry[rec.id]=to.id;
+    });
+    pair(source.groups,cloned.groups);
+    pair(source.categories,cloned.categories);
+    setData(d=>{
+      const pol=d.trimPolicy||{};
+      let nextPol=pol,changed=false;
+      Object.keys(carry).forEach(oldId=>{
+        const entry=pol[oldId];
+        if(!entry)return;
+        if(!changed){nextPol={...pol};changed=true;}
+        nextPol[carry[oldId]]=entry;
+      });
+      return{
+        ...d,
+        plans:[...d.plans,cloned],
+        ...(changed?{trimPolicy:nextPol}:{}),
+        monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:cloned.id,updatedAt:new Date().toISOString()}]
+      };
+    });
     return cloned.id;
   };
 
@@ -15334,9 +15364,13 @@ function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
       ? (state.scope==="minute"
           ? "Explanations paused for a moment — too many in the last minute."
           : "Explanations paused — daily limit reached.")
+      /* The reason is shown, not swallowed. A generic "unavailable" makes a
+         validation rejection indistinguishable from a network failure, and the
+         first real one in the wild took a code read to diagnose. It names a
+         rule, never a figure. */
       : state.kind==="rejected"
-        ? "Explanation unavailable — the wording didn't check out against the figures."
-        : "Couldn't generate an explanation.";
+        ? `Suggestion unavailable — it ${state.reason||"didn't check out against the figures"}.`
+        : "Couldn't work out a suggestion.";
     return(
       <section style={card}>
         <div style={note}>{msg}</div>

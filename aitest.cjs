@@ -354,6 +354,26 @@ t("3e · an invented figure in the headline or a watch-out rejects it too",()=>{
   assert.ok(!validatePurchaseNarration({...good,watchOuts:["You owe SAR 7,777."]},CTX).ok);
 });
 
+t("3f0 · a shortfall may be stated as a positive figure",()=>{
+  /* The first rejection seen in the wild. The context carries a shortfall as
+     remainingAfter:-37000, and every honest sentence says "short by SAR
+     37,000" — the sign lives in the words. Rejecting that made the guard fire
+     on correct prose, which is how a safety check stops being trusted. */
+  const ctx=buildCtx({scenarios:{...SCENARIOS,
+    cash:{...SCENARIOS.cash,feasible:false,remainingAfter:-37000}}}).context;
+  /* Built fresh rather than spread from `good`: this fixture removes 16,500
+     from the context, so `good`'s own headline would fail for a different
+     reason and the case would pass or fail for the wrong one. */
+  const say=text=>({headline:"Here is the position.",recommended:"none",
+    scenarioNotes:[{id:"cash",text}],watchOuts:[]});
+  assert.ok(validatePurchaseNarration(say("You are short by SAR 37,000."),ctx).ok,
+    "the magnitude of a real figure is the same figure");
+  assert.ok(validatePurchaseNarration(say("You are short by SAR 37,000.00."),ctx).ok);
+  /* and it is still only the MAGNITUDE of a real number — not a derived one */
+  assert.ok(!validatePurchaseNarration(say("You are short by SAR 37,001."),ctx).ok,
+    "admitting |x| must not admit arithmetic on x");
+});
+
 t("3f · rounding a real figure is honest reporting, not invention",()=>{
   /* 3212.78 is in the context; "SAR 3,213" is the same number said aloud. */
   assert.ok(validatePurchaseNarration(

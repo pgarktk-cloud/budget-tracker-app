@@ -308,6 +308,44 @@ console.log("\nclonePlanForMonth");
     assert.deepEqual(data.plans[1].categories,[]);
   });
 
+  t("carries the trim marks across, because THIS clone remints ids",()=>{
+    /* editPlanForMonth preserves ids, so data.trimPolicy keeps applying month
+       to month for free. This is the one clone that does NOT — so without the
+       carry-over, using "Copy from another month" would silently make every
+       category un-suggestable to the Purchase Advisor, and the marks would
+       look like they needed re-doing every month. */
+    const src={id:"p1",owner:"me",income:5000,
+      groups:[{id:"g1",name:"Needs"},{id:"g2",name:"Wants"}],
+      categories:[{id:"c1",groupId:"g1",name:"Food",amount:900},
+                  {id:"c2",groupId:"g2",name:"Fun",amount:200}]};
+    let captured;seq=0;
+    const pol={g2:{v:true,updatedAt:"2026-08-01T00:00:00.000Z"},
+               c1:{v:false,updatedAt:"2026-08-02T00:00:00.000Z"}};
+    const ctx={plans:[src],budgetOwner:"me",uid:()=>"n"+(++seq),
+      setData:fn=>{captured=fn({plans:[src],monthlyPlans:[],trimPolicy:pol});}};
+    vm.createContext(ctx);
+    vm.runInContext(cloneRecSrc+"\n"+cloneSrc+"\nvar __clone=clonePlanForMonth;",ctx);
+    ctx.__clone("2026-03","p1","me","March 2026");
+    const cloned=captured.plans[1];
+    const newG2=cloned.groups[1].id, newC1=cloned.categories[0].id;
+    assert.notStrictEqual(newG2,"g2","this clone is supposed to remint");
+    assert.equal(captured.trimPolicy[newG2].v,true,"the group mark must follow");
+    assert.equal(captured.trimPolicy[newC1].v,false,"and so must a NO override");
+    assert.equal(captured.trimPolicy.g2.v,true,"the old entries are left alone");
+  });
+
+  t("a document with no trim marks is not given one by copying a month",()=>{
+    const src={id:"p1",owner:"me",groups:[{id:"g1"}],categories:[{id:"c1",groupId:"g1"}]};
+    let captured;seq=0;
+    const ctx={plans:[src],budgetOwner:"me",uid:()=>"n"+(++seq),
+      setData:fn=>{captured=fn({plans:[src],monthlyPlans:[]});}};
+    vm.createContext(ctx);
+    vm.runInContext(cloneRecSrc+"\n"+cloneSrc+"\nvar __clone=clonePlanForMonth;",ctx);
+    ctx.__clone("2026-03","p1","me","March 2026");
+    assert.ok(!("trimPolicy" in captured),
+      "an untouched document must stay byte-identical — no empty map added");
+  });
+
   t("copies every category and sub faithfully, with fresh ids",()=>{
     const src={id:"p1",owner:"me",income:5000,groups:[{id:"g1",name:"Needs"},{id:"g2",name:"Wants"}],
       categories:[
