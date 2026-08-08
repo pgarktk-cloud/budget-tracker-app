@@ -1081,5 +1081,36 @@ t("13m · the options engine writes nothing and never reads the clock",()=>{
     "it must take todayStr, never read the clock");
 });
 
+
+t("13n · shiftDate carries the SAVING it implies, not just the date",()=>{
+  /* "Wait until February" answers when; it does not answer what you have to
+     do. The first suggestion a user read said "waiting a short time" and gave
+     no figure at all — the model cannot know the date (it gets a bucket index
+     by design), so the numbers have to come from here. */
+  const c=optCtx();
+  const inp=optIn({ctx:c});
+  const shift=purchaseOptionsFor(c,inp).find(o=>o.id==="shiftDate");
+  assert.ok(shift,"expected a shiftDate option");
+  assert.equal(shift.periods,inp.earliest.saveable,
+    "the periods you can actually save in, not the raw bucket count");
+  near(shift.perPeriod,inp.earliest.requiredPerBucket);
+  assert.ok(shift.perPeriod>0&&shift.periods>0,
+    "both must be usable or the card falls back to saying nothing concrete");
+});
+
+t("13o · one description per option, shared by the row and the suggestion",()=>{
+  /* Two call sites phrasing the same option differently is how a suggestion
+     ends up disagreeing with the row it points at. */
+  const view=slice("function PurchaseAdvisorView(","/* ── OVERVIEW VIEW ──");
+  assert.ok(view.indexOf("const optionLine=useCallback")>=0,
+    "the line builder must be extracted, not inlined in the map");
+  assert.equal(view.split("Wait until ${label(").length-1,1,
+    "the shiftDate wording exists in exactly one place");
+  assert.ok(/pickedLine=\{ai\.status==="ok"/.test(view),
+    "the panel must render the picked option's ENGINE line, not re-derive it");
+  assert.ok(view.indexOf("const optionLine=useCallback")<view.indexOf("pickedLine={"),
+    "declared before use, or it is a temporal-dead-zone throw at render");
+});
+
 console.log(`\n${n-fails}/${n} passed`);
 process.exit(fails?1:0);

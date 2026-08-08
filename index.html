@@ -2144,7 +2144,13 @@ function purchaseOptionsFor(ctx,input){
      second forward loop, which is how the two would drift apart. */
   const e=i.earliest;
   if(e&&e.bucketKey&&(!dated||String(e.bucketKey)>String(sav.targetBucket)))
+    /* Carries the SAVING it implies, not just the date. "Wait until February"
+       answers when; "set aside 6,200 a period until then" answers what you
+       actually have to do, which is the question a person asks next. Both come
+       straight off the earliest walk — nothing is recomputed here. */
     out.push({id:"shiftDate",bucketKey:e.bucketKey,n:e.n,
+      perPeriod:purchaseAiNum(e.requiredPerBucket),
+      periods:Number(e.saveable)||0,
       apply:{desiredBucket:e.bucketKey}});
 
   /* 3 · FINANCE — the fewest payments whose per-bucket obligation fits inside
@@ -3128,8 +3134,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.39.0";
-const BUILD_ID="2026.08.08.0003";
+const APP_VERSION="1.40.0";
+const BUILD_ID="2026.08.08.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -15338,7 +15344,7 @@ function PurchaseNarrationText({text,refs}){
       : <React.Fragment key={i}>{seg.v}</React.Fragment>)}</>);
 }
 
-function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
+function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk,pickedLine}){
   const card={...neu(16),padding:14,marginBottom:16};
   const note={fontSize:12,color:P.neuSub,lineHeight:1.65};
 
@@ -15393,6 +15399,16 @@ function PurchaseNarrationPanel({state,refs,scenarioLabels,onAsk,canAsk}){
       <div style={{fontSize:14,fontWeight:600,color:P.neuInk,lineHeight:1.5,marginBottom:10}}>
         <PurchaseNarrationText text={v.headline} refs={refs}/>
       </div>
+      {/* The picked option's OWN figures, straight from the engine. The model
+          is never told the date — it receives a bucket index, by design — so
+          "when" and "how much" cannot come from its prose and must be rendered
+          here. This is also what keeps the suggestion useful when the wording
+          comes back vague. */}
+      {pickedLine&&
+        <div style={{...neuInset(12),padding:"9px 11px",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>{pickedLine.head}</div>
+          <div style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{pickedLine.sub}</div>
+        </div>}
       {v.scenarioNotes.map((nt,i)=>(
         <div key={i} style={{marginBottom:8}}>
           <div style={{fontSize:11,color:P.faint,fontWeight:600,marginBottom:2}}>
@@ -15557,6 +15573,29 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
       return next;
     });
   },[payPeriods,budgetOwner]);
+
+  /* ONE description per option, used by the row and by the suggestion panel.
+     Two call sites phrasing the same option differently is how a suggestion
+     ends up disagreeing with the row it points at. */
+  const optionLine=useCallback(o=>{
+    if(!o)return null;
+    const names=(o.picks||[]).map(p=>{
+      const c=trimCats.find(x=>x.id===p.id);
+      return`${(c&&c.name)||"a category"} −${fmt(p.amount)}`;
+    });
+    const per=n=>`${n} ${n===1?"period":"periods"}`;
+    if(o.id==="trim")return{head:`Free up ${fmt(o.perPeriod)} a period`,
+      sub:`${names.join(", ")} — for ${per(o.periods)}`
+        +(o.closesGap?"":", which still won't quite cover it")};
+    if(o.id==="shiftDate")return{head:`Wait until ${label(o.bucketKey)}`,
+      sub:o.periods>0&&o.perPeriod>0
+        ?`Set aside ${fmt(o.perPeriod)} a period for ${per(o.periods)} and you get there.`
+        :`The first period your plan reaches the full amount.`};
+    if(o.id==="finance")return{head:`Split it over ${o.count} payments`,
+      sub:`${fmt(o.perPayment)} each, and every period still has room.`};
+    return{head:`Spend ${fmt(o.price)} instead`,
+      sub:`${fmt(o.saving)} less — what this plan actually reaches by your date.`};
+  },[trimCats,fmt,label]);
 
   /* ── Narration (Build B) ──
      The horizon is capped at six buckets on purpose: the model needs the SHAPE
@@ -16107,23 +16146,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                 These fill the What-if levers below. Nothing here edits your budget.
               </div>
               {options.map(o=>{
-                const names=(o.picks||[]).map(p=>{
-                  const c=trimCats.find(x=>x.id===p.id);
-                  return`${(c&&c.name)||"a category"} −${fmt(p.amount)}`;
-                });
-                const line=
-                  o.id==="trim"
-                    ?{head:`Free up ${fmt(o.perPeriod)} a period`,
-                      sub:`${names.join(", ")} — for ${o.periods} ${o.periods===1?"period":"periods"}`
-                        +(o.closesGap?"":", which still won't quite cover it")}
-                  :o.id==="shiftDate"
-                    ?{head:`Wait until ${label(o.bucketKey)}`,
-                      sub:`The first period your plan reaches the full amount.`}
-                  :o.id==="finance"
-                    ?{head:`Split it over ${o.count} payments`,
-                      sub:`${fmt(o.perPayment)} each, and every period still has room.`}
-                    :{head:`Spend ${fmt(o.price)} instead`,
-                      sub:`${fmt(o.saving)} less — what this plan actually reaches by your date.`};
+                const line=optionLine(o);
                 /* The model's pick, when there is a validated one. It only ever
                    marks an option the ENGINE produced — validatePurchaseNarration
                    rejects a recommendation naming anything that wasn't sent. */
@@ -16152,7 +16175,9 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                  and it is the only part that can be absent without the tab
                  losing anything it promised. ── */}
           <PurchaseNarrationPanel state={ai} refs={aiPayload.refs} canAsk={canAsk}
-            scenarioLabels={scenarioLabels} onAsk={askAi}/>
+            scenarioLabels={scenarioLabels} onAsk={askAi}
+            pickedLine={ai.status==="ok"
+              ?optionLine(options.find(o=>o.id===ai.value.recommended)):null}/>
 
           {/* ── The one durable exit ── */}
           {financedMode&&
