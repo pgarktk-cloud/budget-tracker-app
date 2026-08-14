@@ -4,11 +4,10 @@ _Last updated: 2026-08-14 (pull-to-sync no longer arms inside a sheet, v1.42.0)_
 
 ## State of play — read this first
 
-**Built and staged, NOT YET DEPLOYED: v1.42.0 / build `2026.08.14.0001`.**
-Previously live: v1.41.0 / build `2026.08.08.0005` at
+**Live and verified: v1.42.0 / build `2026.08.14.0001`** at
 https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
 touches no Worker code). All **twenty** runners green, including the new
-`pulltest.cjs`.
+`pulltest.cjs`. Confirmed on both phones against the checklist below.
 
 **v1.42.0 is Phase 1 of a fifteen-item programme** planned 2026-08-14. The plan
 covers the Settings scroll bug (this release), `payPeriods.actualStarts`
@@ -39,15 +38,25 @@ never paint over a sheet.
 `window.scrollY` is 0 (the lying condition, reproduced) and the touchmoves come
 back `defaultPrevented:false` with the indicator at opacity 0. With no sheet
 open and the page at the top, the same drag arms and prevents, as it always did;
-with the page scrolled 116px it does not. **Still needs the real phones** — see
-the checklist below.
+with the page scrolled 116px it does not.
 
-**Before deploying, verify on both phones:** Settings scrolls both ways with no
+**Verified on both phones**, all passing: Settings scrolls both ways with no
 POSTs across a full 25 s autosave window; nested sheets (Settings → pay-period
 date sheet → ConfirmDialog) close without the page jumping; pull still works
 from the top of the main page; Expenses' transaction log scrolls without arming;
-Close is reachable from the bottom of Settings; 320px and large browser text;
-iOS Safari and Android Chrome, installed PWA and browser tab.
+Close is reachable from the bottom of Settings. Keep this list — it is the
+regression checklist for phases 5 and 12, which both rework Settings.
+
+**Stale sandbox origins cleared, 2026-08-14.** Four localhost origins from past
+sessions (`:8791`, `:8799`, `:8811`, `:8842`) were still holding documents of
+3–10 KB, two cached app shells (builds `2026.08.01.0003` and `2026.08.05.0006`)
+with live service-worker registrations, and — on `:8811`, the `sandboxworker`
+port — a 12-byte `allocation:syncToken`, short enough to be the dummy value that
+file's own instructions tell you to set. All four are now empty: localStorage,
+sessionStorage, Cache Storage, IndexedDB and service workers. This is the hazard
+the "Testing this app" section warns about; **sweep these origins at the end of
+any session that serves a sandbox**, and prefer a fresh port each time so the
+list stays enumerable.
 
 **The Purchase Advisor is finished and is engine-only.** It computes concrete
 options — trim, wait, finance, spend less — shows exactly what to set aside
