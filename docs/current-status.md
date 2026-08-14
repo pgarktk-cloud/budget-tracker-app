@@ -1,11 +1,14 @@
 # Current Status
 
-_Last updated: 2026-08-14 (programme phase 2 — `dotest.cjs`, the Durable Object
-harness; no release)_
+_Last updated: 2026-08-14 (phase 2 — `dotest.cjs`; phase 3a — v1.43.0,
+`actualStarts` tolerant readers, built but not yet deployed)_
 
 ## State of play — read this first
 
-**Live and verified: v1.42.0 / build `2026.08.14.0001`** at
+**In the repo but NOT deployed: v1.43.0 / build `2026.08.14.0002`** — staged,
+all runners green, browser-verified. Deploying it is the next action.
+
+**Live: v1.42.0 / build `2026.08.14.0001`** at
 https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
 touches no Worker code). All **twenty** runners green, including the new
 `pulltest.cjs`. Confirmed on both phones against the checklist below.
@@ -68,15 +71,41 @@ was removed in v1.41.0** after five rounds of real use: every guard held, but
 it was a thin layer over figures the app already stated. See the session note
 and `decisions.md` — the design is in git at v1.40.0 if it is ever wanted back.
 
+### v1.43.0 — `actualStarts` tolerant readers (programme phase 3a)
+
+**Built and verified locally; NOT yet deployed** (see "Open" below). Readers
+only: nothing writes the new shape, and a legacy document is byte-identical
+through `migrate()`, so this costs no device a KV write.
+
+An `actualStarts` entry now has two legal shapes — the legacy `"YYYY-MM-DD"`
+string, and the stamped `{v,updatedAt}` that **v1.44.0** will write so that
+*clearing* a correction can survive a union merge (`v:null` is a tombstone).
+Three new module-scope helpers are the only place that knows this:
+`actualStartValue`, `hasLiveActualStart`, `isActualStartEntry`.
+
+**The line that matters is in `migrate()`.** It used to delete anything that
+wasn't a bare date string — so a phone on an older build would receive the
+other's stamped corrections, strip every one, and push the stripped copy back.
+Data loss whose symptom is that nothing appears to happen.
+
+Also here, though the plan had assigned it to 3b: the three Settings reads that
+touched `actualStarts[k]` raw now go through `actualStartValue`. Without that,
+an un-upgraded phone survives the data and breaks on the screen — tombstones
+listed as corrections, and `keyToDate({v:…})` rendering **"Invalid Date"**.
+
+`periodtest.cjs` 24 → 32, now including a real `migrate()` round trip.
+**Verified in a browser**, and the same document was loaded into v1.42.0 for
+comparison: the old build stripped both stamped entries, this one keeps them.
+Full detail in `roadmap.md`; the reasoning in `decisions.md`.
+
 **Programme phase 2 is done (2026-08-14), and it shipped nothing.**
 `dotest.cjs` is tooling: no version bump, no `index.html` change, no deploy.
 `SyncRoom` now has twelve end-to-end cases against a real local Worker, which
 is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
-**Next: programme phase 3a — `actualStarts` tolerant readers (v1.43.0)**, per
-the plan's ordering. `5b — salary reconciliation` is programme phase 6 and
-remains the oldest unstarted *feature*; either is a defensible start, but 3a is
-the sequenced one and is now unblocked.
+**Next: deploy v1.43.0, then open BOTH phones on it.** Phase 3b (the stamped
+writer + per-key merge) must not ship until both report v1.43.0 — that gate is
+the entire reason 3a exists as its own release.
 
 ### v1.42.1 — no such release. Phase 2 (2026-08-14) — `dotest.cjs`
 
@@ -138,9 +167,14 @@ Worker's fallback behaviour was correct throughout; only the test was wrong.
    of C1 is silent on a fresh document. Deliberate (an advisor that opens by
    proposing you cut your rent is worse than one that says nothing), but it is
    a real first-run gap.
-2. **Open the app on both phones on ≥ v1.41.0.** Two reasons: each repairs its
-   own duplicated bill rows so the canonical ids converge (v1.35.0), and both
-   pick up the current build.
+2. **Deploy v1.43.0, then open BOTH phones on it and confirm the version.**
+   This is a hard gate, not housekeeping: phase 3b starts writing the stamped
+   `actualStarts` shape, and a phone still on ≤ v1.42.0 would strip it and push
+   the stripped document back. Also re-check that existing corrections still
+   render in Settings → Pay periods with the same offsets.
+   This also subsumes the older "open both phones on ≥ v1.41.0" item: each
+   repairs its own duplicated bill rows so the canonical ids converge
+   (v1.35.0), and both pick up the current build.
 3. **Expect the savings and earliest figures to look worse than you remember.**
    v1.37.0 stopped counting the current, part-spent period toward what you can
    still save. Those are the corrected numbers, not a regression.
@@ -157,8 +191,10 @@ the entries below say what is left of each, not what order to do it in.**
 5. **5b — salary reconciliation** in the Expenses unaccounted sheet.
    **Programme phase 6.** See `roadmap.md`, and read the 5a-2 classification
    note it must account for.
-6. **3C-3 — `payPeriods.actualStarts` has no merge rule.** **Programme phases
-   3a + 3b, and the design question is now answered:** per-entry stamped
+6. **3C-3 — `payPeriods.actualStarts` has no merge rule.** **Phase 3a is DONE
+   (v1.43.0, readers only); phase 3b is what remains** — the stamped writer and
+   `mergeActualStarts`, gated on both phones reporting v1.43.0 first. Design:
+   per-entry stamped
    records with an explicit tombstone, shipped over two releases so an old
    build's `migrate()` cannot strip corrections and push the stripped copy
    back. Details at the top of `roadmap.md`.

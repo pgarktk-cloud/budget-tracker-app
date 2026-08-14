@@ -14,7 +14,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 |---|---|---|---|
 | 1 | **1.42.0 — DONE** | low | Pull-gesture guard + sticky Settings header |
 | 2 | **— DONE** | none | `dotest.cjs` — Durable Object e2e harness (tooling only) |
-| 3a | 1.43.0 | med | `actualStarts` — tolerant readers, old writer |
+| 3a | **1.43.0 — DONE** | med | `actualStarts` — tolerant readers, old writer |
 | 3b | 1.44.0 | med | `actualStarts` — stamped writer + per-key merge |
 | 4 | 1.45.0 | low | Header simplification + one sync sentence |
 | 5 | 1.46.0 | low | Settings reorganised into accordion sections |
@@ -91,6 +91,43 @@ with a wrong token, the allowed/disallowed/localhost origins, `Vary: Origin`,
 and the preflight's allowed headers. Everything else stays local-only unless a
 future change gives the Worker a second room name — which is not worth doing
 for a test.
+
+### Phase 3a as built (2026-08-14, v1.43.0)
+
+Readers only — nothing writes the stamped shape yet, and a legacy document is
+byte-identical through `migrate()`.
+
+Four changes, plus one the plan assigned to 3b:
+- **`actualStartValue` / `isActualStartEntry` / `hasLiveActualStart`** — new
+  module-scope helpers, the only place that knows an entry has two shapes.
+- **`periodActualStart`** reads through `actualStartValue`.
+- **`periodKeyFor`**'s fast path asks "is any entry still *live*", so a map of
+  nothing but tombstones costs what an empty one does.
+- **`migrate()`** keeps `{v,updatedAt}` records and tombstones, sweeps junk.
+  This one line is the release.
+- **The three Settings reads** now go through `actualStartValue` too. The plan
+  put this in 3b, but 3a exists so the *other* phone survives a 1.44.0
+  document, and without it that phone lists tombstones as corrections and
+  renders `keyToDate({v:…})` as **"Invalid Date"**. A back-compat release that
+  leaves a visible break isn't one. `withActualStart` is untouched — the plan's
+  actual writer boundary holds.
+
+`periodtest.cjs` 24 → 32, including a real `migrate()` round trip (a second vm
+context, same four slices `installmenttest.cjs` uses).
+
+**Verified in a browser at `localhost:8861`, not just by runners.** A document
+carrying a stamped correction, a tombstone, a legacy string and a `"pending"`
+sentinel was loaded into the real app: junk swept, the other three preserved,
+Settings shows **Corrections (2)** with `Aug 28, 2026 → Aug 24` rendered from
+the stamped entry, no "Invalid Date", the boundary moved (next period 35 days,
+previous shortened to 27 — stretch, not slide), and clearing the stamped
+correction reverted it to 31 days without touching the tombstone.
+
+**And the same document was loaded into v1.42.0 on `localhost:8862`: both
+stamped entries were stripped.** That is precisely the loss this release
+prevents, demonstrated rather than argued.
+
+**Do not ship 3b until both phones report v1.43.0.**
 
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 

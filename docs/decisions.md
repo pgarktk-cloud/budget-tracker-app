@@ -1,5 +1,44 @@
 # Architectural & Technical Decisions
 
+## A shape change ships one release before anything writes it (2026-08-14, v1.43.0)
+
+`payPeriods.actualStarts` needs a merge rule: today two phones correcting
+different periods lose one side, because `mergeSettingPaths` overwrites
+`payPeriods.<owner>` wholesale. The merge needs per-entry stamps, and clearing
+a correction needs a **tombstone** rather than a `delete` — a deletion cannot
+survive a union merge, which is the same lesson `trimPolicy` records.
+
+So the stored shape has to change. The reason that is a two-release job is the
+sentence in `migrate()` that used to read *delete anything that isn't a bare
+date string*. An un-upgraded phone receiving the new shape would not fail
+loudly: it would **silently strip every correction and push the stripped
+document back**. Data loss whose symptom is that nothing appears to happen.
+
+**v1.43.0 therefore changes only readers.** It reads both shapes, keeps both
+through `migrate()`, and still writes the old one. It is a release whose entire
+user-visible content is nothing — and shipping it is what makes v1.44.0 safe
+rather than a coin flip on which phone opens the app first.
+
+**Three lessons.**
+
+*Tolerance belongs on the receiving side, and it has to arrive first.* The
+instinct is to write the new shape and make readers cope. The order has to be
+the other way round, because the device that needs to cope is the one you are
+not deploying to.
+
+*A back-compat release that leaves a visible break isn't one.* The plan put the
+Settings-UI filter in the writing release. But three call sites read
+`actualStarts[k]` raw — one of them `keyToDate(...)`, which renders an object
+as **"Invalid Date"** — so the un-upgraded phone would survive the *data* and
+break on the *screen*. The tolerant read went into 3a with everything else.
+"Readers accept both shapes" has to mean every reader, including the ones that
+only draw.
+
+*Prove the loss, don't argue it.* The same document was loaded into v1.42.0 and
+v1.43.0 side by side in a browser: the old build stripped both stamped entries,
+the new one kept them. That took one extra sandbox port and turns a plausible
+claim into an observation — the runners can only test the build you have.
+
 ## Testing a Durable Object means testing the runtime, not a function (2026-08-14, `dotest.cjs`)
 
 Every other runner in this repo slices a pure function out of `index.html` and

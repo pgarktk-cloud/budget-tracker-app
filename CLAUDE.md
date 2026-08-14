@@ -208,14 +208,29 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   See `docs/current-status.md` / `docs/decisions.md` for the valuation math.
 - **A pay period's key is its *nominal* payday start; only its boundaries
   move.** `payPeriods[owner].actualStarts` maps a nominal period key to the day
-  that period really began — always a `YYYY-MM-DD` string (the old `"pending"`
-  sentinel was removed 2026-07-31; `migrate()` sweeps any non-date value out).
+  that period really began. **An entry has TWO stored shapes and exactly one
+  reader** (v1.43.0): the legacy bare `YYYY-MM-DD` string, and the stamped
+  `{v:"YYYY-MM-DD"|null, updatedAt}` that v1.44.0 writes so a *clear* can
+  survive a union merge — `v:null` is a tombstone, meaning "this correction was
+  cleared", not "no entry". Everything goes through module-scope
+  **`actualStartValue`** (live date or null), **`hasLiveActualStart`** (does the
+  map still move any boundary — a map of nothing but tombstones must take
+  `periodKeyFor`'s fast path) and **`isActualStartEntry`** (keep vs sweep).
+  Never read `actualStarts[k]` raw: the three Settings reads that did are
+  exactly what would have rendered `Invalid Date` on the other phone.
+  `migrate()` still sweeps genuine junk (the old `"pending"` sentinel, removed
+  2026-07-31) but **must never again drop a `{v,updatedAt}` record** — doing so
+  strips the other phone's corrections and pushes the stripped copy back, which
+  is data loss that looks exactly like nothing happening. v1.43.0 **reads** the
+  stamped shape and still **writes** the legacy one; that is the whole point of
+  shipping it a release ahead of the writer.
   `shiftPeriod` is pure payday arithmetic and ignores overrides — identity and
   extent are different questions. Views call the `bucket*` wrappers, which hand
   the whole owner **config** down to the `period*` layer; never pass a bare
   `payday` to those. Invariants: an empty `actualStarts` short-circuits to
   the nominal answer (so untouched data costs what it always did — which is why
-  clearing an override *deletes* the key rather than storing the nominal date);
+  clearing an override *deletes* the key rather than storing the nominal date,
+  a rule v1.44.0 replaces with a tombstone for exactly the merge reason above);
   validation forbids an override crossing a whole period, which is what
   makes `periodKeyFor`'s three-candidate scan sound; and **`periodRange` must
   never read the clock** — a period's extent is a pure function of `(key,cfg)`,

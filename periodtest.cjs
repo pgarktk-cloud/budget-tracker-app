@@ -41,7 +41,8 @@ const ctx={};
 vm.createContext(ctx);
 vm.runInContext(src+"\nthis.keyToDate=keyToDate;this.dateToKey=dateToKey;",ctx);
 const{periodKeyFor,periodRange,periodLength,periodLabel,shiftPeriod,periodActualStart,
-      periodStartValidity,withActualStart,todayISO,nominalKeyFor,dateToKey}=ctx;
+      periodStartValidity,withActualStart,todayISO,nominalKeyFor,dateToKey,
+      actualStartValue,isActualStartEntry,hasLiveActualStart}=ctx;
 
 const key=d=>dateToKey(d);
 const plain={payday:28};                       // no overrides
@@ -245,6 +246,126 @@ t("a stale calendar-month key falls back to today's period",()=>{
   assert.strictEqual(key(r.start),nominalKeyFor(TODAY,plain));
   assert.ok(!isNaN(periodLength("2026-08",plain)));
   assert.strictEqual(shiftPeriod("",plain,1),shiftPeriod(nominalKeyFor(TODAY,plain),plain,1));
+});
+
+/* ── v1.43.0: both stored shapes of an actualStarts entry read alike ─────
+   The stamped shape {v,updatedAt} is what v1.44.0 writes so that clearing a
+   correction can survive a union merge. Everything here is about the OTHER
+   phone: a device on 1.43.0 must read a 1.44.0 document correctly and, above
+   all, must not strip it in migrate() and push the stripped copy back. */
+
+const STAMP="2026-08-10T12:00:00.000Z";
+
+t("a stamped entry is read exactly like the bare string it replaces",()=>{
+  const bare=withStarts({"2026-08-28":"2026-08-24"});
+  const stamped=withStarts({"2026-08-28":{v:"2026-08-24",updatedAt:STAMP}});
+  assert.strictEqual(periodActualStart("2026-08-28",stamped),"2026-08-24");
+  assert.strictEqual(periodActualStart("2026-08-28",bare),
+                     periodActualStart("2026-08-28",stamped));
+  // and every derived answer follows, not just the raw read
+  assert.strictEqual(key(periodRange("2026-08-28",stamped).start),
+                     key(periodRange("2026-08-28",bare).start));
+  assert.strictEqual(key(periodRange("2026-08-28",stamped).end),
+                     key(periodRange("2026-08-28",bare).end));
+  assert.strictEqual(periodLength("2026-08-28",stamped),periodLength("2026-08-28",bare));
+  assert.strictEqual(periodLabel("2026-08-28",stamped),periodLabel("2026-08-28",bare));
+  // the previous period is shortened by the same boundary in both shapes
+  assert.strictEqual(key(periodRange("2026-07-28",stamped).end),
+                     key(periodRange("2026-07-28",bare).end));
+});
+
+t("bucketing is identical for both shapes, so period identity cannot move",()=>{
+  const bare=withStarts({"2026-08-28":"2026-08-24"});
+  const stamped=withStarts({"2026-08-28":{v:"2026-08-24",updatedAt:STAMP}});
+  for(const d of["2026-08-23","2026-08-24","2026-08-27","2026-09-01","2026-09-26"])
+    assert.strictEqual(periodKeyFor(d,stamped),periodKeyFor(d,bare),d);
+});
+
+t("a tombstone ({v:null}) behaves exactly as an absent entry",()=>{
+  const tomb=withStarts({"2026-08-28":{v:null,updatedAt:STAMP}});
+  assert.strictEqual(periodActualStart("2026-08-28",tomb),"2026-08-28");
+  assert.strictEqual(key(periodRange("2026-08-28",tomb).start),
+                     key(periodRange("2026-08-28",plain).start));
+  assert.strictEqual(periodKeyFor("2026-08-24",tomb),periodKeyFor("2026-08-24",plain));
+});
+
+t("a map of nothing but tombstones still takes the fast path",()=>{
+  // The scan is sound but not free, and it must not start running forever for
+  // an owner merely because they once made a correction and then cleared it.
+  assert.strictEqual(hasLiveActualStart({}),false);
+  assert.strictEqual(hasLiveActualStart(null),false);
+  assert.strictEqual(hasLiveActualStart({"2026-08-28":{v:null,updatedAt:STAMP}}),false);
+  assert.strictEqual(hasLiveActualStart({"2026-08-28":{v:null,updatedAt:STAMP},
+                                         "2026-09-28":"2026-09-26"}),true);
+  assert.strictEqual(hasLiveActualStart({"2026-08-28":"2026-08-24"}),true);
+});
+
+t("junk is still junk — only the two real shapes read as a date",()=>{
+  for(const bad of["pending","",null,undefined,7,"2026-8-4",{},{v:"pending"},
+                   {v:7},["2026-08-24"],{value:"2026-08-24"}])
+    assert.strictEqual(actualStartValue(bad),null,JSON.stringify(bad));
+  assert.strictEqual(actualStartValue("2026-08-24"),"2026-08-24");
+  assert.strictEqual(actualStartValue({v:"2026-08-24",updatedAt:STAMP}),"2026-08-24");
+  assert.strictEqual(actualStartValue({v:"2026-08-24"}),"2026-08-24");
+});
+
+/* The predicates above are only half the claim. The half that actually loses
+   data is what the REAL migrate() does to a document, so slice it in — same
+   four slices and the same two escape-hatch stubs installmenttest.cjs uses. */
+const mctx={};
+vm.createContext(mctx);
+Object.assign(mctx,{defaultData:()=>({}),uid:()=>"stub"});
+vm.runInContext(
+  slice("function daysInCalMonth(y,m){","/* Tracked-spending rollup for one owner")+"\n"+
+  slice("const sortedById=arr=>",'/* "Did a *person* change anything?"')+"\n"+
+  slice("function mergeArrayById(","/* Reports what's different between local and remote")+"\n"+
+  slice("function migrate(d){","/* Bills Reserve = opening baseline")+`
+this.fingerprint=fingerprint;`,mctx);
+const{migrate,fingerprint}=mctx;
+const clone=x=>JSON.parse(JSON.stringify(x));
+const withPP=starts=>({currency:"SAR",
+  payPeriods:{me:{enabled:true,payday:28,actualStarts:clone(starts)},
+              wife:{enabled:false,payday:1,actualStarts:{}}}});
+
+t("THE POINT OF v1.43.0: migrate keeps stamped entries and tombstones",()=>{
+  // The old sweep deleted anything that wasn't a bare date string. Against a
+  // 1.44.0 document that means: strip every correction, then push the stripped
+  // copy back — data loss that looks exactly like nothing happening.
+  assert.strictEqual(isActualStartEntry("2026-08-24"),true);
+  assert.strictEqual(isActualStartEntry({v:"2026-08-24",updatedAt:STAMP}),true);
+  assert.strictEqual(isActualStartEntry({v:null,updatedAt:STAMP}),true,
+    "a tombstone is the RECORD of a deletion and must survive");
+  // ...while genuine junk is still swept, which is what lets every reader
+  // assume what survives is either a real date or a deliberate tombstone.
+  for(const bad of["pending","",null,7,{},{value:"x"},["2026-08-24"]])
+    assert.strictEqual(isActualStartEntry(bad),false,JSON.stringify(bad));
+});
+
+t("...and the REAL migrate() proves it on a whole document",()=>{
+  const stamped={"2026-08-28":{v:"2026-08-24",updatedAt:STAMP},
+                 "2026-09-28":{v:null,updatedAt:STAMP},
+                 "2026-10-28":"2026-10-27",
+                 "2026-11-28":"pending"};
+  const m=migrate(clone(withPP(stamped)));
+  const as=m.payPeriods.me.actualStarts;
+  assert.deepEqual(Object.keys(as).sort(),["2026-08-28","2026-09-28","2026-10-28"],
+    "the sentinel goes; the stamped entry, the tombstone and the legacy string stay");
+  assert.deepEqual(as["2026-08-28"],{v:"2026-08-24",updatedAt:STAMP},
+    "a stamped entry must come through untouched, not normalised");
+  assert.deepEqual(as["2026-09-28"],{v:null,updatedAt:STAMP});
+  assert.strictEqual(as["2026-10-28"],"2026-10-27",
+    "v1.43.0 reads the new shape but must not WRITE it — that is v1.44.0");
+});
+
+t("a legacy document is byte-identical through migrate — no KV write bought",()=>{
+  // Every device rewriting its document on first open costs a Cloudflare KV
+  // write for information nobody entered. The tolerance added here must be a
+  // read-side change only.
+  const legacy=migrate(clone(withPP({"2026-08-28":"2026-08-24"})));
+  assert.strictEqual(fingerprint(legacy),fingerprint(migrate(clone(legacy))));
+  const stampedDoc=migrate(clone(withPP({"2026-08-28":{v:"2026-08-24",updatedAt:STAMP}})));
+  assert.strictEqual(fingerprint(stampedDoc),fingerprint(migrate(clone(stampedDoc))),
+    "and a 1.44.0 document must be a fixed point too, or the two phones ping-pong");
 });
 
 console.log(`\n${n-fails}/${n} passed`);

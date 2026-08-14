@@ -1112,13 +1112,50 @@ function shiftPeriod(periodKey,cfg,n){
   return dateToKey(new Date(ty,tmm-1,clampPayday(ty,tmm,payday)));
 }
 
+/* ── An actualStarts entry has TWO stored shapes, and this is the only place
+   that knows it (v1.43.0). ────────────────────────────────────────────────
+   Legacy: a bare "YYYY-MM-DD" string.
+   Stamped: {v:"YYYY-MM-DD"|null, updatedAt} — where v:null is a TOMBSTONE,
+   meaning "this correction was cleared", not "there is no entry".
+
+   v1.43.0 writes neither: it only READS both. The stamped shape starts being
+   written in v1.44.0, when actualStarts finally gets a merge rule — a delete
+   cannot survive a union merge, so clearing a correction has to leave a record
+   saying so. This release exists purely so that the OTHER phone can survive
+   receiving that shape: before it, `migrate()` deleted any non-date value, so
+   an un-upgraded device would strip every correction and push the stripped
+   copy back. Both shapes must keep reading identically for as long as any
+   device might still hold the legacy one, which is forever — nothing rewrites
+   a document you don't open.
+
+   Returns the live date, or null for absent / tombstoned / junk. */
+function actualStartValue(raw){
+  const v=(raw&&typeof raw==="object"&&!Array.isArray(raw))?raw.v:raw;
+  return(typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v))?v:null;
+}
+/* Is this something to KEEP, as opposed to junk to sweep out? A tombstone
+   carries no date and must still be kept — it is the record of a deletion.
+   `updatedAt` is deliberately not required: being lenient here costs nothing,
+   and refusing an entry would silently discard someone's correction. */
+function isActualStartEntry(raw){
+  if(actualStartValue(raw)!==null)return true;
+  return!!raw&&typeof raw==="object"&&!Array.isArray(raw)&&"v" in raw&&raw.v===null;
+}
+/* Does this map hold at least one entry that still MOVES a boundary? A map of
+   nothing but tombstones must take periodKeyFor's fast path exactly as an
+   empty one does — otherwise clearing every correction would leave the scan
+   running forever for that owner. */
+function hasLiveActualStart(map){
+  if(!map)return false;
+  for(const k in map)if(actualStartValue(map[k])!==null)return true;
+  return false;
+}
+
 /* The day a period really began: the override if there is one, otherwise the
    key itself. Always a YYYY-MM-DD string — a period always has a real start. */
 function periodActualStart(periodKey,cfg){
   const c=asPeriodCfg(cfg);
-  const raw=(c.actualStarts||{})[periodKey];
-  if(typeof raw==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(raw))return raw;
-  return periodKey;
+  return actualStartValue((c.actualStarts||{})[periodKey])||periodKey;
 }
 
 /* {start,end} Date objects (inclusive) for the period identified by a key.
@@ -1151,7 +1188,7 @@ function periodKeyFor(dateStr,cfg){
   const c=asPeriodCfg(cfg);
   const nominal=nominalKeyFor(dateStr,c);
   const overrides=c.actualStarts;
-  if(!overrides||!Object.keys(overrides).length)return nominal;
+  if(!hasLiveActualStart(overrides))return nominal;
   // A moved boundary can push a date into either neighbour, never further:
   // an override may not cross a whole period (see periodStartValidity).
   const d=keyToDate(dateStr);
@@ -2910,8 +2947,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.42.0";
-const BUILD_ID="2026.08.14.0001";
+const APP_VERSION="1.43.0";
+const BUILD_ID="2026.08.14.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3748,11 +3785,20 @@ function migrate(d){
        period open-ended and required two interactions on two different days,
        when saying "it started on the 4th" after the fact says the same thing in
        one. Dropping a pending key restores that period's nominal boundary —
-       exactly what it reverted to once the salary landed anyway. The same sweep
-       drops any other non-date value, which is what lets periodActualStart and
-       periodRange treat every stored value as a real date. */
+       exactly what it reverted to once the salary landed anyway.
+
+       This sweep USED to drop anything that wasn't a bare date string, and
+       that is the one line v1.43.0 exists to change. A {v,updatedAt} record —
+       the stamped shape v1.44.0 writes, including a {v:null} tombstone — is
+       now KEPT. Left as it was, a device on an older build would receive the
+       other phone's stamped corrections, silently strip every one of them, and
+       push the stripped document back: a data-losing round trip that looks
+       exactly like nothing happening. Junk (the old sentinel, a number, a
+       stray null) is still swept, which is what lets every reader go through
+       actualStartValue and treat what survives as either a real date or a
+       deliberate tombstone. */
     Object.keys(as).forEach(k=>{
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(String(as[k])))delete as[k];
+      if(!isActualStartEntry(as[k]))delete as[k];
     });
   });
   if(!d.quickTransferLast)d.quickTransferLast={};
@@ -16580,7 +16626,14 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               if(!n)return null;
               return`${Math.abs(n)} ${Math.abs(n)===1?"day":"days"} ${n<0?"early":"late"}`;
             };
-            const corrections=Object.keys(cfg.actualStarts||{}).sort();
+            /* Live entries only. A tombstone ({v:null}, written from v1.44.0)
+               is a record that a correction was CLEARED, so listing it here
+               would offer to clear something that already is — and the raw
+               value is an object, which keyToDate would render as
+               "Invalid Date". Both reads below go through actualStartValue
+               for the same reason. */
+            const corrections=Object.keys(cfg.actualStarts||{})
+              .filter(k=>actualStartValue(cfg.actualStarts[k])!==null).sort();
             const link=(label,onClick)=>(
               <button onClick={onClick} style={{background:"none",border:"none",padding:0,fontSize:12,fontWeight:600,color:P.gr}}>{label}</button>
             );
@@ -16594,7 +16647,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 <div style={{display:"flex",gap:10,flexShrink:0}}>
                   {link(cta,()=>setPpSheet({owner:ok,periodKey:k,
                     heading:k===current?"When did this period start?":"When did it arrive?"}))}
-                  {(cfg.actualStarts||{})[k]&&link("clear",()=>setActualStart(ok,k,null))}
+                  {actualStartValue((cfg.actualStarts||{})[k])&&link("clear",()=>setActualStart(ok,k,null))}
                 </div>
               </div>
             );
@@ -16647,7 +16700,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                           <span className="tnum" style={{fontSize:12,color:P.ink,minWidth:0,overflow:"hidden",textOverflow:"ellipsis"}}>
                             {keyToDate(k).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
                             {" → "}
-                            {keyToDate(cfg.actualStarts[k]).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                            {keyToDate(actualStartValue(cfg.actualStarts[k])).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                           </span>
                           {link("clear",()=>setActualStart(ok,k,null))}
                         </div>
