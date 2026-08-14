@@ -6,8 +6,8 @@ Advisor trim + atomic undo)_
 ## State of play — read this first
 
 **Live: v1.51.0 / build `2026.08.14.0010`**, deployed 2026-08-14 (`a02d26dc`) —
-**Phase 9c**: durable "Use this plan" + temporary trim → future budgets + atomic
-undo. Worker untouched (`d8b5b9ad`). Confirmed on the production origin
+**Phase 9c** (commit `b8eb079`): durable "Use this plan" + temporary trim →
+future budgets + atomic undo. Worker untouched (`d8b5b9ad`). Confirmed on the production origin
 (immutable + cache-busted): all three version sites agree, and
 `applyPurchaseTrimPlan` / `PurchaseTrimApplySheet` / `planSnapshot` are served.
 **Not yet seen on either phone.** (Previous: v1.50.0 / `2026.08.14.0009`,
