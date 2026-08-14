@@ -1314,6 +1314,12 @@ function ownerUsesPayPeriod(payPeriods,owner){
   const cfg=(payPeriods||{})[owner];
   return!!(cfg&&cfg.enabled&&cfg.payday);
 }
+/* The word for one bucket in this owner's world — "pay period" when they track
+   by paycheck, "month" otherwise. Lets the advisor's copy say "for 4 months" or
+   "for 4 pay periods" instead of the generic "periods". */
+function periodNoun(payPeriods,owner){
+  return ownerUsesPayPeriod(payPeriods,owner)?"pay period":"month";
+}
 /* Each wrapper hands the WHOLE config down, not cfg.payday, so the period
    layer can consult cfg.actualStarts. That indirection is why adding
    corrected boundaries touched one call site outside this block instead of
@@ -2112,14 +2118,16 @@ function projectPurchaseScenarios(ctx,input){
       perPayment:sched.rows.length?Number(sched.rows[0].scheduledAmount)||0:0};
   }
 
-  /* Only FULL periods count toward saving — see purchaseSaveableBuckets. The
-     accumulation is therefore one bucket behind the test: when we ask whether
-     bucket n is affordable, what has actually been banked is buckets 1 … n−1.
-     Before v1.37.0 this folded in bucket 0 as well, which promised money the
-     current part-spent period could no longer supply. */
+  /* Buckets 1 … n INCLUSIVE count toward buying at bucket n — see
+     purchaseSaveableBuckets. Bank the bucket FIRST, then test: when we ask
+     whether bucket n is affordable, what has been banked is buckets 1 … n
+     (the purchase period contributes), which is what keeps this walk in step
+     with purchaseSavingsPlan's `k=1 … n` loop. Bucket 0, the part-spent current
+     period, still contributes nothing. */
   let earliest=null,cumulative=0;
   for(let n=0;n<=PURCHASE_HORIZON_BUCKETS;n++){
     const key=bucketShift(nowBucket,c.payPeriods,c.owner,n);
+    if(n>=1)cumulative+=Math.max(0,purchaseHeadroomForBucket(c,key).headroom);
     if(available+cumulative>=price){
       const shortfall=Math.max(0,price-available);
       const saveable=purchaseSaveableBuckets(n);
@@ -2127,7 +2135,6 @@ function projectPurchaseScenarios(ctx,input){
         requiredPerBucket:saveable>0?shortfall/saveable:0};
       break;
     }
-    if(n>=1)cumulative+=Math.max(0,purchaseHeadroomForBucket(c,key).headroom);
   }
 
   const savings=purchaseSavingsPlan(c,{price,available,desiredDate:i.desiredDate});
@@ -2189,23 +2196,29 @@ function cuttableCategories(trimCats,trimPolicy){
 }
 
 /* How many periods can you ACTUALLY still save in, to have the money by bucket
-   `n`? Both forward walks ask this, and both used to answer `n`, counting the
-   period we are standing in as if all of its headroom were still ahead of us.
-   It is not: on the 7th of a period most of that month's spare has already
-   been committed or spent, and a plan-based engine cannot see how much.
+   `n`? Both forward walks ask this, so it lives in one helper — the two walks
+   sharing the `max(0, headroom)` rule and then disagreeing about which buckets
+   it applies to is exactly how they would drift.
 
-   The honest answer is the number of FULL periods in between — bucket 0 is
-   part-spent, and the bucket you buy in is part-elapsed when you buy, so what
-   you can bank is buckets 1 … n−1. One helper, because the two walks sharing
-   the `max(0, headroom)` rule and then disagreeing about which buckets it
-   applies to is exactly how they would drift.
+   The counted buckets are offsets 1 … n INCLUSIVE (v1.50.0). Bucket 0 — the
+   period we are standing in — is excluded and stays excluded: on the 7th of a
+   period most of that month's spare is already committed or spent, and a
+   plan-based engine cannot see how much, so counting it would over-promise.
+   The PURCHASE period (bucket n) IS counted now — you keep setting money aside
+   right up to the period you buy in, and that period's contribution is real and
+   available at purchase. So a purchase four periods away has four saving
+   periods (7350 ÷ 4 = 1837.50), not three. This supersedes the v1.37.0
+   `max(0, n−1)` rule, which excluded the target period too and made a
+   next-period target read "0 saving periods" — impossible-looking when it is
+   merely tight.
 
-   This deliberately UNDERSTATES rather than pro-rating by days elapsed: a
+   This still deliberately UNDERSTATES rather than pro-rating by days elapsed: a
    pro-rated figure moves every day, and this engine is plan-based on purpose
    (a plan is a decision; a trailing average is a description). Understating is
-   also the safe direction for a date someone is about to commit to. */
+   also the safe direction for a date someone is about to commit to. Only the
+   SET of counted buckets changed; the understate principle did not. */
 function purchaseSaveableBuckets(n){
-  return Math.max(0,(Number(n)||0)-1);
+  return Math.max(0,Number(n)||0);
 }
 
 /* "I want it by this date — what do I set aside, and can I?"
@@ -2237,23 +2250,85 @@ function purchaseSavingsPlan(ctx,{price,available,desiredDate}){
   const n=purchaseBucketsBetween(nowBucket,targetBucket,c.payPeriods,c.owner);
   if(n==null)return{id:"savings",mode:"beyondHorizon",targetBucket,n:null,saveable:0,shortfall,
     requiredPerBucket:0,capacity:0,tightest:null,feasible:false};
-  /* Buckets 1 … n−1: the full periods between now and the target. Bucket 0 is
-     part-spent and the target's own bucket is part-elapsed. */
+  /* Buckets 1 … n INCLUSIVE (v1.50.0): the periods you can still save in, up to
+     and including the one you buy in. Bucket 0 is the part-spent current period
+     and is excluded. `tightest` tracks the RAW headroom (kept negative on
+     purpose) so the UI can warn when an even contribution won't fit a lean
+     period; `capacity` sums only max(0, headroom), since you cannot save
+     negative money into a purchase. */
   const saveable=purchaseSaveableBuckets(n);
   let capacity=0,tightest=null;
-  for(let k=1;k<n;k++){
+  for(let k=1;k<=n;k++){
     const key=bucketShift(nowBucket,c.payPeriods,c.owner,k);
     const h=purchaseHeadroomForBucket(c,key);
     capacity+=Math.max(0,h.headroom);
     if(!tightest||h.headroom<tightest.headroom)tightest={key,headroom:h.headroom,income:h.income};
   }
-  /* A target in the very next period leaves no full period to save in. That is
-     not "beyond the horizon" — the date is reachable, there is simply nothing
-     to spread — so it stays mode:"plan" and reports saveable:0, and the UI can
-     say why instead of dividing by zero. */
   return{id:"savings",mode:"plan",targetBucket,n,saveable,shortfall,
     requiredPerBucket:saveable>0?shortfall/saveable:0,capacity,tightest,
     feasible:capacity>=shortfall};
+}
+
+/* A concrete period-by-period saving schedule (v1.50.0). Turns the aggregate
+   plan (shortfall over buckets 1 … n) into an actual amount to set aside each
+   period, "as even as possible" but never asking a period for more than its
+   own headroom. The engine owns this arithmetic so the UI renders rows verbatim
+   and never re-derives money.
+
+   Deterministic water-filling: give everyone an equal share; any period whose
+   room is below that share is filled to its room and dropped, its shortfall
+   redistributed across the stronger periods; repeat until the remaining
+   periods can all carry an equal share. That share is then rounded to cents and
+   the rounding remainder is reconciled onto the earliest period that still has
+   room, so the column totals EXACTLY the shortfall and no row ever exceeds its
+   own budget room. If the window can't hold the shortfall it fills every period
+   to the brim and reports the residual `gap` rather than a fictional even split.
+
+   Pure: index order only, no clock, no randomness — same discipline as the rest
+   of the engine, so it is unit-testable. */
+function purchaseSavingsSchedule(ctx,{shortfall,nowBucket,n}){
+  const c=ctx||{};
+  const N=Math.max(0,Number(n)||0);
+  const want=roundTo(Math.max(0,Number(shortfall)||0),2);
+  const buckets=[];
+  for(let k=1;k<=N;k++){
+    const key=bucketShift(nowBucket,c.payPeriods,c.owner,k);
+    const raw=purchaseHeadroomForBucket(c,key).headroom;
+    buckets.push({key,label:bucketLabel(key,c.payPeriods,c.owner),
+      raw,cap:Math.max(0,raw),save:0});
+  }
+  const totalCap=roundTo(buckets.reduce((s,b)=>s+b.cap,0),2);
+  const feasible=totalCap>=want-0.005;
+  let remaining=want;
+  const active=buckets.filter(b=>b.cap>0);
+  let changed=true;
+  while(changed&&active.length){
+    changed=false;
+    const even=remaining/active.length;
+    for(let i=active.length-1;i>=0;i--){
+      const b=active[i];
+      if(b.cap<=even+1e-9){b.save=b.cap;remaining-=b.cap;active.splice(i,1);changed=true;}
+    }
+  }
+  if(active.length){
+    const even=remaining/active.length;
+    active.forEach(b=>{b.save=roundTo(even,2);});
+    // Reconcile cents so the column totals exactly `want`, never exceeding a cap.
+    let diff=roundTo(want-buckets.reduce((s,b)=>s+b.save,0),2);
+    for(const b of active){
+      if(Math.abs(diff)<0.005)break;
+      const room=roundTo(b.cap-b.save,2);
+      const add=diff>0?Math.min(diff,room):diff;   // a negative diff always fits
+      b.save=roundTo(b.save+add,2);diff=roundTo(diff-add,2);
+    }
+  }
+  const rows=buckets.map((b,i)=>({bucketKey:b.key,label:b.label,
+    save:roundTo(b.save,2),roomAfter:roundTo(b.raw-b.save,2),
+    isTarget:i===buckets.length-1}));
+  const allocated=roundTo(rows.reduce((s,r)=>s+r.save,0),2);
+  const even=rows.length>0&&rows.every(r=>Math.abs(r.save-rows[0].save)<0.005);
+  return{feasible,even,perPeriod:N>0?roundTo(want/N,2):0,
+    allocated,gap:roundTo(Math.max(0,want-allocated),2),rows};
 }
 
 /* ── The options engine (Build C1) ─────────────────────────────────────────
@@ -3108,8 +3183,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.49.0";
-const BUILD_ID="2026.08.14.0008";
+const APP_VERSION="1.50.0";
+const BUILD_ID="2026.08.14.0009";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -15491,6 +15566,78 @@ function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
   );
 }
 
+/* The comparison sheet (9b). Shows the current answer plus every genuinely
+   available option, each expandable to a period-by-period detail. Choosing one
+   only PREVIEWS it — `onPreview` loads it into the draft and the caller shows a
+   banner; nothing here writes to `data`. Same Portal + scroll-lock + a11y
+   pattern as every other sheet. */
+function PurchaseCompareSheet({options,describe,sav,label,fmt,noun,plural,product,trimCats,onPreview,onClose}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const[open,setOpen]=useState(options[0]?options[0].id:null);
+  const rowLine={display:"flex",justifyContent:"space-between",gap:10,fontSize:12,color:P.neuSub,padding:"3px 0"};
+  const detailFor=o=>{
+    if(o.id==="trim")return(o.picks||[]).map(p=>{
+      const c=(trimCats||[]).find(x=>x.id===p.id);
+      return{k:(c&&c.name)||"a category",v:`− ${fmt(p.amount)} a ${noun}`};
+    }).concat([{k:`Freed each ${noun}`,v:fmt(o.perPeriod)},
+      {k:"Applied over",v:`${o.periods} ${plural(o.periods,noun)}`},
+      {k:"Total freed",v:fmt(o.freed)},
+      ...(o.closesGap?[]:[{k:"Note",v:"still won't quite cover it"}])]);
+    if(o.id==="shiftDate")return[{k:"New date",v:label(o.bucketKey)},
+      {k:`Set aside each ${noun}`,v:fmt(o.perPeriod)},
+      {k:`Saving ${plural(o.periods,noun)}`,v:String(o.periods)}];
+    if(o.id==="finance")return[{k:"Payments",v:`${o.count} × ${fmt(o.perPayment)}`},
+      {k:"Total financed",v:fmt(o.financedTotal)}];
+    return[{k:"Reachable price",v:fmt(o.price)},{k:"Less than you asked",v:fmt(o.saving)}];
+  };
+  const btnBase={borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,minHeight:40};
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" aria-label="Ways to make this work"
+        tabIndex={-1} onClick={e=>e.stopPropagation()} style={{maxHeight:"90dvh",overflowY:"auto"}}>
+        <div className="sheet-head">
+          <h3 style={{margin:0,fontWeight:600}}>Ways to make this work</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
+        </div>
+        {sav&&sav.mode==="plan"&&sav.shortfall>0&&
+          <div style={{fontSize:12,color:P.neuSub,lineHeight:1.5,marginBottom:12}}>
+            As planned: set aside <b style={{color:P.neuInk}}>{fmt(sav.requiredPerBucket)}</b> a {noun} for {sav.n} {plural(sav.n,noun)}
+            {sav.feasible?".":" — but the leanest period can't spare that. The options below close the gap."}
+          </div>}
+        {options.map(o=>{
+          const line=describe(o),isOpen=open===o.id;
+          return(
+            <div key={o.id} style={{...neu(14),padding:12,marginBottom:10}}>
+              <button onClick={()=>setOpen(isOpen?null:o.id)} aria-expanded={isOpen}
+                style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"transparent",
+                  border:"none",padding:0,textAlign:"left"}}>
+                <div style={{minWidth:0,flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:P.neuInk}}>{line.head}</div>
+                  <div style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
+                </div>
+                <I.Chevron size={13} style={{flexShrink:0,color:P.faint,
+                  transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+              </button>
+              {isOpen&&
+                <div style={{...neuInset(10),padding:"6px 10px",margin:"10px 0"}}>
+                  {detailFor(o).map((d,i)=>(
+                    <div key={i} style={rowLine}><span>{d.k}</span>
+                      <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{d.v}</span></div>
+                  ))}
+                </div>}
+              <button onClick={()=>onPreview(o,line.head)}
+                style={{...btnBase,width:"100%",marginTop:isOpen?0:10,border:"none",
+                  background:P.grS,color:P.grD,fontWeight:700}}>Preview this option</button>
+            </div>);
+        })}
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
 function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
   banks,goals,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
   fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab,
@@ -15512,6 +15659,12 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
 
   const[showTrims,setShowTrims]=useState(false);
   const[createSheet,setCreateSheet]=useState(null);   // the prefill, or null
+  const[showCompare,setShowCompare]=useState(false);  // the "explore other ways" sheet (9b)
+  /* Preview-before-apply (9b): stash the draft as it was BEFORE an option was
+     previewed, so "Cancel preview" restores it exactly. Both null when not
+     previewing. Never synced — draft is localStorage-only scratchpad. */
+  const[previewBackup,setPreviewBackup]=useState(null);
+  const[previewLabel,setPreviewLabel]=useState("");
 
   const financedMode=draft.method!=="cash";
   const trims=draft.trims||{};
@@ -15569,6 +15722,8 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   const ready=price>0;
   const product=String(draft.product||"").trim();
   const label=k=>bucketLabel(k,payPeriods,budgetOwner);
+  const noun=periodNoun(payPeriods,budgetOwner);   // "month" | "pay period"
+  const plural=(k,w)=>`${w}${k===1?"":"s"}`;
 
 
   /* ── shared field styling ──
@@ -15606,6 +15761,16 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      to its earliest-possible mode. */
   const sav=scenarios.savings;
   const savingsVerdict=purchaseVerdict(sav,{});
+  /* The concrete period-by-period saving plan (v1.50.0). Declared after `sav`
+     for the same temporal-dead-zone reason as the options below. Only built when
+     there is actually a plan to spread — the engine owns the arithmetic, the
+     card renders the rows. */
+  const savSchedule=useMemo(()=>
+    (sav&&sav.mode==="plan"&&sav.shortfall>0&&sav.n>0)
+      ?purchaseSavingsSchedule({...engineCtx,stack,todayStr},
+          {shortfall:sav.shortfall,nowBucket:bucket,n:sav.n})
+      :null,
+    [sav,engineCtx,stack,todayStr,bucket]);
   /* ── What to do about it (Build C1) ──
      Placed after the verdicts because it reads `sav`, and a const read above
      its declaration is a temporal-dead-zone throw at render time — see
@@ -15632,6 +15797,24 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
       return next;
     });
   },[payPeriods,budgetOwner]);
+
+  /* Preview an option (9b): snapshot the draft first (unless we are already
+     previewing — the backup must stay the pre-preview state), then fill the
+     levers and show the banner. Still no durable write; only the scratchpad
+     moves. */
+  const previewOption=useCallback((o,labelText)=>{
+    setPreviewBackup(prev=>prev||draft);
+    setPreviewLabel(labelText||"");
+    applyOption(o);
+    setShowCompare(false);
+  },[draft,applyOption]);
+  const cancelPreview=useCallback(()=>{
+    if(previewBackup)setDraft(previewBackup);
+    setPreviewBackup(null);setPreviewLabel("");
+  },[previewBackup]);
+  const keepPreview=useCallback(()=>{        // accept the previewed draft as the working one
+    setPreviewBackup(null);setPreviewLabel("");
+  },[]);
 
   /* ONE description per option, used by the row and by the suggestion panel.
      Two call sites phrasing the same option differently is how a suggestion
@@ -15707,6 +15890,24 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   return(
     <div>
       <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+
+      {/* Preview banner (9b) — persistent while an explored option is loaded
+          into the scratchpad. "Use this plan" accepts it; "Cancel preview"
+          restores the exact draft from before the preview. */}
+      {previewBackup&&
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14,
+          borderRadius:12,padding:"11px 13px",background:P.grS,border:`1px solid ${P.jade}44`}}>
+          <div style={{flex:"1 1 160px",minWidth:0}}>
+            <div style={{fontSize:11,fontWeight:600,color:P.grD,textTransform:"uppercase",letterSpacing:".06em"}}>Previewing</div>
+            <div style={{fontSize:13,fontWeight:600,color:P.neuInk,lineHeight:1.4}}>{previewLabel||"an alternative plan"}</div>
+          </div>
+          <button onClick={cancelPreview}
+            style={{flexShrink:0,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,
+              border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub,minHeight:40}}>Cancel preview</button>
+          <button onClick={keepPreview}
+            style={{flexShrink:0,borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:700,
+              border:"none",background:P.gr,color:"#fff",minHeight:40}}>Use this plan</button>
+        </div>}
 
       {/* ── What are you buying? ── */}
       <section style={card}>
@@ -15998,30 +16199,54 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                 {sav.shortfall<=0
                   ?"You can already afford it out of cash"
                   :!sav.feasible
-                    ?`Not on this plan — ${fmt(sav.capacity)} spare before then, ${fmt(sav.shortfall)} needed`
+                    ?`Not affordable by ${label(sav.targetBucket)} on this plan`
                     :savingsVerdict==="warn"
-                      ?`Possible, but one period can't spare ${fmt(sav.requiredPerBucket)}`
-                      :`On track — set aside ${fmt(sav.requiredPerBucket)} per period`}
+                      ?"Possible, but tight"
+                      :"Comfortable"}
               </Verdict>
               {sav.shortfall>0&&<>
-                <div style={rowLine}><span>Starting from available</span>
-                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(stack.available)}</span></div>
-                <div style={rowLine}><span>Still to find</span>
+                {/* One plain sentence — the whole answer in a line. */}
+                <div style={{fontSize:13,color:P.neuInk,fontWeight:600,lineHeight:1.5,margin:"2px 0 10px"}}>
+                  {savSchedule&&savSchedule.even
+                    ?`Save ${fmt(sav.requiredPerBucket)} for ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}.`
+                    :`Save across ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}`
+                       +(sav.feasible?" — leaner periods carry less.":", but the leanest periods can't quite cover it.")}
+                </div>
+                {/* The arithmetic under it — the count and the divisor always agree. */}
+                <div style={rowLine}><span>Still needed</span>
                   <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.shortfall)}</span></div>
-                <div style={rowLine}><span>Periods until then</span>
-                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{sav.n}</span></div>
-                <div style={rowLine}><span>Set aside per period</span>
-                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.requiredPerBucket)}</span></div>
-                <div style={rowLine}><span>Spare per period, tightest</span>
-                  <span className="tnum" style={{fontWeight:600,
-                    color:sav.tightest&&sav.tightest.headroom>=sav.requiredPerBucket?P.neuInk:"#E07B2A"}}>
-                    {sav.tightest?fmt(sav.tightest.headroom):"—"}</span></div>
+                <div style={rowLine}><span>Purchase is</span>
+                  <span style={{fontWeight:600,color:P.neuInk}}>{sav.n} {plural(sav.n,noun)} away</span></div>
+                {savSchedule&&savSchedule.even&&
+                  <div style={rowLine}><span>{fmt(sav.shortfall)} ÷ {sav.n} {plural(sav.n,noun)}</span>
+                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.requiredPerBucket)} each</span></div>}
+                {sav.tightest&&
+                  <div style={rowLine}><span>Lowest budget room</span>
+                    <span className="tnum" style={{fontWeight:600,
+                      color:sav.tightest.headroom>=sav.requiredPerBucket?P.neuInk:"#E07B2A"}}>
+                      {fmt(sav.tightest.headroom)} in {label(sav.tightest.key)}</span></div>}
+                {/* The concrete schedule — one row per period, what to set aside. */}
+                {savSchedule&&<>
+                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".08em",
+                    margin:"12px 0 4px"}}>Set aside each {noun}</div>
+                  <div style={{...neuInset(12),padding:"4px 0"}}>
+                    {savSchedule.rows.map(r=>(
+                      <div key={r.bucketKey} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
+                        <span style={{flex:1,minWidth:0,fontSize:12,color:r.isTarget?P.neuInk:P.neuSub,
+                          fontWeight:r.isTarget?600:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {label(r.bucketKey)}{r.isTarget?` · Buy ${product||"it"}`:""}</span>
+                        <span className="tnum" style={{fontSize:11,color:P.faint,flexShrink:0}}>room {fmt(r.roomAfter)}</span>
+                        <span className="tnum" style={{fontSize:13,fontWeight:600,flexShrink:0,minWidth:80,
+                          textAlign:"right",color:P.neuInk}}>{fmt(r.save)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {!savSchedule.feasible&&
+                    <div style={{fontSize:11,color:"#E07B2A",marginTop:6,lineHeight:1.5}}>
+                      Even filling every {noun} to the brim, this plan is {fmt(savSchedule.gap)} short by {label(sav.targetBucket)}.
+                    </div>}
+                </>}
               </>}
-              <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
-                Counts only what each period has left over after the plan and existing
-                instalments. Saving more in one period to cover a leaner one is allowed —
-                the tightest period is shown so you know when that's required.
-              </div>
             </>}
 
             {sav&&sav.mode==="now"&&
@@ -16133,32 +16358,17 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
             </div>
           </section>
 
-          {/* ── What to do about it (C1) ──
-                 The answer to "I can't have it when I want it — now what?".
-                 Every figure here is engine-computed; "Try this" fills the
-                 What-if levers and never touches the budget. */}
+          {/* ── Explore other ways (9b) ──
+                 The options moved into a comparison sheet. This button opens it;
+                 the sheet only ever PREVIEWS an option into the scratchpad, and
+                 nothing here touches the budget. */}
           {options.length>0&&
-            <section style={card}>
-              <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:2}}>What would make this work</div>
-              <div style={{fontSize:11,color:P.faint,marginBottom:10}}>
-                These fill the What-if levers below. Nothing here edits your budget.
-              </div>
-              {options.map(o=>{
-                const line=optionLine(o);
-                return(
-                  <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,
-                    padding:"9px 0",borderTop:"1px solid rgba(0,0,0,.06)"}}>
-                    <div style={{minWidth:0,flex:1}}>
-                      <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>{line.head}</div>
-                      <div style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
-                    </div>
-                    <button onClick={()=>applyOption(o)}
-                      style={{flexShrink:0,borderRadius:10,padding:"8px 12px",fontSize:12,
-                        fontWeight:600,border:"none",background:"rgba(0,0,0,.05)",
-                        color:P.neuInk,minHeight:40}}>Try this</button>
-                  </div>);
-              })}
-            </section>}
+            <button onClick={()=>setShowCompare(true)}
+              style={{width:"100%",borderRadius:14,padding:"13px 0",fontSize:14,fontWeight:600,
+                border:`1px solid ${P.line}`,background:"transparent",color:P.neuInk,
+                marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <I.Layers size={15}/>Explore other ways to make this work
+            </button>}
 
           {/* ── The one durable exit ── */}
           {financedMode&&
@@ -16169,6 +16379,12 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
             </button>}
         </>}
       </>}
+
+      {showCompare&&
+        <PurchaseCompareSheet options={options} describe={optionLine}
+          sav={sav} label={label} fmt={fmt} noun={noun} plural={plural}
+          product={product} trimCats={trimCats}
+          onPreview={previewOption} onClose={()=>setShowCompare(false)}/>}
 
       {showTrims&&
         <PurchaseTrimSheet categories={trimCats} trims={trims} cur={cur} fmt={fmt}

@@ -359,24 +359,35 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   - `fingerprint()` emits the two collections **only when non-empty**, so
     `migrate()` adding them is byte-identical for an existing document and
     doesn't cost a KV write per device on first open.
-- **Only FULL periods count toward saving, and both forward walks must agree**
-  (2026-08-08, v1.37.0). `purchaseHeadroomForBucket` is plan-based, so bucket 0
-  reports its whole headroom on the 28th exactly as on the 1st — and `earliest`
-  and `purchaseSavingsPlan` used to treat all of it as still savable, promising
-  money the part-spent period could no longer supply. One helper,
-  **`purchaseSaveableBuckets(n)` → `max(0, n−1)`**, now answers "how many full
-  periods are there in between" for both, so they cannot drift apart.
-  - It **understates rather than pro-rating by days elapsed**, deliberately: a
-    pro-rated figure moves every day, this engine is plan-based on purpose (a
-    plan is a decision, a trailing average is a description), and understating
-    is the safe direction for a date someone is committing to. Don't "improve"
-    it into reading the clock or the actuals.
-  - A target in the very NEXT period therefore reports `saveable: 0` and
-    infeasible — there is no full period to spread anything over. That is
-    mode `"plan"`, not `"beyondHorizon"`: the date is reachable, there is simply
-    nothing to spread. Guard any new divisor against it.
-  - Changing this **changes figures already on screen**. Eight `purchasetest`
-    cases were re-derived by hand when it landed; re-derive, never re-baseline.
+- **The purchase period counts as a saving period; the current period does not,
+  and both forward walks must agree** (v1.50.0, Phase 9a — supersedes the
+  v1.37.0 `max(0, n−1)` rule). `purchaseHeadroomForBucket` is plan-based, so
+  bucket 0 reports its whole headroom on the 28th exactly as on the 1st — so
+  bucket 0 (the part-spent current period) is still excluded. But the PURCHASE
+  bucket now counts: you keep saving up to the period you buy in. One helper,
+  **`purchaseSaveableBuckets(n)` → `max(0, n)`**, answers "how many saving
+  periods" for both walks (buckets **1 … n inclusive**), so they cannot drift.
+  `purchaseSavingsPlan` loops `k = 1 … n`; the earliest walk banks a bucket
+  BEFORE testing affordability. A four-periods-away target is four saving
+  periods (7350 ÷ 4 = 1837.50), and a next-period target is ONE saving period,
+  not zero.
+  - It still **understates rather than pro-rating by days elapsed**: a pro-rated
+    figure moves every day, this engine is plan-based on purpose (a plan is a
+    decision, a trailing average is a description). Don't "improve" it into
+    reading the clock or the actuals. Only the *set* of counted buckets changed.
+  - **`purchaseSavingsSchedule(ctx,{shortfall,nowBucket,n})`** turns the
+    aggregate into a per-period plan by deterministic water-filling (even share;
+    caps a lean period to its room and redistributes; reconciles the rounding
+    remainder so the column totals the shortfall EXACTLY and no row exceeds its
+    room; infeasible windows fill to the brim and report `gap`). Pure — the UI
+    renders its rows and never re-derives money.
+  - `tightest` is the raw headroom (kept NEGATIVE) of the leanest bucket in
+    1 … n, reported separately so the card can warn; `capacity` only sums
+    `max(0, headroom)`.
+  - Changing this **changes figures already on screen**. Thirteen `purchasetest`
+    cases were re-derived by hand (never re-baselined) plus new schedule/
+    semantics cases; `headroomcheck.cjs` is unaffected (per-bucket headroom
+    didn't move).
 - **`purchaseOptionsFor` is the advisor's answer to "now what?"** — ranked
   concrete moves (trim / shiftDate / finance / reducePrice), each carrying its
   own arithmetic and an `apply` payload naming **only existing draft levers**.

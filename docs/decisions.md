@@ -276,7 +276,47 @@ to use them and could not do arithmetic with them. **Check what the system
 actually sends before concluding it needs to send something different**; the
 real question was who computes, not what travels.
 
-## Understate rather than pro-rate: only full periods count (2026-08-08, v1.37.0)
+## The purchase period counts as a saving period (2026-08-14, v1.50.0 / Phase 9a)
+
+**Supersedes the v1.37.0 `max(0, n−1)` rule below.** `purchaseSaveableBuckets(n)`
+is now `max(0, n)`, and both forward walks (`purchaseSavingsPlan`'s `k = 1 … n`
+loop and `projectPurchaseScenarios`'s earliest walk, which now banks a bucket
+*before* testing affordability) count offsets **1 … n inclusive**.
+
+- **The current period (bucket 0) is still excluded** — unchanged and for the
+  same reason: on the 7th of a period most of its headroom is already committed
+  or spent, and a plan-based engine can't see how much, so counting it would
+  over-promise. This half of the v1.37.0 decision stands.
+- **The purchase period (bucket n) is now included** — you keep setting money
+  aside right up to the period you buy in, and that period's contribution is
+  real and available at purchase. Excluding it made a *next-period* target
+  report "0 saving periods" and read as impossible when it is merely tight, and
+  made a purchase four periods away divide by three (7350 → 2450) while the card
+  said "4 periods". Now four periods away is four saving periods: 7350 ÷ 4 =
+  1837.50.
+- **The understate-not-pro-rate principle is unchanged** — only the *set* of
+  counted buckets moved. The engine is still plan-based, still refuses to read
+  the clock or the actuals; a `tightest` bucket (raw headroom, kept negative) is
+  still reported separately so the UI can warn when an even contribution won't
+  fit a lean period.
+- **The schedule is where the money becomes concrete.** `purchaseSavingsSchedule`
+  turns the aggregate `{shortfall, n}` into a per-period amount via deterministic
+  water-filling: an even share to everyone, any period whose room is below that
+  share filled to its room and dropped, its shortfall redistributed across the
+  stronger periods, repeat; the rounding remainder reconciled onto the earliest
+  period with room so the column totals **exactly** the shortfall and no row
+  exceeds its own budget room. Infeasible windows fill every period and report
+  the residual `gap` rather than a fictional even split. Pure and unit-tested
+  (`purchasetest` 12s/12s2/12s3).
+
+`purchasetest` re-derived by hand (never re-baselined): 7, 7b, 7c, 7d, 8b, 10c,
+12b, 12c, 12d, 12d2, 12d3, 13i, 13l, plus new 12p/12q/12r and the schedule
+cases. `headroomcheck.cjs` is unaffected (per-bucket headroom didn't change).
+
+The block below is the earlier decision, kept for its reasoning; its
+`max(0, n−1)` conclusion is now superseded by the above.
+
+## Understate rather than pro-rate: only full periods count (2026-08-08, v1.37.0) — SUPERSEDED in part
 
 `purchaseHeadroomForBucket` is plan-based, so the current period reports its
 whole headroom on the 28th exactly as on the 1st. Both forward walks —
