@@ -1,7 +1,7 @@
 # Current Status
 
-_Last updated: 2026-08-14 (phase 2 — `dotest.cjs`; phase 3a — v1.43.0, live;
-phase 3b — v1.44.0, `actualStarts` merges per key, built but not yet deployed)_
+_Last updated: 2026-08-14 (phases 2, 3a and 3b all done — `dotest.cjs`, then
+v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
@@ -10,8 +10,12 @@ phase 3b — v1.44.0, `actualStarts` merges per key, built but not yet deployed)
 and `mergeActualStarts`, `withMergedActualStarts`, `tombstonedActualStarts` and
 `actualStartValue` are all present in the served file. The Worker was not
 touched, so `d8b5b9ad` still stands.
-**Not yet opened on either phone, and the two-phone merge scenarios have not
-been run** — that is the remaining work, and it is what the release exists for.
+**Confirmed on both phones, and all three two-phone merge scenarios pass**
+(2026-08-14): different periods corrected on each phone both survive; the same
+done offline and reconnected one at a time both survive; and a clear on one
+phone stays cleared when the other — still holding the old value — syncs after.
+That third one is what the tombstone exists for, and it is the first time the
+corrections map has ever been proven to reconcile.
 
 **Previously live: v1.43.0 / build `2026.08.14.0002`** (`537a5e51`), phase 3a,
 confirmed on both phones — which is what unblocked 3b.
@@ -142,9 +146,11 @@ Full detail in `roadmap.md`; the reasoning in `decisions.md`.
 `SyncRoom` now has twelve end-to-end cases against a real local Worker, which
 is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
-**Next: open both phones on v1.44.0, then run the two-phone scenarios** — they are the only
-part of 3b that cannot be verified from a desktop, and they are the thing the
-release exists for. See the checklist under phase 3b in `roadmap.md`.
+**Phases 1, 2, 3a and 3b are all done and verified. Nothing is half-built.**
+
+**Next: programme phase 4 — header simplification + one sync sentence
+(v1.45.0).** Low risk, no synced-data change. The two contradictory sync
+sentences it resolves are listed in `roadmap.md`.
 
 ### v1.42.1 — no such release. Phase 2 (2026-08-14) — `dotest.cjs`
 
@@ -206,20 +212,10 @@ Worker's fallback behaviour was correct throughout; only the test was wrong.
    of C1 is silent on a fresh document. Deliberate (an advisor that opens by
    proposing you cut your rent is worse than one that says nothing), but it is
    a real first-run gap.
-2. **Open both phones on v1.44.0, then run the two-phone merge scenarios.**
-   (Deployed 2026-08-14; neither phone has opened it yet.) The
-   scenarios are in `roadmap.md`: different periods corrected on each phone,
-   the same done offline then reconnected one at a time, and a clear on one
-   while the other still holds the value. Watch that every period label and
-   Budget/Expenses bucket is unchanged throughout — **period identity must not
-   move.**
-   This is a hard gate, not housekeeping: phase 3b starts writing the stamped
-   `actualStarts` shape, and a phone still on ≤ v1.42.0 would strip it and push
-   the stripped document back. Also re-check that existing corrections still
-   render in Settings → Pay periods with the same offsets.
-   This also subsumes the older "open both phones on ≥ v1.41.0" item: each
-   repairs its own duplicated bill rows so the canonical ids converge
-   (v1.35.0), and both pick up the current build.
+2. ~~**Open both phones and run the two-phone merge scenarios.**~~ **DONE
+   2026-08-14 — all three pass.** Both phones are on v1.44.0, which also
+   subsumed the older "open both on ≥ v1.41.0" item (each repaired its own
+   duplicated bill rows so the canonical ids converged).
 3. **Expect the savings and earliest figures to look worse than you remember.**
    v1.37.0 stopped counting the current, part-spent period toward what you can
    still save. Those are the corrected numbers, not a regression.
@@ -236,13 +232,19 @@ the entries below say what is left of each, not what order to do it in.**
 5. **5b — salary reconciliation** in the Expenses unaccounted sheet.
    **Programme phase 6.** See `roadmap.md`, and read the 5a-2 classification
    note it must account for.
-6. ~~**3C-3 — `payPeriods.actualStarts` has no merge rule.**~~ **DONE — 3a
-   (v1.43.0) + 3b (v1.44.0).** It merges per key now; what remains is the
-   deploy and the two-phone scenarios in item 2. The design as built: per-entry
-   stamped
-   records with an explicit tombstone, shipped over two releases so an old
-   build's `migrate()` cannot strip corrections and push the stripped copy
-   back. Details at the top of `roadmap.md`.
+6. ~~**3C-3 — `payPeriods.actualStarts` has no merge rule.**~~ **CLOSED
+   2026-08-14 — 3a (v1.43.0) + 3b (v1.44.0), deployed and verified on two real
+   phones.** Per-entry stamped records with an explicit tombstone, shipped over
+   two releases so an old build's `migrate()` could not strip corrections and
+   push the stripped copy back. **Every synced collection now has a merge
+   rule.** Details under phase 3b in `roadmap.md`.
+   One follow-up it leaves behind: **`mergeTrimPolicy` breaks a stamp tie by
+   side (`local wins`), which never converges** — with equal stamps and
+   different values each device keeps its own answer forever, because each
+   one's merge is a no-op on its own side. `mergeActualStarts` breaks ties by
+   value instead. Low stakes (a boolean) and deliberately not fixed in the same
+   release, since no release may carry two synced-data changes. See
+   `decisions.md`.
 7. **Retire the Worker's KV rollback mirror.** Every accepted write still
    mirrors to the three legacy KV keys so a rollback to the pre-Durable-Object
    Worker resumes cleanly. Cheap, but it is duplicated state and should not

@@ -169,9 +169,12 @@ payday wrote tombstones for **both** existing keys rather than `{}`, and the
 confirm counted 1 correction, not 2 — the already-tombstoned one is correctly
 not offered.
 
-**Still to do:** deploy, then the two-phone scenarios in the spec above
-(different periods offline on each phone; clear on one while the other still
-holds it). Those cannot be run from here.
+**Verified on two real phones, 2026-08-14 — all three scenarios pass:**
+different periods corrected on each phone both survive; the same done offline
+and reconnected one at a time both survive; and a clear on one phone stays
+cleared when the other, still holding the old value, syncs after. Period
+identity did not move. That is the first time the corrections map has been
+proven to reconcile, and it closes roadmap item 3C-3.
 
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 
