@@ -139,6 +139,25 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   and the **no-op guard is load-bearing** because `NumField` commits even when
   you re-type the same number, so without it merely tapping around a past month
   creates plans. Paging to a month must write nothing.
+- **The unaccounted sheet's classifier lives in `reconcilePeriod`** (module
+  scope, v1.47.0) — it moved out of a `useMemo` unchanged, and `goaltest` /
+  `installmenttest` drive it through there. It is **read-only**: pure, never
+  reads the clock, never calls `setData`, and above all **never calls
+  `editPlanForMonth`** — viewing a past period must not materialise a plan for
+  it. `reconciletest.cjs` case 9 pins that by source sweep, the same way
+  `purchasetest.cjs` does for the Advisor.
+  Its planned side is where a new defect would hide, so four rules:
+  **`trackedSpendingFor(...).budget` must not be reused** (it folds
+  `extraFundsMap` into the budget, and extra funds are their own `+` line
+  here); a goal-linked untracked category's allocation is **inside** the
+  untracked total and so is subtracted from Transfers out, or two lines claim
+  it; the installment planned figure reuses `derivedInstallmentRowsFor` with
+  the `fundedElsewhere?0:` rule rather than restating it; and money that
+  matches no live envelope goes to **`unmatched`**, which exists so the sheet
+  can say *what* an excess is instead of asserting an over-transfer.
+  A line whose comparison would be meaningless carries **`comparable:false`**
+  (Income, Extra funds) — not a planned figure of 0, which would report every
+  gift as an overshoot.
 - **`isExtraFunds` rows are money coming IN, stored as ordinary expenses.**
   `addExtraFunds` writes a normal expense row with the flag set (a spouse
   sending cash earmarked for a category). `spentMap` excludes them,
@@ -878,7 +897,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are twenty-three, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty-four, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -927,6 +946,12 @@ and an error naming a collection the user has never heard of.
   the move, six sections all closed by default, `section` is a render helper and
   not a component, `useScrollLock` is taken exactly once, every nested dialog
   sits after the last section, and errors render above the sections).
+  and `reconciletest.cjs` (salary reconciliation: the actual column still sums
+  to the headline, extra funds are money in, a goal-linked untracked category is
+  not claimed by two lines, both installment shapes, a past bucket reconciles
+  against ITS plan, unmatched transfers are named, the legacy goal fallback, and
+  a source assertion that the function never mentions `editPlanForMonth`,
+  `setData` or the clock).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -942,7 +967,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  twenty-three" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty-four" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -957,7 +982,7 @@ and an error naming a collection the user has never heard of.
   against the app's own Budget tab before trusting a clean run.
 - **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
   four times, needs four free ports and takes ~25s, so it stays out of the
-  "run all twenty-three" sweep. It is the **only** coverage `SyncRoom` has: every
+  "run all twenty-four" sweep. It is the **only** coverage `SyncRoom` has: every
   other runner slices pure functions out of `index.html`, and the thing under
   test here is the storage runtime's serialisation guarantee, not an
   expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.

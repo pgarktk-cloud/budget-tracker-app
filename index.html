@@ -2840,6 +2840,108 @@ function goalDeadlineStatus(goal,todayStr){
     onTrack:done||(!overdue&&monthly>=requiredMonthly)};
 }
 
+/* ── Salary reconciliation: planned beside actual, for one bucket (v1.47.0) ──
+   The unaccounted sheet has always answered "where did this period's pay go".
+   This answers the question people actually ask next — "did it go the way I
+   meant it to" — by putting the plan's own figure beside each line.
+
+   READ-ONLY over existing records. Nothing here is stored, derived into `data`
+   or synced, and it must never call `editPlanForMonth`: the whole point is
+   that VIEWING a past period cannot materialise a plan for it. Same rule the
+   Purchase Advisor follows, pinned the same way in `reconciletest.cjs`.
+
+   The ACTUAL side is the shipped `unaccountedParts` classifier moved here
+   unchanged, so the four buckets keep their exact meaning and the sheet still
+   reconciles to the headline figure it has always shown.
+
+   Four traps, every one of which has already caused a defect somewhere:
+
+   1. `trackedSpendingFor(...).budget` folds `extraFundsMap` INTO the budget.
+      Extra funds are their own `+` line here, so reusing that figure would
+      count them twice. The planned base comes from the plan.
+   2. `isExtraFunds` is money coming IN, stored as an ordinary expense.
+   3. A payment carrying `fundedCatId` is written `isTransfer:false` against a
+      real category, so it consumes a tracked envelope — and `installmentTotal`
+      drops it in the same breath. Both halves move together or the money is
+      allocated twice; that is why the planned figure below reuses
+      `derivedInstallmentRowsFor` rather than re-deriving the rule.
+   4. A goal-linked untracked category's allocation is INSIDE the untracked
+      total, so it is subtracted from Transfers out — otherwise the goal line
+      and the transfer line both claim it.
+
+   `unmatched` exists because "Transfers out" also collects rows belonging to
+   no envelope at all: a deleted category, one later switched to tracked, an
+   orphaned contribution. Without it the sheet would show an over-transfer and
+   silently blame the plan for money the plan never described. */
+function reconcilePeriod({plan,expenses,bucketKey,payPeriods,owner,goals,installments,installmentPayments}){
+  const cats=(plan&&plan.categories)||[];
+  const goalIds=new Set((goals||[]).map(g=>g.id));
+  const untrackedById=new Map(cats.filter(c=>c.trackExpenses===false).map(c=>[c.id,c]));
+
+  /* ── actual — the shipped classifier, unchanged ── */
+  let trackedSpend=0,untrackedTransfers=0,goalContribs=0,extraFunds=0,unmatched=0;
+  (expenses||[]).forEach(e=>{
+    const amt=Number(e.amount)||0;
+    if(e.isExtraFunds)extraFunds+=amt;
+    // Prefer the EXPLICIT link; catId-matching-a-goal-id is the pre-v1.27.0
+    // fallback, kept so legacy rows still classify.
+    else if(e.isTransfer&&(e.goalId?goalIds.has(e.goalId):goalIds.has(e.catId)))goalContribs+=amt;
+    else if(e.isTransfer){
+      untrackedTransfers+=amt;
+      // An installment payment's catId is the installment, not a category —
+      // its planned side comes from the schedule, so it is matched, not stray.
+      if(!e.installmentId&&!untrackedById.has(e.catId))unmatched+=amt;
+    }
+    else trackedSpend+=amt;
+  });
+
+  /* ── planned ── */
+  const income=Number(plan&&plan.income)||0;
+  const plannedTracked=cats.filter(c=>c.trackExpenses!==false)
+    .reduce((s,c)=>s+categoryEffectiveAmt(c),0);
+  const untrackedCats=[...untrackedById.values()];
+  const plannedGoals=untrackedCats.filter(c=>c.goalId&&goalIds.has(c.goalId))
+    .reduce((s,c)=>s+categoryEffectiveAmt(c),0);
+  const plannedUntracked=untrackedCats.reduce((s,c)=>s+categoryEffectiveAmt(c),0);
+  const instRows=derivedInstallmentRowsFor(installments,installmentPayments,owner,bucketKey,payPeriods);
+  const installmentPlanned=instRows.reduce((s,r)=>s+(r.fundedElsewhere?0:r.amount),0);
+
+  /* `comparable:false` means a difference would be meaningless, not zero.
+     Income is the basis both sides are measured against, and extra funds are
+     unplanned by definition — inventing a plan figure of 0 for them would
+     report every gift as an overshoot. */
+  const line=(key,label,sign,planned,actual,comparable)=>
+    ({key,label,sign,planned,actual,comparable,
+      delta:comparable?actual-planned:null});
+  const lines=[
+    line("income","Income for this period",1,income,income,false),
+    line("extraFunds","Extra funds received",1,null,extraFunds,false),
+    line("tracked","Tracked spending",-1,plannedTracked,trackedSpend,true),
+    line("transfers","Transfers out (Savings, Investment…)",-1,
+      plannedUntracked-plannedGoals+installmentPlanned,untrackedTransfers,true),
+    line("goals","Goal contributions",-1,plannedGoals,goalContribs,true),
+  ];
+  return{lines,income,unmatched,installmentPlanned,
+    unaccounted:income+extraFunds-trackedSpend-untrackedTransfers-goalContribs};
+}
+
+/* The one sentence above the table. Says the two things a person can act on —
+   whether they overspent, and whether they set aside less than they meant to —
+   and says nothing when neither moved. Saving and spending are reported
+   separately on purpose: they net out to the same headline, and "you're fine"
+   would be wrong for a period that overspent and under-saved by equal amounts. */
+function reconcileSentence(rec,fmt){
+  const EPS=0.5;                       // sub-unit drift is rounding, not news
+  const of=k=>rec.lines.find(l=>l.key===k);
+  const spent=of("tracked").delta||0;
+  const saved=(of("transfers").delta||0)+(of("goals").delta||0);
+  const parts=[];
+  if(Math.abs(spent)>=EPS)parts.push(`spent ${fmt(Math.abs(spent))} ${spent>0?"more":"less"} than planned`);
+  if(Math.abs(saved)>=EPS)parts.push(`set aside ${fmt(Math.abs(saved))} ${saved>0?"more":"less"}`);
+  if(!parts.length)return "This period went broadly as planned.";
+  return`You ${parts.join(", and ")}.`;
+}
+
 /* Tracked-spending rollup for one owner, for their CURRENT bucket (calendar
    month, or pay-period when that owner has pay-periods enabled).
 
@@ -2970,8 +3072,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.46.0";
-const BUILD_ID="2026.08.14.0005";
+const APP_VERSION="1.47.0";
+const BUILD_ID="2026.08.14.0006";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -10337,17 +10439,14 @@ function recentTxTemplates(expenses,owner,{limit=8,catIds=null,excludeKeys=null}
    same reason as ConfirmDialog/AdjustReserveSheet — ExpenseTrackerView renders
    inside TabPane, whose stuck transform would otherwise anchor this to the tab
    pane rather than the viewport. */
-function UnaccountedSheet({monthLabel,income,parts,total,fmt,onClose}){
+function UnaccountedSheet({monthLabel,recon,total,fmt,onClose}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
-  /* income always shows (even at zero — a blank plan is exactly what you'd want
-     explained); the rest only when they actually contributed something */
-  const rows=[{label:"Income for this period",value:income,sign:1}].concat([
-    {label:"Extra funds received",value:parts.extraFunds,sign:1},
-    {label:"Tracked spending",value:parts.trackedSpend,sign:-1},
-    {label:"Transfers out (Savings, Investment…)",value:parts.untrackedTransfers,sign:-1},
-    {label:"Goal contributions",value:parts.goalContribs,sign:-1},
-  ].filter(r=>r.value>0));
+  /* Income always shows (even at zero — a blank plan is exactly what you'd
+     want explained). The rest show when either side has something to say: a
+     line that was planned and never happened is the most useful row on the
+     sheet, so `planned>0` keeps it visible at zero actual. */
+  const rows=recon.lines.filter(l=>l.key==="income"||l.actual>0||l.planned>0);
   return(
     <Portal>
     <div className="sheet-bg" onClick={onClose}>
@@ -10357,17 +10456,51 @@ function UnaccountedSheet({monthLabel,income,parts,total,fmt,onClose}){
           <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>{total<0?"Over-transferred":"Unaccounted"} — {monthLabel}</h3>
           <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
         </div>
-        <div style={{fontSize:12,color:P.faint,marginBottom:14}}>
+        <div style={{fontSize:12,color:P.faint,marginBottom:12}}>
           Everything logged against this period, whether you tracked it as spending or just moved it somewhere.
         </div>
+        {/* The answer first, in a sentence. The table below is the working. */}
+        <div style={{fontSize:13,color:P.ink,lineHeight:1.5,marginBottom:14,
+          borderRadius:10,padding:"10px 12px",background:P.sf,border:`1px solid ${P.line}`}}>
+          {reconcileSentence(recon,fmt)}
+        </div>
+        <div style={{display:"flex",gap:10,paddingBottom:4,fontSize:10,color:P.faint,
+          textTransform:"uppercase",letterSpacing:".08em"}}>
+          <span style={{flex:1}}/>
+          <span style={{width:78,textAlign:"right"}}>Planned</span>
+          <span style={{width:78,textAlign:"right"}}>Actual</span>
+        </div>
         {rows.map(r=>(
-          <div key={r.label} style={{display:"flex",alignItems:"baseline",gap:10,padding:"7px 0",borderBottom:`1px solid ${P.line}`}}>
-            <span style={{flex:1,fontSize:13,color:P.sub,minWidth:0}}>{r.label}</span>
-            <span className="tnum" style={{fontSize:14,fontWeight:600,color:r.sign>0?P.gr:P.ink}}>
-              {r.sign>0?"+":"−"} {fmt(r.value)}
+          <div key={r.key} style={{display:"flex",alignItems:"baseline",gap:10,padding:"7px 0",borderBottom:`1px solid ${P.line}`}}>
+            <span style={{flex:1,fontSize:13,color:P.sub,minWidth:0}}>
+              {r.label}
+              {/* The difference, in words a person can act on. Only where a
+                  comparison means something: income is the basis both sides
+                  are measured against, and extra funds are unplanned by
+                  definition — a plan figure of 0 would report a gift as an
+                  overshoot. */}
+              {r.comparable&&Math.abs(r.delta)>=0.5&&
+                <span style={{display:"block",fontSize:11,marginTop:2,
+                  color:(r.key==="tracked"?r.delta>0:r.delta<0)?P.wine:P.gr}}>
+                  {fmt(Math.abs(r.delta))} {r.delta>0?"more":"less"} than planned
+                </span>}
+            </span>
+            <span className="tnum" style={{width:78,textAlign:"right",fontSize:13,color:P.faint}}>
+              {r.planned==null?"—":fmt(r.planned)}
+            </span>
+            <span className="tnum" style={{width:78,textAlign:"right",fontSize:14,fontWeight:600,color:r.sign>0?P.gr:P.ink}}>
+              {r.sign>0?"+":"−"} {fmt(r.actual)}
             </span>
           </div>
         ))}
+        {/* Money that left through no envelope at all — a deleted category, one
+            since switched to tracked, an orphaned contribution. Saying so is
+            the difference between "you over-transferred" and "some of this
+            doesn't match your plan", and only one of those is true. */}
+        {recon.unmatched>0&&
+          <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:10}}>
+            {fmt(recon.unmatched)} of the transfers above doesn't match any category in this period's plan — usually a category that was renamed, deleted or switched to tracked after the fact.
+          </div>}
         <div style={{display:"flex",alignItems:"baseline",gap:10,paddingTop:12}}>
           <span style={{flex:1,fontSize:13,fontWeight:600,color:P.ink}}>{total<0?"Over-transferred":"Still unaccounted for"}</span>
           <span className="tnum" style={{fontSize:20,fontWeight:700,color:total<0?P.wine:P.br}}>{fmt(Math.abs(total))}</span>
@@ -10553,26 +10686,16 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      This sheet must keep counting the LEDGER and must never read payment status, or a
      payment recorded here would be counted twice. */
   const totalIncome=Number(monthPlan.income)||0;
-  const unaccountedParts=useMemo(()=>{
-    let trackedSpend=0,untrackedTransfers=0,goalContribs=0,extraFunds=0;
-    const goalIds=new Set((goals||[]).map(g=>g.id));
-    viewMonthExpenses.forEach(e=>{
-      const amt=Number(e.amount)||0;
-      if(e.isExtraFunds)extraFunds+=amt;
-      /* Prefer the EXPLICIT link. `catId` matching a live goal id was the only
-         discriminator before v1.27.0, so deleting a goal silently reclassified
-         every contribution to it as an ordinary transfer — the figures moved
-         between lines of the unaccounted sheet months after the fact. A row
-         written by contributeToGoal says what it is; legacy rows still fall
-         back to the old test. */
-      else if(e.isTransfer&&(e.goalId?goalIds.has(e.goalId):goalIds.has(e.catId)))goalContribs+=amt;
-      else if(e.isTransfer)untrackedTransfers+=amt;
-      else trackedSpend+=amt;
-    });
-    return{trackedSpend,untrackedTransfers,goalContribs,extraFunds};
-  },[viewMonthExpenses,goals]);
-  const totalUnallocatedOrUntransferred=totalIncome+unaccountedParts.extraFunds
-    -unaccountedParts.trackedSpend-unaccountedParts.untrackedTransfers-unaccountedParts.goalContribs;
+  /* The classifier that used to live here moved to module-scope
+     `reconcilePeriod` in v1.47.0, unchanged, so the same four buckets now
+     carry a planned figure beside them. `monthPlan` is what
+     planSourceForMonth resolved for the VIEWED bucket, so a past period is
+     compared against the plan it actually had — reaching for activePlanId
+     here is the bug the whole feature would be built on. */
+  const recon=useMemo(()=>reconcilePeriod({plan:monthPlan,expenses:viewMonthExpenses,
+    bucketKey:viewMonth,payPeriods,owner:budgetOwner,goals,installments,installmentPayments}),
+    [monthPlan,viewMonthExpenses,viewMonth,payPeriods,budgetOwner,goals,installments,installmentPayments]);
+  const totalUnallocatedOrUntransferred=recon.unaccounted;
 
   /* Shared with Home's Tracked Spending card — see spendStatusColor/Bg at
      module scope. Aliased so every call site below stays unchanged. */
@@ -11070,7 +11193,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       </div>
 
       {showUnaccounted&&
-        <UnaccountedSheet monthLabel={fmtMonth(viewMonth)} income={totalIncome} parts={unaccountedParts}
+        <UnaccountedSheet monthLabel={fmtMonth(viewMonth)} recon={recon}
           total={totalUnallocatedOrUntransferred} fmt={fmt} onClose={()=>setShowUnaccounted(false)}/>}
 
       {/* ── envelopes ── */}

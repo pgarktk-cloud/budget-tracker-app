@@ -18,7 +18,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 3b | **1.44.0 — DONE** | med | `actualStarts` — stamped writer + per-key merge |
 | 4 | **1.45.0 — DONE** | low | Header simplification + one sync sentence |
 | 5 | **1.46.0 — DONE** | low | Settings reorganised into accordion sections |
-| 6 | 1.47.0 | med | Salary reconciliation (5b, spec below) |
+| 6 | **1.47.0 — DONE** | med | Salary reconciliation (5b, spec below) |
 | 7 | 1.48.0 | med | Customisable bottom navigation |
 | 8 | 1.49.0 | low | Collapsible completed/healthy sections |
 | 9 | 1.50.0 | low | Purchase Advisor result hierarchy |
@@ -269,7 +269,60 @@ still passes** — with Settings open and scrolled 120px, `window.scrollY` reads
 0 (the lying condition) and the synthetic `touchmove` comes back
 `defaultPrevented:false` with no indicator.
 
-## ▶ NEXT SESSION — 5b, salary reconciliation
+### Phase 6 as built (2026-08-14, v1.47.0) — NOT yet deployed
+
+**Item 5b, the oldest carried-forward feature, is done.** The unaccounted sheet
+now answers "did this period go the way I meant it to", not only "where did it
+go": a planned figure and a difference beside each line, led by one sentence.
+
+- **`reconcilePeriod(...)`** — module-scope, pure, read-only. The
+  `unaccountedParts` `useMemo` moved into it **unchanged**, so the four actual
+  buckets keep their exact classification and the sheet still reconciles to the
+  headline it has always shown. `reconcileSentence(rec,fmt)` is the sentence.
+- **Spending and saving are reported separately**, on purpose: they net out to
+  the same headline, so one combined figure would call a period that overspent
+  *and* under-saved by equal amounts "fine".
+- **`unmatched`** is new and load-bearing. "Transfers out" also collects rows
+  belonging to no envelope — a deleted category, one since switched to tracked,
+  an orphaned contribution. Without naming it, the sheet would show an
+  over-transfer and blame the plan for money the plan never described.
+- **`comparable:false`** on Income and Extra funds. A difference there is
+  meaningless, not zero — giving extra funds a planned figure of 0 would report
+  every gift from a spouse as an overshoot.
+
+**New runner `reconciletest.cjs`, 14 cases**, written before the UI as the spec
+required. All four documented traps are cases: extra funds are money in; a
+goal-linked untracked category is claimed by the goal line and subtracted from
+Transfers out; an installment payment is a transfer planned from the schedule;
+the same payment with `fundedCatId` is tracked spending and leaves
+`installmentTotal`. Plus the legacy `catId` goal fallback, a past bucket
+reconciling against **its** plan, and a source assertion that the function
+never mentions `editPlanForMonth`, `setData` or the clock.
+
+**Proven able to fail:** three defects injected (drop the goal subtraction,
+count a funded installment row anyway, treat extra funds as spending) turned
+five cases red.
+
+**Two runners had to be rewired.** `goaltest.cjs` and `installmenttest.cjs`
+both sliced the classifier out of its `useMemo` by text; they now drive it
+through `reconcilePeriod` with the two composed helpers stubbed. That is a
+better test than before — it exercises the shipped path rather than a fragment.
+
+**Verified in a browser at `localhost:8901`** on the sample dataset, with five
+rows seeded, one of each class. Every figure hand-checked: extra funds raised
+income and never spending; the unmatched row was named at SAR 250; the headline
+came to 22,000 + 400 − 1,500 − 2,250 − 900 = **17,750**, exactly as shown.
+
+**The independent cross-check** (the `headroomcheck.cjs` lesson — two
+expressions agreeing proves consistency, not correctness): the two planned
+figures, 10,804 + 11,196, partition Budget's own **Allocated 22,000.00**
+exactly, and Budget computes that from a different expression.
+
+**And the rule that matters most held:** paging back to July and opening the
+sheet left `monthlyPlans` empty. Viewing a past period still materialises no
+plan.
+
+## 🗂 5b, salary reconciliation — the spec, for the record (BUILT v1.47.0)
 
 The Purchase Advisor is finished and engine-only (A · A2 · A3 · C1; B and C2
 were removed — see below). Nothing is half-built, so this is a clean start.

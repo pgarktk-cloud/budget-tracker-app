@@ -5,6 +5,11 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
+**In the repo, staged, NOT deployed: v1.47.0 / build `2026.08.14.0006`** —
+phase 6, salary reconciliation. All twenty-four runners green, browser-verified
+on the sample dataset with every figure hand-checked and cross-checked against
+Budget's own Allocated total.
+
 **Live: v1.46.0 / build `2026.08.14.0005`**, deployed 2026-08-14 (`621df4dd`)
 — phase 5. Confirmed on the production origin: all three version sites agree,
 all six sections are served in order, `section` is a helper and every panel
@@ -160,10 +165,31 @@ is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
 **Phases 1, 2, 3a, 3b and 4 are done. Nothing is half-built.**
 
-**Next: programme phase 6** — salary reconciliation (5b,
-v1.47.0). Phase 7 (customisable bottom navigation) is now unblocked too, since
-its Settings container exists — but **6 and 7 must not share a release**, both
-being on hourly-use tabs.
+**Next: deploy v1.47.0**, then programme phase 7 — customisable bottom
+navigation (v1.48.0). Its Settings container now exists (the empty Navigation
+section is added *with* its contents, in that phase).
+
+### v1.47.0 — the unaccounted sheet shows planned beside actual (phase 6)
+
+**Built and verified; NOT yet deployed.** Read-only over existing records —
+nothing stored, nothing derived into `data`, nothing synced.
+
+**Roadmap item 5b, the oldest carried-forward feature, is done.** New
+module-scope pure `reconcilePeriod(...)`, into which the `unaccountedParts`
+`useMemo` moved **unchanged**, so the four actual buckets keep their exact
+classification and the sheet still reconciles to the headline it always showed.
+`reconcileSentence` is the one sentence above the table.
+
+Spending and saving are reported **separately** — they net out to the same
+headline, so a single figure would call a period that overspent *and*
+under-saved by equal amounts "fine". New `unmatched` names money that left
+through no envelope at all, rather than letting the sheet blame the plan for
+it. Income and Extra funds carry `comparable:false`: a difference there is
+meaningless, not zero.
+
+New runner `reconciletest.cjs` (14 cases, written before the UI). `goaltest`
+and `installmenttest` were rewired to drive the classifier through its new
+home. **Twenty-four runners in the sweep.** Full detail in `roadmap.md`.
 
 ### v1.46.0 — Settings is six collapsed sections (programme phase 5)
 

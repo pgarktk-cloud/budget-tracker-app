@@ -48,14 +48,26 @@ assert.ok(typeof applyGoalContribution==="function","applyGoalContribution missi
 assert.ok(typeof categoryGoalFor==="function","categoryGoalFor missing from the slice");
 assert.ok(typeof goalDeadlineStatus==="function","goalDeadlineStatus missing from the slice");
 
-/* The unaccounted classifier, lifted out of its useMemo so the "goal
-   contributions are their own line" rule is asserted against the shipped
-   reducer rather than a restatement of it. */
+/* The unaccounted classifier. It moved out of its useMemo and into
+   module-scope reconcilePeriod in v1.47.0; this drives it through there, so
+   the rule is still asserted against the shipped reducer rather than a
+   restatement of it. The two helpers reconcilePeriod composes are stubbed —
+   only the ACTUAL side is under test here, and both are covered by their own
+   runners (purchasetest, installmenttest) and by reconciletest. */
 const clsCtx={};
 vm.createContext(clsCtx);
-vm.runInContext("function classify(viewMonthExpenses,goals){\n"+
-  slice("    let trackedSpend=0,untrackedTransfers=0,goalContribs=0,extraFunds=0;",
-        "  },[viewMonthExpenses,goals]);")+"\n}",clsCtx);
+vm.runInContext(
+  "function categoryEffectiveAmt(){return 0;}\n"+
+  "function derivedInstallmentRowsFor(){return [];}\n"+
+  slice("function reconcilePeriod({","\n/* The one sentence above the table")+`
+function classify(viewMonthExpenses,goals){
+  const r=reconcilePeriod({plan:null,expenses:viewMonthExpenses,goals,bucketKey:"2026-08",
+    payPeriods:{},owner:"me",installments:[],installmentPayments:[]});
+  const v=k=>r.lines.find(l=>l.key===k).actual;
+  return{trackedSpend:v("tracked"),untrackedTransfers:v("transfers"),
+         goalContribs:v("goals"),extraFunds:v("extraFunds")};
+}
+this.classify=classify;`,clsCtx);
 const{classify}=clsCtx;
 
 const NOW="2026-08-06T12:00:00.000Z";
