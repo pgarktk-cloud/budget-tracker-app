@@ -136,6 +136,29 @@ select{font:inherit;}
   animation:sheetDown .28s cubic-bezier(.22,1,.36,1) both;
 }
 .sheet-handle{display:none;}
+/* ── Sticky title bar for a LONG sheet (Settings) ──
+   .sheet is the scroll container, so a sticky child works inside it — but the
+   sheet is translucent glass, so this background must be OPAQUE or the
+   settings content scrolls visibly through the title. Negative margins let it
+   span the sheet's 18px padding; the top radius keeps it from squaring off the
+   sheet's rounded corners. z-index 2 matches .group-head, the app's only other
+   sticky, so the two can never fight.
+
+   `top:-18px`, NOT `top:0`. A sticky element pins relative to the scroller's
+   content edge, which sits 18px in because of .sheet's padding — measured in
+   the browser at exactly 19px (18 padding + 1 border). With `top:0` the header
+   parks 19px down and the settings scroll visibly through the translucent
+   strip above it. -18px pulls it flush, leaving only the sheet's own 1px
+   border showing. At rest nothing moves: the negative margin already puts it
+   there, so the offset never engages until you scroll. */
+.sheet-head{
+  position:sticky;top:-18px;z-index:2;
+  margin:-18px -18px 12px;padding:18px 18px 10px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:var(--sf);
+  border-bottom:1px solid var(--line);
+  border-radius:20px 20px 0 0;
+}
 
 
 .spin{animation:spin .9s linear infinite;}
@@ -565,6 +588,65 @@ function useScrollLock(active){
       window.scrollTo(0,scrollLockY);
     };
   },[active]);
+}
+
+/* Is any scroll-locking sheet or modal on screen right now?
+
+   The counter above is the app's one honest answer to "is an overlay open",
+   because every sheet calls useScrollLock — including ones added later, which
+   is why this is preferred over maintaining a second list of open dialogs.
+   Exposed as a function rather than the raw binding so the pull gesture reads
+   it at gesture time instead of closing over a stale value. */
+function anyOverlayOpen(){return scrollLockCount>0;}
+
+/* ── May a pull-to-refresh gesture arm from this touch? ────────────────────
+   Four independent reasons to refuse, and NO ONE OF THEM IS SUFFICIENT ALONE.
+   That is the whole lesson of the bug this was written for.
+
+   `atTop` was the original and only condition, and it LIES while a sheet is
+   open: useScrollLock pins the body with position:fixed, so window.scrollY
+   reads 0 for as long as anything is on screen. A downward drag inside a
+   scrolled Settings sheet therefore armed the gesture, and the non-passive
+   touchmove listener preventDefault()ed the sheet's own scroll — so the sheet
+   could not be scrolled back up, a pull indicator appeared over it, and
+   letting go fired a real cloud save or pull.
+
+     overlayOpen       a useScrollLock holder is mounted — the fix
+     inOverlay         the touch began inside .sheet-bg/.modal-bg/[role=dialog]
+                       — covers an overlay that does NOT lock. None do today,
+                       but any new portalled popover is one edit from being one
+     scrolledAncestor  some scrollable element between target and body is
+                       already scrolled — nested scrollers on the main page
+     atTop             the document itself is at the top
+
+   Pure and argument-only, so it is testable without a DOM; the three DOM
+   questions are answered by the caller through the two helpers below. */
+function mayArmPull({overlayOpen,inOverlay,scrolledAncestor,atTop}){
+  if(overlayOpen)return false;
+  if(inOverlay)return false;
+  if(scrolledAncestor)return false;
+  return !!atTop;
+}
+
+const PULL_OVERLAY_SELECTOR='.sheet-bg,.modal-bg,[role="dialog"]';
+function touchInOverlay(target){
+  const el=(target&&target.nodeType===1)?target:(target&&target.parentElement)||null;
+  return !!(el&&typeof el.closest==="function"&&el.closest(PULL_OVERLAY_SELECTOR));
+}
+/* Walk target → body looking for a scroll container that is ALREADY scrolled.
+   Bounded by body and it stops at the first hit. getComputedStyle per level is
+   the only reliable test — several scrollers in this app set overflow inline,
+   so a className check would miss them. Only asked once per touchstart. */
+function hasScrolledScrollableAncestor(target){
+  let el=(target&&target.nodeType===1)?target:(target&&target.parentElement)||null;
+  while(el&&el!==document.body&&el!==document.documentElement){
+    if(el.scrollTop>0){
+      const oy=getComputedStyle(el).overflowY;
+      if(oy==="auto"||oy==="scroll"||oy==="overlay")return true;
+    }
+    el=el.parentElement;
+  }
+  return false;
 }
 
 /* Wires up the a11y a .sheet-bg/.sheet dialog was missing: Escape closes it,
@@ -2828,8 +2910,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.41.0";
-const BUILD_ID="2026.08.08.0005";
+const APP_VERSION="1.42.0";
+const BUILD_ID="2026.08.14.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -6416,7 +6498,13 @@ function App(){
      Standard mobile pattern: dragging down from the very top of the page
      triggers a sync pull. pullDist drives the visible indicator; the touch
      math lives in refs so the listeners don't need to be re-attached on
-     every move (only pullDist is state, purely for rendering). ─────────── */
+     every move (only pullDist is state, purely for rendering).
+
+     The listeners are on `window` and touchmove is deliberately non-passive,
+     which makes WHEN THIS ARMS a correctness question rather than a nicety:
+     while armed it preventDefault()s the drag, so arming over somebody else's
+     scroller silently freezes it. Every arm goes through mayArmPull() at
+     module scope — read the comment there before changing this. ─────────── */
   const PULL_THRESHOLD=68,PULL_MAX=110;
   const[pullDist,setPullDist]=useState(0);
   const pullStartY=useRef(null);
@@ -6431,16 +6519,38 @@ function App(){
   const[pullPhase,setPullPhase]=useState(null);
   useEffect(()=>{
     const atTop=()=>(window.scrollY||document.documentElement.scrollTop||0)<=0;
+    /* Give up on the gesture without leaving the indicator half-drawn. */
+    const disarm=()=>{
+      pullArmed.current=false;
+      pullStartY.current=null;
+      pullDistRef.current=0;
+      setPullDist(0);
+    };
     const onStart=e=>{
-      if(!atTop()){pullArmed.current=false;return;}
+      const t=e.target;
+      /* Four questions, asked in this order; see mayArmPull at module scope
+         for why atTop() alone was never enough. */
+      if(!mayArmPull({
+        overlayOpen:anyOverlayOpen(),
+        inOverlay:touchInOverlay(t),
+        scrolledAncestor:hasScrolledScrollableAncestor(t),
+        atTop:atTop(),
+      })){disarm();return;}
       pullStartY.current=e.touches[0].clientY;
       pullArmed.current=true;
     };
     const onMove=e=>{
       if(!pullArmed.current||pullStartY.current==null)return;
-      if(!atTop()){pullArmed.current=false;pullDistRef.current=0;setPullDist(0);return;}
+      /* Re-checked on every move, not only at touchstart: a sheet can open
+         mid-drag (the FAB sits right under the thumb), and an armed gesture
+         that outlives the sheet's arrival is exactly the failure this change
+         exists to fix. atTop() is re-read for the ordinary case of the page
+         having scrolled under the finger. */
+      if(anyOverlayOpen()||!atTop()){disarm();return;}
       const dy=e.touches[0].clientY-pullStartY.current;
       if(dy<=0){pullDistRef.current=0;setPullDist(0);return;}
+      /* Reached only while still armed. The listener is non-passive, so an
+         unguarded preventDefault() here cancels somebody else's scroll. */
       e.preventDefault();
       const val=Math.min(PULL_MAX,dy*0.45);
       pullDistRef.current=val;
@@ -7605,7 +7715,12 @@ function App(){
       )}
       {/* pull-to-sync indicator — extended with the post-sync market-data
           phases (rates/quotes) a gesture-triggered pull now also runs; see
-          the pull-gesture onEnd handler above. */}
+          the pull-gesture onEnd handler above.
+
+          zIndex 38: above the FAB (35) and the bottom nav (30), BELOW
+          .sheet-bg/.modal-bg (40). It was 60, which painted the indicator over
+          an open sheet — only ever visible because the gesture could arm
+          inside one, which it no longer can. */}
       {(()=>{
         const marketBusy=pullPhase==="rates"||pullPhase==="quotes";
         const active=pullDist>0||syncing||!!pullPhase;
@@ -7621,7 +7736,7 @@ function App(){
         else if(pullDist>=PULL_THRESHOLD)label=hasUnsyncedChanges?"Release to save & sync":"Release to pull";
         else label=hasUnsyncedChanges?"Pull to save & sync":"Pull to check cloud";
         return(
-          <div style={{position:"fixed",top:0,left:0,right:0,zIndex:60,display:"flex",flexDirection:"column",
+          <div style={{position:"fixed",top:0,left:0,right:0,zIndex:38,display:"flex",flexDirection:"column",
             alignItems:"center",pointerEvents:"none",
             paddingTop:`calc(env(safe-area-inset-top) + ${Math.max(8,pullDist-30)}px)`,
             opacity:active?Math.min(1,pullDist/PULL_THRESHOLD)||(syncing||pullPhase?1:0):0,
@@ -16402,9 +16517,14 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
   return(
     <div className="sheet-bg" onClick={onClose}>
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+        {/* Sticky, so Close is reachable from the bottom of a long sheet
+            without scrolling back up. The IconButton keeps its 40×40 default
+            here on purpose — this used to override it to an 18px glyph with
+            no padding, the smallest tap target in the app, at the top of the
+            longest scroller in the app. */}
+        <div className="sheet-head">
           <h3 style={{margin:0,fontWeight:600}}>Settings</h3>
-          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
         </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Appearance</div>
         <button onClick={toggleTheme}

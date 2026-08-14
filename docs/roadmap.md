@@ -1,5 +1,74 @@
 # Implementation Roadmap
 
+## ▶ PROGRAMME — planned 2026-08-14, fifteen items in phases
+
+Planned in full on 2026-08-14. The plan file lives at
+`~/.claude/plans/this-is-a-planning-radiant-waterfall.md`, which is
+**machine-local and not in the repo** — so the phase list is reproduced here,
+and anything a future session must execute from belongs in this file.
+
+Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
+(behind new tests), then presentation. Each row is one deploy.
+
+| Phase | Version | Risk | Theme |
+|---|---|---|---|
+| 1 | **1.42.0 — DONE** | low | Pull-gesture guard + sticky Settings header |
+| 2 | — | none | `dotest.cjs` — Durable Object e2e harness (tooling only) |
+| 3a | 1.43.0 | med | `actualStarts` — tolerant readers, old writer |
+| 3b | 1.44.0 | med | `actualStarts` — stamped writer + per-key merge |
+| 4 | 1.45.0 | low | Header simplification + one sync sentence |
+| 5 | 1.46.0 | low | Settings reorganised into accordion sections |
+| 6 | 1.47.0 | med | Salary reconciliation (5b, spec below) |
+| 7 | 1.48.0 | med | Customisable bottom navigation |
+| 8 | 1.49.0 | low | Collapsible completed/healthy sections |
+| 9 | 1.50.0 | low | Purchase Advisor result hierarchy |
+| 10 | 1.51.0 | low | Focus Home mode |
+| 11 | 1.52.0 | low | Type & touch-target pass |
+| 12 | 1.53.0 | low | Draft/context preservation (add-transaction only) |
+| 13 | 1.54.0 | trivial | Trim coach mark + wording |
+| 14 | — | — | Mobile interaction review (after 1, 5, 7, 11) |
+| 15 | — | — | Architecture proposal, document only |
+
+**Must not be combined in one release:** 3b with any other synced-data change ·
+6 with 7 (both on hourly-use tabs) · 5 with 7 (ship the Settings container
+before its contents) · 11 with anything functional (hundreds of style lines) ·
+15 with anything, ever.
+
+**Decisions taken 2026-08-14, for the phases not yet built:**
+
+- **3a/3b — `actualStarts` merges as per-entry stamped records** with an
+  explicit tombstone, `{v:"YYYY-MM-DD"|null, updatedAt}`, per-key newest-wins
+  like `trimPolicy`. `trimPolicy`'s explicit-`false` trick does not transfer:
+  the value is a date, not a boolean. **It ships over two releases** because
+  `migrate()` currently deletes any non-date value from the map — an old build
+  receiving the new shape would strip every correction and push the stripped
+  copy back. 3a makes readers and `migrate()` tolerant; 3b starts writing.
+  **Do not ship 3b until both phones report 1.43.0.**
+  `mergeActualStarts` must be defined between `function mergeArrayById(` and
+  `/* Full cross-field auto-merge` — `synctest`, `mergetest` and `purchasetest`
+  all slice that region by text — and applied **after** `mergeSettingPaths`,
+  which overwrites `payPeriods.<owner>` wholesale. Sort its keys: `payPeriods`
+  is fingerprinted un-canonicalised through `...rest`, so key order is
+  load-bearing for the dirty flag.
+- **7 — nav preferences are synced per owner**, `data.navTabs` as a stamped map
+  (same shape as `trimPolicy`, so it gets the merge for free), **not** defaulted
+  in `migrate()`. The active list follows the device's remembered default person
+  (`PROFILE_KEY`), not `profile` (can be `"household"`) and not `budgetOwner`
+  (flips during ordinary Budget use) — either would rearrange the bar mid-use.
+  Home **is** removable; More renders active whenever the open tab is not among
+  the chosen five. `TAB_ORDER` stays static — it only drives slide direction.
+- **10 — Focus Home is `data.homeSettings.focusMode = {me,wife}`**, chosen
+  because `homeSettings` is already a `SETTING_PATH`: no new merge function, no
+  new backup key, no `fingerprint` touch point.
+- **11 — no new "saved idea" collection.** The Advisor already has two durable
+  exits (a Goal via `startSaving`, an Installment via `openCreate`); a record
+  that is neither is one nobody acts on. A parked idea, if ever wanted, is a
+  Goal with no monthly.
+- **12 — accordion sections in one sheet**, not sub-sheets: seven sections is
+  under the threshold where an index earns its second tap, and sub-sheets would
+  multiply the nested-scroll-lock surface that has already bitten twice. No
+  search field.
+
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 
 The Purchase Advisor is finished and engine-only (A · A2 · A3 · C1; B and C2

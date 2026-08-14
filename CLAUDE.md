@@ -453,6 +453,27 @@ saved scroll position; a per-instance one had the inner sheet's cleanup unlock
 the body while Settings was still open and jump the page to a `savedY` it read
 as 0. Don't "simplify" it back.
 
+**A scroll lock makes `window.scrollY` lie, so no window-level gesture may read
+it alone** (fixed 2026-08-14, v1.42.0). The lock pins the body with
+`position:fixed`, which pins `window.scrollY` at **0** for as long as any sheet
+is open — so pull-to-sync, whose only arm condition was `scrollY <= 0`, was
+armed inside every sheet in the app. Its `touchmove` listener is non-passive, so
+the `preventDefault()` that follows cancelled the *sheet's* own scroll: Settings
+could not be scrolled back up, the indicator painted over it, and letting go
+fired a real cloud save. Every arm now goes through module-scope **`mayArmPull`**
+and refuses on any of four grounds — `anyOverlayOpen()` (the refcount above,
+which is why it is the app's one honest "is a sheet open"), a touch target
+inside `.sheet-bg`/`.modal-bg`/`[role="dialog"]`, an already-scrolled scrollable
+ancestor, and only then `atTop()`. `onMove` re-checks the overlay every move,
+because a sheet can open mid-drag from the FAB. Pinned by `pulltest.cjs`.
+
+A long sheet's title bar goes in **`.sheet-head`**, whose `top` is **`-18px`,
+not `0`**: a sticky element pins to the scroller's content edge, which sits 19px
+in (`.sheet`'s 18px padding + 1px border), so `top:0` parks the header 19px down
+and the content scrolls visibly through the translucent strip above it. Its
+background must be an **opaque** token — `.sheet` itself is translucent glass.
+Both measured in the browser; don't re-derive them by eye.
+
 ## Numeric inputs — always `NumField`
 
 Never write `<input type="number" value={n} onChange={e=>set(Number(e.target.value))}/>`.
@@ -596,7 +617,9 @@ Bills, Household, Currency), `HIDDEN_TABS` (reachable by code only; Forecast
 sits here). `TAB_ORDER` is derived from all three, so a new tab cannot be
 added without landing in the slide-direction tracker. Labels/icons come from
 the single `TAB_META` registry (`short` is bar-only). z-index ladder:
-bottom nav 30 → FAB 35 → sheets/modals 40 → undo toast 80.
+bottom nav 30 → FAB 35 → pull-to-sync indicator 38 → sheets/modals 40 →
+undo toast 80. (The indicator was 60 until v1.42.0, which painted it over an
+open sheet — only ever visible because the gesture could arm inside one.)
 
 A tab that renders its **own** `.fab-btn` (Home, Installments) must both suppress
 the global one in `App` *and* wrap its button in `<Portal>` — `.fab-btn` is
@@ -749,7 +772,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are nineteen, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -776,7 +799,12 @@ and an error naming a collection the user has never heard of.
   BudgetView expression, per-bank withholding, the savings plan, and three
   source-structure assertions pinning "touches no synced data" and "never
   materialises a plan"; plus the options engine, cuttability, and a sweep
-  asserting no reference to the removed AI path survives anywhere in the file).
+  asserting no reference to the removed AI path survives anywhere in the file),
+  and `pulltest.cjs` (pull-to-sync may not arm inside a sheet: `mayArmPull` as a
+  pure predicate over all sixteen input combinations, plus source-structure
+  assertions pinning the wiring that lives in an `App()` effect — the arm order,
+  the mid-drag re-check before `preventDefault`, the z-index ladder, and the
+  sticky Settings header).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -792,7 +820,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  nineteen" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category

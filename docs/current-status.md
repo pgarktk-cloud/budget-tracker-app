@@ -1,12 +1,53 @@
 # Current Status
 
-_Last updated: 2026-08-08 (AI narration removed; the advisor is engine-only, v1.41.0)_
+_Last updated: 2026-08-14 (pull-to-sync no longer arms inside a sheet, v1.42.0)_
 
 ## State of play — read this first
 
-**Live and verified: v1.41.0 / build `2026.08.08.0005`** at
-https://whered-it-go.pages.dev, Worker version `d8b5b9ad`. All **nineteen**
-runners green (aitest, aiburst and c2check were deleted with the feature).
+**Built and staged, NOT YET DEPLOYED: v1.42.0 / build `2026.08.14.0001`.**
+Previously live: v1.41.0 / build `2026.08.08.0005` at
+https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
+touches no Worker code). All **twenty** runners green, including the new
+`pulltest.cjs`.
+
+**v1.42.0 is Phase 1 of a fifteen-item programme** planned 2026-08-14. The plan
+covers the Settings scroll bug (this release), `payPeriods.actualStarts`
+merging, a Durable Object test harness, salary reconciliation (5b),
+customisable bottom navigation, and a set of mobile-UX changes. The plan file is
+machine-local (`~/.claude/plans/`), so the phase list and the decisions taken
+for the unbuilt phases are reproduced at the top of `roadmap.md`.
+
+### v1.42.0 — pull-to-sync must not arm inside a sheet
+
+The bug two people hit daily: open Settings, scroll down, drag down to scroll
+back up, and the pull-to-refresh gesture fired instead — the sheet would not
+scroll, an indicator appeared over it, and a real cloud save ran.
+
+`useScrollLock` pins the body with `position:fixed`, which pins `window.scrollY`
+at 0; the gesture armed on `scrollY <= 0` and nothing else. Every arm now goes
+through module-scope `mayArmPull`, which refuses on any of four grounds. See
+`decisions.md` for why each guard is needed and why neither a unit test nor a
+source assertion would have been enough on its own.
+
+Also in this release: the Settings title/Close bar is sticky (`.sheet-head`), the
+Close button renders at `IconButton`'s 40×40 default instead of an 18px glyph
+with no padding, and the pull indicator drops from z-index 60 to 38 so it can
+never paint over a sheet.
+
+**Verified in a sandbox at `localhost:8842`** by dispatching synthetic
+`TouchEvent`s: with Settings open and scrolled, `body` is `position:fixed` and
+`window.scrollY` is 0 (the lying condition, reproduced) and the touchmoves come
+back `defaultPrevented:false` with the indicator at opacity 0. With no sheet
+open and the page at the top, the same drag arms and prevents, as it always did;
+with the page scrolled 116px it does not. **Still needs the real phones** — see
+the checklist below.
+
+**Before deploying, verify on both phones:** Settings scrolls both ways with no
+POSTs across a full 25 s autosave window; nested sheets (Settings → pay-period
+date sheet → ConfirmDialog) close without the page jumping; pull still works
+from the top of the main page; Expenses' transaction log scrolls without arming;
+Close is reachable from the bottom of Settings; 320px and large browser text;
+iOS Safari and Android Chrome, installed PWA and browser tab.
 
 **The Purchase Advisor is finished and is engine-only.** It computes concrete
 options — trim, wait, finance, spend less — shows exactly what to set aside
@@ -65,23 +106,26 @@ remaining one with a written rationale.
    `MIN_TREND_BUCKETS` = 3 completed periods. Re-check it the first period it
    appears; Home's two trend cards carry the same action.
 
-**Work, in the order it makes sense:**
+**Work — now sequenced. See the programme table at the top of `roadmap.md`;
+the entries below say what is left of each, not what order to do it in.**
 
-5. **5b — salary reconciliation** in the Expenses unaccounted sheet. Oldest
-   unstarted item and the only one with a written rationale. See `roadmap.md`,
-   and read the 5a-2 classification note it must account for.
-6. **3C-3 — `payPeriods.actualStarts` has no merge rule.** Deferred twice, and
-   blocked on a design question rather than effort: clearing an override
-   *deletes* the key, so a union merge resurrects it. `trimPolicy` solved the
-   same problem by flipping entries instead of deleting them — that is probably
-   the answer here too.
+5. **5b — salary reconciliation** in the Expenses unaccounted sheet.
+   **Programme phase 6.** See `roadmap.md`, and read the 5a-2 classification
+   note it must account for.
+6. **3C-3 — `payPeriods.actualStarts` has no merge rule.** **Programme phases
+   3a + 3b, and the design question is now answered:** per-entry stamped
+   records with an explicit tombstone, shipped over two releases so an old
+   build's `migrate()` cannot strip corrections and push the stripped copy
+   back. Details at the top of `roadmap.md`.
 7. **Retire the Worker's KV rollback mirror.** Every accepted write still
    mirrors to the three legacy KV keys so a rollback to the pre-Durable-Object
    Worker resumes cleanly. Cheap, but it is duplicated state and should not
-   become permanent by accident.
-8. **The Durable Object still has no automated test.** It needs `wrangler dev`
-   plus a harness this repo does not have. It was covered only by cutover
-   verification, and `aiburst.cjs` — the one thing that exercised `SyncRoom`
+   become permanent by accident. **Deliberately NOT part of programme phase 2** —
+   it stays until `dotest.cjs` has been trusted through a real release.
+8. **The Durable Object still has no automated test.** **Programme phase 2.**
+   It needs `wrangler dev` plus a harness this repo does not have. It was
+   covered only by cutover verification, and `aiburst.cjs` — the one thing that
+   exercised `SyncRoom`
    over HTTP — was deleted with the AI path. Do not mistake the green suite for
    coverage of `SyncRoom`.
 

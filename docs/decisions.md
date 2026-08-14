@@ -1,5 +1,63 @@
 # Architectural & Technical Decisions
 
+## A scroll lock makes the page lie about where it is (2026-08-14, v1.42.0)
+
+Two pieces of code, each correct in isolation, combining into a bug neither
+could be blamed for.
+
+`useScrollLock` pins the body with `position:fixed; top:-Npx` — the only
+approach that reliably holds the scroll position on iOS. A side effect nobody
+wrote down: **`window.scrollY` reads 0 for as long as any sheet is open.**
+
+Pull-to-sync armed on exactly one condition, `window.scrollY <= 0`. So while
+Settings was open the gesture believed the page was at the top, permanently.
+Dragging down inside a scrolled Settings sheet armed it, and because the
+`touchmove` listener is deliberately non-passive, the `preventDefault()` that
+followed cancelled **the sheet's own scroll**. Three symptoms, one cause:
+Settings could not be scrolled back up, an indicator painted over it (z-index
+60 against `.sheet-bg`'s 40), and letting go fired a real cloud save.
+
+**Three lessons, in order of how general they are.**
+
+*A derived global is not a fact.* `window.scrollY` reads like an observation of
+the world and is actually an output of whatever last touched `body.style`. Any
+window-level gesture reading it is coupled to every feature that can pin the
+body — which is 55 call sites here. The fix is not a better scroll test; it is
+asking the question you actually mean.
+
+*Belt and braces, because each guard has a different hole.* The arm now refuses
+on four grounds and **no one of them is sufficient alone**. The refcount misses
+an overlay that does not lock (none do today; the next portalled popover might).
+The target test misses a nested scroller on the main page. The nested-scroller
+test misses a sheet whose content happens to be at the top. `atTop()` is the
+one that started all this. `pulltest.cjs` case 6 asserts each guard refuses on
+its own, which is what stops a future `||` becoming an `&&`.
+
+*Re-check on every move, not only at touchstart.* A sheet can open mid-drag —
+the FAB sits under the thumb — and an armed gesture that outlives the sheet's
+arrival is the same bug through a later door.
+
+**Why a pure predicate plus source assertions, rather than either alone.**
+`mayArmPull` is module-scope and argument-only, so all sixteen input
+combinations are unit-tested without a DOM. But the wiring lives in an `App()`
+effect that no vm harness can reach, and a green test over a predicate nobody
+calls would be worthless — so the arm order, the mid-drag re-check and the
+`preventDefault` guard are pinned by source structure, the technique
+`synconnecttest.cjs` established for the `cloudConfirmedRef` guards.
+
+**Two figures that had to be measured, not reasoned about.** A sticky element
+pins to the scroller's *content* edge, so `.sheet-head { top: 0 }` parks 19px
+down — `.sheet`'s 18px padding plus its 1px border — and the settings scroll
+visibly through the translucent strip above it. `top:-18px` pulls it flush and
+leaves the border showing. Negative margins move the layout box and do **not**
+move the pin. Both numbers came out of `getBoundingClientRect` with the sheet
+open; neither was obvious from reading the CSS.
+
+Recorded as its own entry because the shape recurs: **`overflow-x:hidden` on
+`<body>` silently killed `position:sticky` app-wide** for the same reason a year
+of this file's history keeps rediscovering — a global style set for one feature
+changes the meaning of a global value another feature reads.
+
 ## Deleting a working feature is a legitimate outcome (2026-08-08, v1.41.0)
 
 The Gemini narration (Builds B and C2) was built, deployed, iterated five
