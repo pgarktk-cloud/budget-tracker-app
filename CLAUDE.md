@@ -833,6 +833,32 @@ and an error naming a collection the user has never heard of.
   has one — the narrow case a fixture would most easily miss. It proves the two
   expressions agree with each other, not that either is right: confirm one row
   against the app's own Budget tab before trusting a clean run.
+- **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
+  four times, needs four free ports and takes ~25s, so it stays out of the
+  "run all twenty" sweep. It is the **only** coverage `SyncRoom` has: every
+  other runner slices pure functions out of `index.html`, and the thing under
+  test here is the storage runtime's serialisation guarantee, not an
+  expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.
+  - **Every instance is local** (`wrangler dev` defaults to workerd+miniflare)
+    with its own throwaway `--persist-to` dir and `--var SYNC_TOKEN:test-token`.
+    **There must never be a `--remote` in it** — the room name is hardcoded
+    `"household"`, so a remote run would compare-and-swap against the real
+    document. That is also why the production cross-check is read-only: only
+    the 401 and CORS cases (4 and 9) can be run against the deployed Worker.
+  - **A rev conflict is HTTP 200**, not 409 — the client branches on
+    `conflict:true` in the body. Case 6 asserts the status explicitly so nobody
+    "corrects" it in passing and breaks every device not upgraded in lockstep.
+  - **The KV mirror is best-effort and must stay that way.** Case 11 runs a
+    whole instance with `ALLOC_KV` unbound to prove a write still succeeds.
+    Retiring the mirror rewrites that case; it is a separate change.
+  - Two traps found writing it. `spawn` needs `shell:true` (npx is a `.cmd`
+    and Node refuses to spawn one directly), and **cmd.exe strips the inner
+    quotes out of a JSON literal on the command line** — so seeding KV inline
+    delivered `{legacy:true}`, `JSON.parse` threw inside the Worker's seed, the
+    room correctly started empty, and the harness blamed the Worker for what
+    the shell had done. Values go in by `--path`. And wrangler picks a
+    different port if the requested one is busy, so the port is parsed back out
+    of its "Ready on" line rather than assumed.
 - **`samplescan.cjs`** is tooling, not a runner — it finds `sampleData()`
   records inside a real backup. **It never matches on name, and neither should
   anything else**: `defaultData()`'s seed set was authored from this user's
@@ -849,7 +875,9 @@ and an error naming a collection the user has never heard of.
   usage is in its header comment. **It answers every POST with
   `conflict:true` and stores nothing**, so a *successful* push is the one thing
   it cannot exercise: repeated POSTs while testing are that artifact, not a
-  retry loop in the app. Its `GOOD` document is also deliberately sparse, which
+  retry loop in the app. (`dotest.cjs` covers the accepted push, against the
+  real Worker — but against a local room, so it says nothing about how the app
+  behaves afterwards. The two tools do not overlap.) Its `GOOD` document is also deliberately sparse, which
   is what exposed the `migrate()` defaults gap — don't "fix" it by fattening it.
   - Three traps: `assert.deepStrictEqual` compares prototypes and therefore
     fails on anything built inside the vm — use `deepEqual`. Slice markers

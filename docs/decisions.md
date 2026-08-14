@@ -1,5 +1,45 @@
 # Architectural & Technical Decisions
 
+## Testing a Durable Object means testing the runtime, not a function (2026-08-14, `dotest.cjs`)
+
+Every other runner in this repo slices a pure function out of `index.html` and
+runs it in a `vm`. That approach cannot reach `SyncRoom` at all, and the reason
+is worth stating plainly: **the thing under test is not an expression.** The
+guarantee that makes the Durable Object worth having is that the storage
+runtime delivers events to one instance one at a time, so the read-compare-write
+in `write()` cannot interleave. There is no way to assert that by reading the
+code — the code looks equally correct with KV behind it, and with KV behind it
+it was wrong. So the harness drives the real Worker over real HTTP.
+
+**Four instances, not one.** Three of the twelve cases are about how the Worker
+behaves when its *configuration* is wrong or old — no `SYNC_TOKEN`, legacy KV
+keys to adopt, `ALLOC_KV` unbound. None of those can be reached by a request;
+each needs its own `wrangler dev` with its own config and its own throwaway
+`--persist-to` directory. That is most of the harness's 90 seconds, and it is
+the part that could not be faked.
+
+**Local only, and that is not a compromise to be fixed later.** The room name
+is hardcoded `"household"`, so there is exactly one document on the deployed
+Worker and it is the household's real one. A `--remote` run would
+compare-and-swap against it. The read-only cases (401s, CORS) were run against
+production and match local exactly; the other ten stay local unless someone
+gives the Worker a second room name, which is not worth doing for a test.
+
+**A harness is not evidence until it has failed.** Three defects were injected
+into `worker.js` — the compare-and-swap removed, `/sync/meta` returning the
+document, the KV mirror made to gate the write — and exactly the predicted five
+cases went red. A green run before that experiment would have proved only that
+the harness ran.
+
+**The finding that generalises.** Seeding the legacy KV keys with an inline JSON
+value produced a *corrupt* document, because cmd.exe strips the inner quotes.
+The Worker handled it exactly as designed — its seed catches a parse failure and
+starts empty rather than refusing service — and the harness reported the
+Worker's rev as wrong. **A test that sets up its fixture through a shell is
+testing the shell too.** The value goes in by `--path` now. It is the same shape
+as the `wrangler secret put` lesson: a non-interactive shell will accept a
+mangled or empty input and report success.
+
 ## A scroll lock makes the page lie about where it is (2026-08-14, v1.42.0)
 
 Two pieces of code, each correct in isolation, combining into a bug neither

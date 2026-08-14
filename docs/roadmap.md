@@ -13,7 +13,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | Phase | Version | Risk | Theme |
 |---|---|---|---|
 | 1 | **1.42.0 — DONE** | low | Pull-gesture guard + sticky Settings header |
-| 2 | — | none | `dotest.cjs` — Durable Object e2e harness (tooling only) |
+| 2 | **— DONE** | none | `dotest.cjs` — Durable Object e2e harness (tooling only) |
 | 3a | 1.43.0 | med | `actualStarts` — tolerant readers, old writer |
 | 3b | 1.44.0 | med | `actualStarts` — stamped writer + per-key merge |
 | 4 | 1.45.0 | low | Header simplification + one sync sentence |
@@ -68,6 +68,29 @@ before its contents) · 11 with anything functional (hundreds of style lines) ·
   under the threshold where an index earns its second tap, and sub-sheets would
   multiply the nested-scroll-lock surface that has already bitten twice. No
   search field.
+
+### Phase 2 as built (2026-08-14)
+
+All twelve planned cases, exactly as specified, 12/12 green. Four local
+`wrangler dev` instances: the ordinary path, one with no `SYNC_TOKEN`, one with
+the legacy KV keys pre-seeded, one with `ALLOC_KV` unbound. Case 8 merges
+through the shipped `tryAutoMergeAll`, sliced out of `index.html` the way
+`mergetest.cjs` does.
+
+**Proven able to fail**, which is the only thing that makes a green run mean
+anything: three defects injected into `worker.js` — the compare-and-swap
+removed, `/sync/meta` leaking the document, the KV mirror made to gate the
+write — and exactly the predicted five cases (3, 6, 7, 8, 11) went red.
+`worker.js` restored byte-identical.
+
+**The production cross-check the plan called for is only half-runnable, and
+that is inherent.** The room name is hardcoded `"household"`, so there is no
+throwaway document on the deployed Worker and no POST may be aimed at it. The
+read-only half was run and matches local exactly: 401 on all four endpoints
+with a wrong token, the allowed/disallowed/localhost origins, `Vary: Origin`,
+and the preflight's allowed headers. Everything else stays local-only unless a
+future change gives the Worker a second room name — which is not worth doing
+for a test.
 
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 

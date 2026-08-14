@@ -1,6 +1,7 @@
 # Current Status
 
-_Last updated: 2026-08-14 (pull-to-sync no longer arms inside a sheet, v1.42.0)_
+_Last updated: 2026-08-14 (programme phase 2 — `dotest.cjs`, the Durable Object
+harness; no release)_
 
 ## State of play — read this first
 
@@ -8,6 +9,8 @@ _Last updated: 2026-08-14 (pull-to-sync no longer arms inside a sheet, v1.42.0)_
 https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
 touches no Worker code). All **twenty** runners green, including the new
 `pulltest.cjs`. Confirmed on both phones against the checklist below.
+`dotest.cjs` (12/12) is **tooling, not part of the sweep** — the count stays
+twenty.
 
 **v1.42.0 is Phase 1 of a fifteen-item programme** planned 2026-08-14. The plan
 covers the Settings scroll bug (this release), `payPeriods.actualStarts`
@@ -65,9 +68,42 @@ was removed in v1.41.0** after five rounds of real use: every guard held, but
 it was a thin layer over figures the app already stated. See the session note
 and `decisions.md` — the design is in git at v1.40.0 if it is ever wanted back.
 
-**Next session: `5b — salary reconciliation`** (planned figures beside the
-actuals in `UnaccountedSheet`) — the oldest unstarted item and the only
-remaining one with a written rationale.
+**Programme phase 2 is done (2026-08-14), and it shipped nothing.**
+`dotest.cjs` is tooling: no version bump, no `index.html` change, no deploy.
+`SyncRoom` now has twelve end-to-end cases against a real local Worker, which
+is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
+
+**Next: programme phase 3a — `actualStarts` tolerant readers (v1.43.0)**, per
+the plan's ordering. `5b — salary reconciliation` is programme phase 6 and
+remains the oldest unstarted *feature*; either is a defensible start, but 3a is
+the sequenced one and is now unblocked.
+
+### v1.42.1 — no such release. Phase 2 (2026-08-14) — `dotest.cjs`
+
+The one piece of this codebase with no automated coverage now has some. Twelve
+cases over four local `wrangler dev` instances: the ordinary path (empty read,
+first write, `/sync/meta` carrying no document, the auth gate on all four
+endpoints, the 200-not-409 conflict, two simultaneous writes, merge-and-retry
+through the shipped `tryAutoMergeAll`, response shapes, malformed bodies), a
+Worker with no `SYNC_TOKEN`, one adopting the legacy KV keys, and one with
+`ALLOC_KV` unbound.
+
+**It was proven able to fail before it was believed.** Three defects injected
+into `worker.js` — compare-and-swap removed, `/sync/meta` leaking the document,
+the KV mirror made to gate the write — put exactly the predicted five cases
+(3, 6, 7, 8, 11) red; `worker.js` was restored byte-identical afterwards.
+
+**Nothing here can run against production, by design.** The room name is
+hardcoded `"household"`, so the deployed Worker has no throwaway document and
+no POST may be pointed at it. The read-only half was checked and matches local
+exactly (401s and CORS). There is no `--remote` anywhere in `dotest.cjs` and
+there must never be one.
+
+One finding worth keeping: seeding KV with an inline JSON value **silently
+produced a corrupt document**, because cmd.exe strips the inner quotes — the
+Worker then did the right thing (its seed catches the parse error and starts
+empty) and the harness blamed the Worker. Values go in by `--path` now. The
+Worker's fallback behaviour was correct throughout; only the test was wrong.
 
 ### Shipped 2026-08-08
 
@@ -129,14 +165,15 @@ the entries below say what is left of each, not what order to do it in.**
 7. **Retire the Worker's KV rollback mirror.** Every accepted write still
    mirrors to the three legacy KV keys so a rollback to the pre-Durable-Object
    Worker resumes cleanly. Cheap, but it is duplicated state and should not
-   become permanent by accident. **Deliberately NOT part of programme phase 2** —
-   it stays until `dotest.cjs` has been trusted through a real release.
-8. **The Durable Object still has no automated test.** **Programme phase 2.**
-   It needs `wrangler dev` plus a harness this repo does not have. It was
-   covered only by cutover verification, and `aiburst.cjs` — the one thing that
-   exercised `SyncRoom`
-   over HTTP — was deleted with the AI path. Do not mistake the green suite for
-   coverage of `SyncRoom`.
+   become permanent by accident. `dotest.cjs` now exists (below), but the gate
+   is unchanged: **the mirror stays until that harness has been trusted through
+   a real release** — it has not yet seen one. Retiring it rewrites case 11.
+8. ~~**The Durable Object has no automated test.**~~ **DONE 2026-08-14 —
+   programme phase 2.** `dotest.cjs`, twelve cases, 12/12. See the session note
+   below. Two things it does *not* cover, so don't over-trust it: it runs
+   against a **local** room, so it says nothing about how the app behaves after
+   a push (that is still `sandboxworker.cjs`'s job), and only its 401 and CORS
+   cases can ever be run against production.
 
 ### Known limitations and sharp edges
 
