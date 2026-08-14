@@ -1,5 +1,32 @@
 # Architectural & Technical Decisions
 
+## A merge that never converges is worse than one that loses (2026-08-14, v1.44.0)
+
+`mergeTrimPolicy` breaks a stamp tie with `>=`, i.e. **local wins**. Copying
+that into `mergeActualStarts` looked obviously right and is quietly wrong.
+
+With equal stamps and different values, "local wins" means device A's merge
+keeps A's value and device B's merge keeps B's. Each merge is a no-op *on its
+own side*, so both devices believe they have reconciled, both push, and neither
+document ever changes. That is not a lost edit — it is a permanent
+disagreement that no amount of syncing resolves, and nothing in the app would
+ever surface it.
+
+Breaking the tie from the **values** instead makes both devices compute the
+same answer, so the second sync is a no-op for a real reason. One side still
+loses its value; the difference is that the two phones agree afterwards.
+
+The odds of two edits sharing a millisecond stamp are tiny. The cost of the
+fix is one line, and the failure it removes is silent and permanent — that
+trade is worth taking every time. `mergeTrimPolicy` has the same latent flaw
+with a boolean and was deliberately left alone: no release may carry two
+synced-data changes, and that is a rule worth more than the fix.
+
+**The general form:** when choosing a merge tie-break, ask *what do the two
+devices believe after this?* — not *which value is better?* Convergence is a
+property of the pair, and a rule that reads as fair from one side ("keep what's
+mine") can be the one that guarantees they never agree.
+
 ## A shape change ships one release before anything writes it (2026-08-14, v1.43.0)
 
 `payPeriods.actualStarts` needs a merge rule: today two phones correcting

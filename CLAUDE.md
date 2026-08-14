@@ -221,16 +221,42 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   `migrate()` still sweeps genuine junk (the old `"pending"` sentinel, removed
   2026-07-31) but **must never again drop a `{v,updatedAt}` record** — doing so
   strips the other phone's corrections and pushes the stripped copy back, which
-  is data loss that looks exactly like nothing happening. v1.43.0 **reads** the
-  stamped shape and still **writes** the legacy one; that is the whole point of
-  shipping it a release ahead of the writer.
+  is data loss that looks exactly like nothing happening. v1.43.0 **read** the
+  stamped shape while still writing the legacy one; **v1.44.0 writes it**, and
+  `migrate()` upgrades a bare string in place to `{v,updatedAt:""}` — a
+  deliberate document-changing repair like the bills dedupe, costing one KV
+  write per device, once, and idempotent thereafter. That two-release split is
+  the pattern to repeat for any future shape change: **tolerance ships one
+  release before anything writes the new shape**, because the device that has
+  to cope is the one you are not deploying to.
+  Three writers, and all three must keep the tombstone rule: `withActualStart`
+  (set *and* clear — clearing writes `{v:null}`, never `delete`, because a
+  union merge cannot see a deletion and the other phone would hand the value
+  straight back), `tombstonedActualStarts` (the payday change, which clears
+  every key wholesale and must not hand back `{}` for the same reason), and
+  `migrate()`'s upgrade. The `SalaryArrivedSheet` preview config deliberately
+  stays a bare string — it is never stored, and stamping it would imply an edit
+  that hasn't happened.
+  **The map merges per key via `mergeActualStarts`**, which must live between
+  `function mergeArrayById(` and `/* Full cross-field auto-merge` (`synctest`,
+  `mergetest` and `purchasetest` all slice that region by text) and is applied
+  by `withMergedActualStarts` **after** `mergeSettingPaths` — `payPeriods.<owner>`
+  is a single `SETTING_PATH`, so that function takes one side's whole config,
+  corrections included, wholesale. Let it decide `payday`/`enabled`, then
+  re-merge only `actualStarts` on top. Keys are **sorted** (payPeriods is
+  fingerprinted un-canonicalised through `...rest`, so key order is load-bearing
+  for the dirty flag) and the object is returned **by identity** when nothing
+  moved. Unlike `mergeTrimPolicy` its stamp tie-break is by **value, not by
+  side**: "local wins ties" never converges, because each device's merge is
+  then a no-op on its own side and the two documents never agree.
   `shiftPeriod` is pure payday arithmetic and ignores overrides — identity and
   extent are different questions. Views call the `bucket*` wrappers, which hand
   the whole owner **config** down to the `period*` layer; never pass a bare
   `payday` to those. Invariants: an empty `actualStarts` short-circuits to
   the nominal answer (so untouched data costs what it always did — which is why
-  clearing an override *deletes* the key rather than storing the nominal date,
-  a rule v1.44.0 replaces with a tombstone for exactly the merge reason above);
+  clearing an override writes a *tombstone* rather than storing the nominal
+  date — and `hasLiveActualStart` is what keeps the fast path working once a
+  map holds nothing but tombstones);
   validation forbids an override crossing a whole period, which is what
   makes `periodKeyFor`'s three-candidate scan sound; and **`periodRange` must
   never read the clock** — a period's extent is a pure function of `(key,cfg)`,
@@ -354,7 +380,9 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
     an external map only because `clonePlanRecord` runs with
     `{preserveIds:true}`, so ids survive the month clone.
   - **Entries are flipped, never deleted** — a deletion cannot survive a union
-    merge (the reason `payPeriods.actualStarts` still has no merge rule).
+    merge. `payPeriods.actualStarts` learned the same lesson the hard way in
+    v1.44.0, where the value is a date rather than a boolean, so it needs an
+    explicit `{v:null}` tombstone instead of this one's explicit-`false` trick.
   - Being a map changes the eight-touch-point list below: it must **not** go in
     `BACKUP_ARRAY_KEYS` (which asserts "if present, a list"), needs no
     `CONFLICT_COLLECTIONS` or `purgeOldTombstones` entry, and gets its own
@@ -787,7 +815,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are twenty, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty-one, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -819,7 +847,14 @@ and an error naming a collection the user has never heard of.
   pure predicate over all sixteen input combinations, plus source-structure
   assertions pinning the wiring that lives in an `App()` effect — the arm order,
   the mid-drag re-check before `preventDefault`, the z-index ladder, and the
-  sticky Settings header).
+  sticky Settings header),
+  and `periodmergetest.cjs` (the per-key merge of corrected period starts:
+  different periods on different devices both survive, a clear stays cleared, a
+  newer re-correction beats an older clear, `merge(a,b)` deep-equals
+  `merge(b,a)` **including key order**, unstamped legacy entries lose to any
+  edit, a v1.43.0 document merges with a v1.44.0 one, `payday`/`enabled` still
+  resolve through `mergeSettingPaths` untouched, and an unchanged map is
+  returned by identity).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -835,7 +870,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  twenty" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty-one" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -850,7 +885,7 @@ and an error naming a collection the user has never heard of.
   against the app's own Budget tab before trusting a clean run.
 - **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
   four times, needs four free ports and takes ~25s, so it stays out of the
-  "run all twenty" sweep. It is the **only** coverage `SyncRoom` has: every
+  "run all twenty-one" sweep. It is the **only** coverage `SyncRoom` has: every
   other runner slices pure functions out of `index.html`, and the thing under
   test here is the storage runtime's serialisation guarantee, not an
   expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.

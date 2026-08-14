@@ -105,6 +105,24 @@ t("collections from a NEWER build are accepted (forward compatibility)",()=>{
   assert.equal(cloudDocProblem(d),null);
 });
 
+t("stamped actualStarts entries pass the gate (v1.44.0 forward compat)",()=>{
+  /* payPeriods entries changed shape in v1.44.0: a bare "YYYY-MM-DD" became
+     {v,updatedAt}, with v:null as a tombstone for a cleared correction. The
+     gate does not inspect payPeriods today, so this passes for free — the
+     case exists so that if anyone ever adds a payPeriods check, they are told
+     immediately rather than by two healthy phones refusing each other's
+     documents. That is exactly how trimPolicy's forward-compat case earns its
+     place. Both shapes must be accepted, and for as long as any device might
+     still hold the legacy one, which is forever. */
+  const d=okDoc();
+  d.payPeriods={me:{enabled:true,payday:28,actualStarts:{
+                  "2026-08-28":{v:"2026-08-24",updatedAt:"2026-08-14T10:00:00.000Z"},
+                  "2026-07-28":{v:null,updatedAt:"2026-08-14T10:00:00.000Z"},
+                  "2026-06-28":"2026-06-26"}},
+                wife:{enabled:false,payday:1,actualStarts:{}}};
+  assert.equal(cloudDocProblem(d),null);
+});
+
 t("a non-object is refused",()=>{
   assert.ok(cloudDocProblem("{\"plans\":[]}"),"a JSON string is not a document");
   assert.ok(cloudDocProblem(42));

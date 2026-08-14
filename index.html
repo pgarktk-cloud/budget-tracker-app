@@ -1243,16 +1243,39 @@ function periodStartValidity(periodKey,cfg,dateStr){
 }
 
 /* Set / clear one period's real start. Returns a NEW payPeriods object.
-   Clearing removes the key entirely rather than storing the nominal date, so
-   "no override" and "corrected back to payday" can't drift apart, and the
-   fast path in periodKeyFor keeps working for owners with nothing recorded. */
-function withActualStart(payPeriods,owner,periodKey,value){
+
+   CLEARING WRITES A TOMBSTONE, it does not delete the key (v1.44.0). Until
+   this build it deleted, and that was correct for as long as payPeriods was
+   carried wholesale by one side of a merge. It is exactly wrong now that the
+   map merges per key: a union merge cannot see a deletion, so the other phone
+   — which still holds the old value — would hand it straight back, and a
+   cleared correction would keep coming back from the dead. Same reasoning as
+   `trimPolicy` (flipped, never deleted) and every soft-deleted collection.
+   `actualStartValue` reads {v:null} as "no override", so nothing downstream
+   can tell a tombstone from an absent key.
+
+   `now` is a parameter so tests are deterministic; the app never passes it. */
+function withActualStart(payPeriods,owner,periodKey,value,now){
   const all=payPeriods||{};
   const cfg=all[owner]||{};
-  const next={...(cfg.actualStarts||{})};
-  if(value==null)delete next[periodKey];
-  else next[periodKey]=value;
+  const cur=cfg.actualStarts||{};
+  // Nothing to clear: don't mint a tombstone for a key that never existed, or
+  // merely opening a sheet and cancelling would grow the map forever.
+  if(value==null&&!Object.prototype.hasOwnProperty.call(cur,periodKey))return all;
+  const next={...cur};
+  next[periodKey]={v:value==null?null:value,updatedAt:now||new Date().toISOString()};
   return{...all,[owner]:{...cfg,actualStarts:next}};
+}
+
+/* Changing payday makes every existing correction key stop matching any real
+   period, so they're cleared wholesale — and for the reason above that has to
+   mean tombstones, not `{}`. Handing back an empty map would let the other
+   phone resurrect the lot on the next sync. */
+function tombstonedActualStarts(map,now){
+  const stamp=now||new Date().toISOString();
+  const out={};
+  Object.keys(map||{}).sort().forEach(k=>{out[k]={v:null,updatedAt:stamp};});
+  return out;
 }
 
 /* ── Unified period helpers — these are what views actually call.
@@ -2947,8 +2970,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.43.0";
-const BUILD_ID="2026.08.14.0002";
+const APP_VERSION="1.44.0";
+const BUILD_ID="2026.08.14.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -3798,7 +3821,20 @@ function migrate(d){
        actualStartValue and treat what survives as either a real date or a
        deliberate tombstone. */
     Object.keys(as).forEach(k=>{
-      if(!isActualStartEntry(as[k]))delete as[k];
+      if(!isActualStartEntry(as[k])){delete as[k];return;}
+      /* v1.44.0 UPGRADES IN PLACE: a bare legacy string becomes a stamped
+         record so it can take part in the per-key merge. `updatedAt:""` sorts
+         oldest, so an entry nobody has touched since it was written loses to
+         any real edit — the same rule mergeSettingPaths applies to an
+         unstamped path, and the honest one: a stamp is evidence of an edit,
+         its absence is evidence of nothing.
+
+         This deliberately CHANGES the document, unlike almost every other
+         field default in this function, and so costs one KV write per device,
+         once. That is the price of the map becoming mergeable at all; the
+         bills dedupe is the same kind of exception. It is idempotent — a
+         second pass sees objects and does nothing. */
+      if(typeof as[k]==="string")as[k]={v:as[k],updatedAt:""};
     });
   });
   if(!d.quickTransferLast)d.quickTransferLast={};
@@ -4862,6 +4898,63 @@ function mergeTrimPolicy(local,remote){
   return out;
 }
 
+/* Per-key newest-wins for one owner's corrected period starts (v1.44.0).
+   Deliberately lives HERE, beside mergeTrimPolicy and inside the
+   `mergeArrayById` → `Full cross-field auto-merge` span, because synctest,
+   mergetest and purchasetest all slice that region by text — defining it with
+   the period helpers would break three runners at once. That is the mistake
+   mergeTrimPolicy's own note records; move the function, don't widen a slice.
+
+   An entry's stamp is its `updatedAt`; a legacy bare string has none and reads
+   as "" — oldest — so it loses to any real edit and wins against nothing.
+
+   The tie-break is by VALUE, not by side, which is the one thing this does
+   that mergeTrimPolicy doesn't. `local wins ties` never converges: with equal
+   stamps and different values each device would keep its own answer forever,
+   because each one's merge is a no-op on its own side. Deciding it from the
+   values themselves makes both devices reach the same document. */
+function mergeActualStarts(local,remote){
+  const l=local||{},r=remote||{};
+  const keys=[...new Set([...Object.keys(l),...Object.keys(r)])];
+  if(!keys.length)return undefined;
+  const has=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
+  const stampOf=e=>(e&&typeof e==="object"&&!Array.isArray(e))?String(e.updatedAt||""):"";
+  const out={};
+  // Sorted: payPeriods is fingerprinted un-canonicalised through ...rest, so
+  // key order is load-bearing for the dirty flag. A deterministic order is
+  // what stops a merge marking the document dirty on every single sync.
+  keys.sort().forEach(k=>{
+    if(!has(l,k)){out[k]=r[k];return;}
+    if(!has(r,k)){out[k]=l[k];return;}
+    const a=l[k],b=r[k],sa=stampOf(a),sb=stampOf(b);
+    if(sa!==sb){out[k]=sa>sb?a:b;return;}
+    out[k]=JSON.stringify(a)<=JSON.stringify(b)?a:b;
+  });
+  return out;
+}
+
+/* Apply that to a merged document, AFTER mergeSettingPaths has run.
+   `payPeriods.me` / `payPeriods.wife` are single SETTING_PATHs, so that
+   function takes one side's whole config — payday, enabled AND the corrections
+   map — wholesale. Letting it decide payday and then re-merging only
+   actualStarts on top is what turns "one device's corrections win" into "both
+   devices' corrections survive", without touching how payday resolves.
+
+   Returns the object it was given when nothing moved, so a document that has
+   never corrected a period stays byte-identical and buys no KV write. */
+function withMergedActualStarts(local,remote,out){
+  let merged=out;
+  for(const o of["me","wife"]){
+    const m=mergeActualStarts(((local.payPeriods||{})[o]||{}).actualStarts,
+                              ((remote.payPeriods||{})[o]||{}).actualStarts);
+    if(m===undefined)continue;
+    const cfg=(merged.payPeriods||{})[o]||{};
+    if(JSON.stringify(cfg.actualStarts||{})===JSON.stringify(m))continue;
+    merged={...merged,payPeriods:{...(merged.payPeriods||{}),[o]:{...cfg,actualStarts:m}}};
+  }
+  return merged;
+}
+
 /* Full cross-field auto-merge. Every record-bearing collection is merged by
    id (or by month/owner key where there's no id), so additions made on both
    devices always survive together — not just expenses. Plain settings are no
@@ -5021,7 +5114,9 @@ function tryAutoMergeAll(local,remote){
     };
     // Settings resolve per field, AFTER the record merges above — household
     // is spread there, so household.splitMine has to be applied on top.
-    return mergeSettingPaths(local,remote,merged);
+    // Then one field inside a setting resolves per KEY on top of that: see
+    // withMergedActualStarts for why it cannot be folded into either step.
+    return withMergedActualStarts(local,remote,mergeSettingPaths(local,remote,merged));
   }catch(e){return null;}
 }
 
@@ -9042,6 +9137,10 @@ function SalaryArrivedSheet({periodKey,cfg,owner,owners,expenses,heading,onClose
   const v=periodStartValidity(periodKey,cfg,date);
   const preview=useMemo(()=>{
     if(!v.ok)return null;
+    /* A bare string on purpose: this config is a PREVIEW, never stored and
+       never merged, and every reader accepts both shapes. Stamping it would
+       imply an edit that hasn't happened — the write goes through
+       withActualStart when Save is pressed, and that is what stamps. */
     const trial={...cfg,actualStarts:{...(cfg.actualStarts||{}),[periodKey]:date}};
     const{start,end}=periodRange(periodKey,trial);
     // expenses that currently sit elsewhere and would land in this period
@@ -16680,7 +16779,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                          key stops matching any real period and becomes inert
                          garbage that can never be cleared from the UI. */
                       if(corrections.length)setPpConfirm({owner:ok,repay:v,count:corrections.length,
-                        apply:()=>setPayPeriod(ok,{payday:v,actualStarts:{}})});
+                        apply:()=>setPayPeriod(ok,{payday:v,
+                          actualStarts:tombstonedActualStarts(cfg.actualStarts)})});
                       else setPayPeriod(ok,{payday:v});
                     }}
                       integer min={1} max={31} inputMode="numeric"

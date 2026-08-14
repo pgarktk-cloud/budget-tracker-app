@@ -49,6 +49,8 @@ const plain={payday:28};                       // no overrides
 const withStarts=starts=>({payday:28,actualStarts:starts});
 const TODAY=todayISO();
 const shiftDays=(str,n)=>{const d=new Date(str+"T00:00:00");d.setDate(d.getDate()+n);return dateToKey(d);};
+const STAMP="2026-08-10T12:00:00.000Z";      // the stamped-entry shape, v1.44.0
+const LATER="2026-08-11T12:00:00.000Z";
 
 console.log("pay-period date core");
 
@@ -188,14 +190,22 @@ t("a non-date override is stored verbatim — sanitising is migrate()'s job",()=
 
 t("withActualStart sets, then clears back to nominal",()=>{
   const pp={me:{payday:28,actualStarts:{}}};
-  const set=withActualStart(pp,"me","2026-08-28","2026-08-24");
-  assert.strictEqual(set.me.actualStarts["2026-08-28"],"2026-08-24");
+  const set=withActualStart(pp,"me","2026-08-28","2026-08-24",STAMP);
+  assert.deepEqual(set.me.actualStarts["2026-08-28"],{v:"2026-08-24",updatedAt:STAMP});
   assert.strictEqual(periodKeyFor("2026-08-25",set.me),"2026-08-28");
-  const cleared=withActualStart(set,"me","2026-08-28",null);
-  // the key is REMOVED, not written back as the nominal date, so "untouched"
-  // and "corrected back to payday" can never drift apart
-  assert.ok(!("2026-08-28" in cleared.me.actualStarts));
+  const cleared=withActualStart(set,"me","2026-08-28",null,LATER);
+  /* v1.44.0: clearing writes a TOMBSTONE, it no longer removes the key. A
+     deletion cannot survive a union merge — the other phone still holds the
+     old value and would hand it straight back — so "cleared" has to be
+     something the merge can see and date. Every reader goes through
+     actualStartValue, which cannot tell {v:null} from an absent key, so
+     nothing downstream changes. */
+  assert.deepEqual(cleared.me.actualStarts["2026-08-28"],{v:null,updatedAt:LATER});
   assert.strictEqual(periodKeyFor("2026-08-25",cleared.me),"2026-07-28");
+  // ...and clearing something that was never set stays a no-op, or merely
+  // opening a sheet and cancelling would grow the map forever.
+  const noop=withActualStart(pp,"me","2026-09-28",null,LATER);
+  assert.strictEqual(noop,pp,"clearing an absent key must return the same object");
 });
 
 t("withActualStart doesn't mutate the object it was given",()=>{
@@ -253,8 +263,6 @@ t("a stale calendar-month key falls back to today's period",()=>{
    correction can survive a union merge. Everything here is about the OTHER
    phone: a device on 1.43.0 must read a 1.44.0 document correctly and, above
    all, must not strip it in migrate() and push the stripped copy back. */
-
-const STAMP="2026-08-10T12:00:00.000Z";
 
 t("a stamped entry is read exactly like the bare string it replaces",()=>{
   const bare=withStarts({"2026-08-28":"2026-08-24"});
@@ -353,14 +361,30 @@ t("...and the REAL migrate() proves it on a whole document",()=>{
   assert.deepEqual(as["2026-08-28"],{v:"2026-08-24",updatedAt:STAMP},
     "a stamped entry must come through untouched, not normalised");
   assert.deepEqual(as["2026-09-28"],{v:null,updatedAt:STAMP});
-  assert.strictEqual(as["2026-10-28"],"2026-10-27",
-    "v1.43.0 reads the new shape but must not WRITE it — that is v1.44.0");
+  /* CHANGED IN v1.44.0, deliberately: 3a only READ the stamped shape, so a
+     legacy string stayed a legacy string. 3b upgrades it in place, because an
+     unstamped entry cannot take part in a per-key merge. updatedAt:"" sorts
+     oldest, so an entry nobody has touched loses to any real edit. */
+  assert.deepEqual(as["2026-10-28"],{v:"2026-10-27",updatedAt:""});
 });
 
-t("a legacy document is byte-identical through migrate — no KV write bought",()=>{
-  // Every device rewriting its document on first open costs a Cloudflare KV
-  // write for information nobody entered. The tolerance added here must be a
-  // read-side change only.
+t("the upgrade is idempotent — a second pass changes nothing",()=>{
+  // It costs one KV write per device, ONCE. If it weren't a fixed point it
+  // would cost one on every app open, on every device, forever.
+  const once=migrate(clone(withPP({"2026-08-28":"2026-08-24",
+                                   "2026-09-28":{v:null,updatedAt:STAMP}})));
+  assert.deepEqual(migrate(clone(once)).payPeriods.me.actualStarts,
+                   once.payPeriods.me.actualStarts);
+  assert.strictEqual(fingerprint(migrate(clone(once))),fingerprint(once));
+});
+
+t("an already-migrated document is a fixed point in both shapes",()=>{
+  /* In v1.43.0 this said "byte-identical — no KV write bought", because that
+     release was read-side only. v1.44.0's upgrade DOES change the document
+     once, on purpose. What must still hold is that it settles: an already
+     upgraded document, and a document that arrives already stamped from the
+     other phone, must both be fixed points, or the two devices rewrite and
+     re-sync each other forever. */
   const legacy=migrate(clone(withPP({"2026-08-28":"2026-08-24"})));
   assert.strictEqual(fingerprint(legacy),fingerprint(migrate(clone(legacy))));
   const stampedDoc=migrate(clone(withPP({"2026-08-28":{v:"2026-08-24",updatedAt:STAMP}})));

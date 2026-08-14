@@ -1,15 +1,16 @@
 # Current Status
 
-_Last updated: 2026-08-14 (phase 2 — `dotest.cjs`; phase 3a — v1.43.0,
-`actualStarts` tolerant readers, built but not yet deployed)_
+_Last updated: 2026-08-14 (phase 2 — `dotest.cjs`; phase 3a — v1.43.0, live;
+phase 3b — v1.44.0, `actualStarts` merges per key, built but not yet deployed)_
 
 ## State of play — read this first
 
+**In the repo, staged, NOT deployed: v1.44.0 / build `2026.08.14.0003`** —
+phase 3b. All twenty-one runners green, browser-verified. Deploying it is the
+next action.
+
 **Live: v1.43.0 / build `2026.08.14.0002`**, deployed 2026-08-14
-(`537a5e51`). Confirmed on the production origin: `version.json`, `index.html`
-and `sw.js` all report the same build, and `actualStartValue` is present in the
-served file. **Not yet opened on either phone** — that is the next action, and
-it is the gate on phase 3b.
+(`537a5e51`), and **confirmed on both phones** — which is what unblocked 3b.
 
 **Previously live: v1.42.0 / build `2026.08.14.0001`** at
 https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
@@ -74,6 +75,36 @@ was removed in v1.41.0** after five rounds of real use: every guard held, but
 it was a thin layer over figures the app already stated. See the session note
 and `decisions.md` — the design is in git at v1.40.0 if it is ever wanted back.
 
+### v1.44.0 — `actualStarts` merges per key (programme phase 3b)
+
+**Built and verified; NOT yet deployed.** Both phones reported v1.43.0 first,
+which was the gate.
+
+`payPeriods[owner].actualStarts` was the last synced map with no merge rule of
+its own. `payPeriods.me`/`.wife` are single `SETTING_PATH`s, so
+`mergeSettingPaths` took one side's whole config — payday, enabled *and* the
+corrections — wholesale: two people correcting two different periods on two
+phones lost one side entirely, with no conflict shown. The correction simply
+wasn't there any more and the period went back to its nominal boundary.
+
+- Clearing writes a **tombstone** (`{v:null,updatedAt}`), never a `delete` — a
+  union merge cannot see a deletion, so the other phone would hand the old
+  value straight back. Same for the payday change, which used to clear to `{}`.
+- `migrate()` **upgrades a bare string in place** to `{v,updatedAt:""}`. This
+  changes the document on purpose — one KV write per device, once, idempotent
+  after — because an unstamped entry cannot take part in a per-key merge.
+- `mergeActualStarts` + `withMergedActualStarts` run **after**
+  `mergeSettingPaths`, so payday still resolves exactly as before and only the
+  corrections map merges per key. Keys sorted; identity returned when nothing
+  moved.
+- **Tie-break is by value, not by side** — see `decisions.md`. "Local wins
+  ties" never converges.
+
+New runner `periodmergetest.cjs` (11 cases; unwiring the merge turns four red).
+`periodtest.cjs` 32 → 33, `cloudguardtest.cjs` 21 → 22. **Twenty-one runners
+in the sweep now.** All three write paths verified in a browser, plus a 20s
+no-churn check on an upgraded document.
+
 ### v1.43.0 — `actualStarts` tolerant readers (programme phase 3a)
 
 **Deployed 2026-08-14** (`537a5e51`). Readers only: nothing writes the new
@@ -107,9 +138,9 @@ Full detail in `roadmap.md`; the reasoning in `decisions.md`.
 `SyncRoom` now has twelve end-to-end cases against a real local Worker, which
 is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
-**Next: open BOTH phones and confirm each reports v1.43.0.** Phase 3b (the
-stamped writer + per-key merge) must not ship until they do — that gate is the
-entire reason 3a exists as its own release.
+**Next: deploy v1.44.0, then run the two-phone scenarios** — they are the only
+part of 3b that cannot be verified from a desktop, and they are the thing the
+release exists for. See the checklist under phase 3b in `roadmap.md`.
 
 ### v1.42.1 — no such release. Phase 2 (2026-08-14) — `dotest.cjs`
 
@@ -171,8 +202,13 @@ Worker's fallback behaviour was correct throughout; only the test was wrong.
    of C1 is silent on a fresh document. Deliberate (an advisor that opens by
    proposing you cut your rent is worse than one that says nothing), but it is
    a real first-run gap.
-2. **Open BOTH phones on v1.43.0 and confirm the version in Settings.**
-   (Deployed 2026-08-14; neither phone has opened it yet.)
+2. **Deploy v1.44.0, then run the two-phone merge scenarios.** (v1.43.0 is
+   confirmed on both phones, so the gate is satisfied and 3b may ship.) The
+   scenarios are in `roadmap.md`: different periods corrected on each phone,
+   the same done offline then reconnected one at a time, and a clear on one
+   while the other still holds the value. Watch that every period label and
+   Budget/Expenses bucket is unchanged throughout — **period identity must not
+   move.**
    This is a hard gate, not housekeeping: phase 3b starts writing the stamped
    `actualStarts` shape, and a phone still on ≤ v1.42.0 would strip it and push
    the stripped document back. Also re-check that existing corrections still
@@ -196,10 +232,10 @@ the entries below say what is left of each, not what order to do it in.**
 5. **5b — salary reconciliation** in the Expenses unaccounted sheet.
    **Programme phase 6.** See `roadmap.md`, and read the 5a-2 classification
    note it must account for.
-6. **3C-3 — `payPeriods.actualStarts` has no merge rule.** **Phase 3a is DONE
-   (v1.43.0, readers only); phase 3b is what remains** — the stamped writer and
-   `mergeActualStarts`, gated on both phones reporting v1.43.0 first. Design:
-   per-entry stamped
+6. ~~**3C-3 — `payPeriods.actualStarts` has no merge rule.**~~ **DONE — 3a
+   (v1.43.0) + 3b (v1.44.0).** It merges per key now; what remains is the
+   deploy and the two-phone scenarios in item 2. The design as built: per-entry
+   stamped
    records with an explicit tombstone, shipped over two releases so an old
    build's `migrate()` cannot strip corrections and push the stripped copy
    back. Details at the top of `roadmap.md`.

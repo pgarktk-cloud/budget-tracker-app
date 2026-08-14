@@ -15,7 +15,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 1 | **1.42.0 — DONE** | low | Pull-gesture guard + sticky Settings header |
 | 2 | **— DONE** | none | `dotest.cjs` — Durable Object e2e harness (tooling only) |
 | 3a | **1.43.0 — DONE** | med | `actualStarts` — tolerant readers, old writer |
-| 3b | 1.44.0 | med | `actualStarts` — stamped writer + per-key merge |
+| 3b | **1.44.0 — DONE** | med | `actualStarts` — stamped writer + per-key merge |
 | 4 | 1.45.0 | low | Header simplification + one sync sentence |
 | 5 | 1.46.0 | low | Settings reorganised into accordion sections |
 | 6 | 1.47.0 | med | Salary reconciliation (5b, spec below) |
@@ -127,7 +127,51 @@ correction reverted it to 31 days without touching the tombstone.
 stamped entries were stripped.** That is precisely the loss this release
 prevents, demonstrated rather than argued.
 
-**Do not ship 3b until both phones report v1.43.0.**
+**Do not ship 3b until both phones report v1.43.0.** — satisfied 2026-08-14.
+
+### Phase 3b as built (2026-08-14, v1.44.0) — NOT yet deployed
+
+`actualStarts` is now a mergeable map, and `payPeriods` no longer has a field
+that only one device can own.
+
+- **`withActualStart`** writes `{v,updatedAt}`, and a clear writes
+  `{v:null,updatedAt}` — a tombstone, never a `delete`. Clearing a key that was
+  never set returns the same object, so cancelling out of a sheet can't grow
+  the map.
+- **`tombstonedActualStarts`** — the payday change cleared everything to `{}`,
+  which the other phone would simply have handed back. It writes tombstones now.
+- **`migrate()`** upgrades a bare string to `{v,updatedAt:""}` in place.
+  Document-changing on purpose: one KV write per device, once, idempotent after.
+  `""` sorts oldest, so an untouched entry loses to any real edit.
+- **`mergeActualStarts`** — per-key newest-wins, defined in the sliced span
+  beside `mergeTrimPolicy`, applied by **`withMergedActualStarts` after**
+  `mergeSettingPaths` (which takes one side's whole `payPeriods.<owner>`
+  wholesale — that is the bug). Keys sorted; the object returned by identity
+  when nothing moved.
+- **Tie-break by value, not by side** — the one place this differs from
+  `mergeTrimPolicy`. "Local wins ties" never converges: each device's merge is
+  a no-op on its own side, so the two documents never agree. `mergeTrimPolicy`
+  has the same latent issue with a boolean; deliberately not touched here,
+  since no release may carry two synced-data changes.
+
+**`periodmergetest.cjs`, new, 11 cases** — the eight from the spec plus a
+re-correction case, an identity case and a bucketing case. Unwiring
+`withMergedActualStarts` turns four of them red, including the reported bug.
+`periodtest.cjs` 32 → 33 (two expectations **re-derived**, not re-baselined:
+clearing now tombstones, and `migrate` now upgrades). `cloudguardtest.cjs`
+21 → 22.
+
+**Verified in a browser at `localhost:8871`**, all three write paths end to
+end: a legacy document upgraded on load and was then byte-stable over 20s (no
+churn, no dirtying); setting a start wrote `{v:"2026-07-13",updatedAt:…}`;
+clearing wrote `{v:null,updatedAt:…}` and the boundary reverted; changing
+payday wrote tombstones for **both** existing keys rather than `{}`, and the
+confirm counted 1 correction, not 2 — the already-tombstoned one is correctly
+not offered.
+
+**Still to do:** deploy, then the two-phone scenarios in the spec above
+(different periods offline on each phone; clear on one while the other still
+holds it). Those cannot be run from here.
 
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 
