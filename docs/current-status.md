@@ -5,12 +5,13 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
-**In the repo, staged, NOT deployed: v1.47.0 / build `2026.08.14.0006`** —
-phase 6, salary reconciliation. All twenty-four runners green, browser-verified
-on the sample dataset with every figure hand-checked and cross-checked against
-Budget's own Allocated total.
+**Live: v1.47.0 / build `2026.08.14.0006`**, deployed 2026-08-14 (`c945dd55`)
+— phase 6. Confirmed on the production origin: all three version sites agree,
+`reconcilePeriod` and `reconcileSentence` are served, the old `useMemo`
+classifier is gone and the unmatched line is present. Worker untouched
+(`d8b5b9ad`).
 
-**Live: v1.46.0 / build `2026.08.14.0005`**, deployed 2026-08-14 (`621df4dd`)
+**Previously live: v1.46.0 / build `2026.08.14.0005`** (`621df4dd`)
 — phase 5. Confirmed on the production origin: all three version sites agree,
 all six sections are served in order, `section` is a helper and every panel
 starts closed. Worker untouched (`d8b5b9ad`).
@@ -165,13 +166,13 @@ is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
 **Phases 1, 2, 3a, 3b and 4 are done. Nothing is half-built.**
 
-**Next: deploy v1.47.0**, then programme phase 7 — customisable bottom
+**Next: programme phase 7** — customisable bottom
 navigation (v1.48.0). Its Settings container now exists (the empty Navigation
 section is added *with* its contents, in that phase).
 
 ### v1.47.0 — the unaccounted sheet shows planned beside actual (phase 6)
 
-**Built and verified; NOT yet deployed.** Read-only over existing records —
+**Deployed 2026-08-14** (`c945dd55`). Read-only over existing records —
 nothing stored, nothing derived into `data`, nothing synced.
 
 **Roadmap item 5b, the oldest carried-forward feature, is done.** New

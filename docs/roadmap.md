@@ -269,7 +269,7 @@ still passes** — with Settings open and scrolled 120px, `window.scrollY` reads
 0 (the lying condition) and the synthetic `touchmove` comes back
 `defaultPrevented:false` with no indicator.
 
-### Phase 6 as built (2026-08-14, v1.47.0) — NOT yet deployed
+### Phase 6 as built and deployed (2026-08-14, v1.47.0, `c945dd55`)
 
 **Item 5b, the oldest carried-forward feature, is done.** The unaccounted sheet
 now answers "did this period go the way I meant it to", not only "where did it
