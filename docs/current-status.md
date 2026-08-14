@@ -5,6 +5,10 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
+**In the repo, staged, NOT deployed: v1.46.0 / build `2026.08.14.0005`** —
+phase 5, Settings as six collapsed sections. All twenty-three runners green,
+browser-verified including the v1.42.0 pull-gesture regression check.
+
 **Live: v1.45.0 / build `2026.08.14.0004`**, deployed 2026-08-14 (`f64dec0b`)
 — phase 4, the header. Confirmed on the production origin: all three version
 sites agree, `SyncSheet` and `syncPill` are present, and the old instruction
@@ -155,11 +159,34 @@ is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
 **Phases 1, 2, 3a, 3b and 4 are done. Nothing is half-built.**
 
-**Next: programme phase 5 — Settings reorganised into accordion sections
-(v1.46.0).** It must ship before phase 7 (customisable bottom navigation): the
-Settings container comes before its contents. **Phase 5 reworks Settings, so
-the v1.42.0 pull-gesture checklist above is its regression list** — nested
-sheets, scrolling both ways, and Close reachable from the bottom.
+**Next: deploy v1.46.0**, then programme phase 6 — salary reconciliation (5b,
+v1.47.0). Phase 7 (customisable bottom navigation) is now unblocked too, since
+its Settings container exists — but **6 and 7 must not share a release**, both
+being on hourly-use tabs.
+
+### v1.46.0 — Settings is six collapsed sections (programme phase 5)
+
+**Built and verified; NOT yet deployed.** Only JSX moved — no data model, no
+sync, no behaviour change.
+
+Eleven flat headings became six sections, and Settings now opens at **380px, a
+single screen that does not scroll at all** until you open one. Navigation is
+deliberately absent until phase 7 gives it contents.
+
+Three traps, all invisible to a parse check: `section` is a render **helper**
+(a component declared inside a component remounts the subtree and every input
+loses focus per keystroke); nested dialogs live **outside** every section (a
+collapsing section would unmount an open sheet and leave `useScrollLock`
+holding the body); and the flash message and sync errors render **above** the
+sections, because someone who cannot see the error cannot know which section to
+open.
+
+One deliberate behaviour change: the pre-cloud restore slots moved to Backup &
+restore, so they now show on an unconnected device too — correct, since an
+import creates a slot with no cloud involved.
+
+New runner `settingstest.cjs` (7 cases). **Twenty-three runners in the sweep.**
+Full detail in `roadmap.md`.
 
 ### v1.45.0 — the header carries one sync control (programme phase 4)
 

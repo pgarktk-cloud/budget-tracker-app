@@ -474,6 +474,38 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   Not-tracked-style toggle pills), `.seg-control`/`.seg-indicator`
   (fixed-width animated segmented control, see `HomeProfileToggle`).
 
+## Accordions — a section that collapses UNMOUNTS its children
+
+Settings is six collapsed sections since v1.46.0 (`InstallmentsView` has had
+the same pattern for longer). Three rules, none of which a parse check catches:
+
+- **The section renderer must be a HELPER, not a component.** `const
+  section=(id,title,children)=>(…)` returning JSX is fine; `function Section(){}`
+  or `const Section=()=>{}` declared *inside* the component is not — React sees
+  a new type on every render and remounts the whole subtree, so every input in
+  that panel loses focus on each keystroke. The bug is invisible until someone
+  types.
+- **No dialog may live inside a section body.** Collapsing unmounts it, which
+  skips its cleanup — and `useScrollLock` is refcounted, so an unmounted-while-
+  open sheet leaves the body pinned forever with nothing visible to close.
+  Render sheets as siblings of the panel list, where `SalaryArrivedSheet`, the
+  `ConfirmDialog`s and `ImportPreviewSheet` already are.
+- **Anything that reports a failure belongs OUTSIDE the sections.** A person
+  who cannot see the error cannot know which section to open to fix it. The
+  flash message and the sync-error line render above the accordion, and the
+  error line opens the relevant section itself.
+
+Expansion state is plain local `useState`, **never synced** — which panel you
+left open is about this screen, not about the household (same reasoning as
+`VIEW_PROFILE_KEY`). Default every section closed, or the sheet opens long and
+the reorganisation buys nothing.
+
+**A big JSX move is done by asserted line ranges, not string matching.** Phase 5
+moved ~500 lines inside a 460-line component with a script that mapped each
+block, asserted every boundary line still contained its expected heading,
+checked each source line was used exactly once, and wrote **once** at the end.
+Matching 100-line JSX strings is how an edit half-applies.
+
 ## Modals / sheets — always Portal them
 
 Every `.sheet-bg` overlay rendered from inside a tab view **must** be wrapped
@@ -846,7 +878,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are twenty-two, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty-three, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -891,6 +923,10 @@ and an error naming a collection the user has never heard of.
   `setData`/`fetch`/`KVSync`, it is mounted after `</TabPane>`, every prop its
   body names is passed at the mount site, income is display-only *and* still
   editable in Budget, and every sync label fits a 320px header).
+  and `settingstest.cjs` (the Settings accordion: all eleven headings survive
+  the move, six sections all closed by default, `section` is a render helper and
+  not a component, `useScrollLock` is taken exactly once, every nested dialog
+  sits after the last section, and errors render above the sections).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -906,7 +942,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  twenty-two" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty-three" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -921,7 +957,7 @@ and an error naming a collection the user has never heard of.
   against the app's own Budget tab before trusting a clean run.
 - **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
   four times, needs four free ports and takes ~25s, so it stays out of the
-  "run all twenty-two" sweep. It is the **only** coverage `SyncRoom` has: every
+  "run all twenty-three" sweep. It is the **only** coverage `SyncRoom` has: every
   other runner slices pure functions out of `index.html`, and the thing under
   test here is the storage runtime's serialisation guarantee, not an
   expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.

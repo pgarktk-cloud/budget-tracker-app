@@ -17,7 +17,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 3a | **1.43.0 — DONE** | med | `actualStarts` — tolerant readers, old writer |
 | 3b | **1.44.0 — DONE** | med | `actualStarts` — stamped writer + per-key merge |
 | 4 | **1.45.0 — DONE** | low | Header simplification + one sync sentence |
-| 5 | 1.46.0 | low | Settings reorganised into accordion sections |
+| 5 | **1.46.0 — DONE** | low | Settings reorganised into accordion sections |
 | 6 | 1.47.0 | med | Salary reconciliation (5b, spec below) |
 | 7 | 1.48.0 | med | Customisable bottom navigation |
 | 8 | 1.49.0 | low | Collapsible completed/healthy sections |
@@ -219,6 +219,55 @@ Also verified: the sheet opens and closes, the scroll lock releases, and the
 income tap lands on Budget with its editable field. A frozen `.sheet` entrance
 animation in the automation tab is the known backgrounded-tab artifact, not a
 regression — it is the shared `.sheet` class, unchanged by this release.
+
+### Phase 5 as built (2026-08-14, v1.46.0) — NOT yet deployed
+
+Eleven flat headings became **six collapsed sections**. Settings now opens at
+**380px — one short screen that does not scroll at all** until you open
+something. Nothing else changed: no data model, no sync, no behaviour.
+
+Sections: People & payday · Home & display · Investments · Cloud sync ·
+Backup & restore · Advanced. **Navigation is deliberately not there yet** — the
+plan lists it as empty until phase 7, and an empty accordion row is noise. Add
+it with its contents.
+
+Three things that had to be right, all of them invisible to a parse check:
+
+- **`section` is a render helper, not a component.** A component declared
+  inside a component is a new type on every render, which remounts the subtree
+  — every input in Settings would lose focus on each keystroke.
+- **Nested dialogs live outside every section.** Collapsing a section unmounts
+  its children; unmounting an open sheet skips its cleanup and leaves
+  `useScrollLock`'s refcount holding the body, freezing the page with no
+  dialog visible to close. `ImportPreviewSheet` was inside the backup block and
+  moved out to join `SalaryArrivedSheet` and the two `ConfirmDialog`s.
+- **The flash message and sync errors render above the sections.** Someone who
+  cannot see the error cannot know which section to open; the error line also
+  opens Cloud sync for you.
+
+**One behaviour change, deliberate:** the pre-cloud restore slots moved from
+Cloud sync to Backup & restore, which takes them out of the `kvReady`
+conditional. They are now visible on an unconnected device too — correct, since
+an import creates a slot with no cloud involved, and "Restore this local copy"
+is the most important recovery affordance in the app.
+
+**How it was done:** a script working on asserted LINE RANGES, composing the
+new body in memory and checking every source line is used exactly once before
+writing. Matching 100-line JSX strings is how an edit half-applies.
+
+**New runner `settingstest.cjs`, 7 cases** — all eleven headings survive, six
+sections all closed by default, `section` is not a component, `useScrollLock`
+is taken exactly once, every nested dialog sits after the last section, errors
+render above the sections, and the v1.42.0 sticky head is untouched.
+
+**Verified in a browser at `localhost:8891`:** all six sections open with the
+right contents; opening the pay-period date sheet from inside a section, then
+closing it, leaves Settings open with its section still expanded and no page
+jump; closing Settings releases the scroll lock (`body` back to `static`);
+section rows fit at 296px without wrapping. **The v1.42.0 pull-gesture check
+still passes** — with Settings open and scrolled 120px, `window.scrollY` reads
+0 (the lying condition) and the synthetic `touchmove` comes back
+`defaultPrevented:false` with no indicator.
 
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 
