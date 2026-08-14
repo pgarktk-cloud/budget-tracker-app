@@ -442,5 +442,30 @@ t("cached FX rates are OUTSIDE the fingerprint — a rate tick can't dirty the d
     "a rate moving must not change the fingerprint");
 });
 
+/* ── goalReached predicate (Phase 8, collapsible completed goals) ─────────────
+   The Goals tab folds reached goals into a per-owner "Completed" group. Pin the
+   predicate the split keys on: target>0 && saved>=target, deleted contributions
+   excluded, and an open-ended (target 0) goal never "reached". */
+const grCtx={};vm.createContext(grCtx);
+vm.runInContext(slice("function goalSavedTotal(","function purchaseAvailableStack(")+`
+this.goalSavedTotal=goalSavedTotal; this.goalReached=goalReached;`,grCtx);
+const{goalReached}=grCtx;
+const mkG=(target,...amts)=>({target,contributions:amts.map((a,i)=>({id:"c"+i,amount:a}))});
+t("goalReached: saved meeting or exceeding target counts as reached",()=>{
+  assert.equal(goalReached(mkG(1000,600,400)),true);
+  assert.equal(goalReached(mkG(1000,1200)),true);
+});
+t("goalReached: short of target is not reached",()=>{
+  assert.equal(goalReached(mkG(1000,600,300)),false);
+});
+t("goalReached: open-ended (target 0) is never reached",()=>{
+  assert.equal(goalReached(mkG(0,5000)),false);
+  assert.equal(goalReached({target:0,contributions:[]}),false);
+});
+t("goalReached: deleted contributions don't count toward reached",()=>{
+  const g={target:1000,contributions:[{id:"a",amount:1000,deletedAt:"x"},{id:"b",amount:200}]};
+  assert.equal(goalReached(g),false);
+});
+
 console.log("\n"+(fails?fails+"/"+n+" FAILED":n+"/"+n+" passed")+"\n");
 process.exit(fails?1:0);

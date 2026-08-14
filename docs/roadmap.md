@@ -19,8 +19,8 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 4 | **1.45.0 — DONE** | low | Header simplification + one sync sentence |
 | 5 | **1.46.0 — DONE** | low | Settings reorganised into accordion sections |
 | 6 | **1.47.0 — DONE** | med | Salary reconciliation (5b, spec below) |
-| 7 | **1.48.0 — BUILT, not deployed** | med | Customisable bottom navigation |
-| 8 | 1.49.0 | low | Collapsible completed/healthy sections |
+| 7 | **1.48.0 — DONE** | med | Customisable bottom navigation |
+| 8 | **1.49.0 — BUILT, not deployed** | low | Collapsible completed/healthy sections |
 | 9 | 1.50.0 | low | Purchase Advisor result hierarchy |
 | 10 | 1.51.0 | low | Focus Home mode |
 | 11 | 1.52.0 | low | Type & touch-target pass |
@@ -269,7 +269,36 @@ still passes** — with Settings open and scrolled 120px, `window.scrollY` reads
 0 (the lying condition) and the synthetic `touchmove` comes back
 `defaultPrevented:false` with no indicator.
 
-### Phase 7 as built (2026-08-14, v1.48.0) — NOT yet deployed
+### Phase 8 as built (2026-08-14, v1.49.0) — NOT yet deployed
+
+**Scope: Goals only** (confirmed with the user). The other candidates were set
+aside deliberately — Phase 10 (Focus Home) already owns the Home-card case,
+`InstallmentsView` already collapses its completed/cancelled sections, and Bills
+/ Budget were not chosen.
+
+Reached goals now fold into a per-owner **"Completed (N)"** group, collapsed by
+default, so each person's grid leads with what they're still saving for.
+
+- **Module-scope `goalReached(g)`** — `target>0 && goalSavedTotal(g)>=target`,
+  the same predicate the Home Goals summary card already uses (a target of 0 is
+  open-ended and never "reached"; deleted contributions don't count). One
+  definition, reused.
+- **`GoalsView` splits each owner's list** into `active`/`done`; active +
+  Add-goal render as before, then a chevron toggle + grid for the reached ones,
+  shown **only when any exist**. Expansion is plain local `useState`
+  (`showDone={me,wife}`), **never synced** — which group is open is a per-screen
+  preference, same reasoning as the Settings accordion and Installments sections.
+  No data-model change, no new field, no sync touch point.
+
+`goaltest.cjs` 39→43: `goalReached` reached/short/open-ended/deleted-excluded.
+All 25 runners green, parse-check clean.
+
+**Verified in a browser at `localhost:8913`** on a seeded doc (me: 1 in-progress
++ 2 reached; wife: 1 in-progress): me showed Braces + a collapsed "Completed 2";
+wife showed Car fund with **no** Completed row (0 reached); expanding revealed
+Emergency fund (100%) and Laptop (100%), fully interactive; no error boundary.
+
+### Phase 7 as built and deployed (2026-08-14, v1.48.0, `5abf277c` / commit `b2db74b`)
 
 Each person chooses and orders which five tabs sit on the bottom bar (Home
 included, and removable). The rest fall to More. Edited in a new **Navigation**

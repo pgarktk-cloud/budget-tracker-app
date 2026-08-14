@@ -1954,6 +1954,14 @@ function goalSavedTotal(g){
   return((g&&g.contributions)||[]).filter(c=>c&&!c.deletedAt)
     .reduce((a,c)=>a+(Number(c.amount)||0),0);
 }
+/* A goal is "reached" once its saved total meets its target — the same
+   predicate the Home Goals summary card uses (target>0 && saved>=target). A
+   target of 0 is an open-ended goal and is never "reached". Module scope so the
+   Goals tab and any card share one definition. */
+function goalReached(g){
+  const t=Number(g&&g.target)||0;
+  return t>0&&goalSavedTotal(g)>=t;
+}
 
 function purchaseAvailableStack({banks,goals,owner,protectedGoalIds,
                                  includedBankIds,releasedBankIds,todayStr,toBase}){
@@ -3100,8 +3108,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.48.0";
-const BUILD_ID="2026.08.14.0007";
+const APP_VERSION="1.49.0";
+const BUILD_ID="2026.08.14.0008";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -14308,6 +14316,11 @@ function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGo
   useScrollLock(!!detailModal);
   const[typePicker,setTypePicker]=useState(null);    // goalId for type picker
   useScrollLock(!!typePicker);
+  /* Reached goals fold into a per-owner "Completed" group, collapsed by default
+     so the grid leads with what's still being saved for (Phase 8). Which group
+     is open is a per-screen preference — plain local state, never synced, same
+     reasoning as the Settings accordion and InstallmentsView's sections. */
+  const[showDone,setShowDone]=useState({me:false,wife:false});
   const addDlgRef=useDialogA11y(()=>setAddModal(null),!!addModal);
   const detailDlgRef=useDialogA11y(()=>setDetailModal(null),!!detailModal);
   const typePickerDlgRef=useDialogA11y(()=>setTypePicker(null),!!typePicker);
@@ -14320,14 +14333,18 @@ function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGo
     <div style={{background:P.neuBg,borderRadius:24,padding:"14px 12px 18px",margin:"0 -4px"}}>
       {["me","wife"].map(ok=>{
         const list=goals.filter(g=>g.owner===ok);
+        const active=list.filter(g=>!goalReached(g));
+        const done=list.filter(g=>goalReached(g));
+        const doneOpen=!!showDone[ok];
+        const gridStyle={display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(148px,100%),1fr))",gap:10};
         return(
           <section key={ok} style={{marginBottom:22}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
               <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
               <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s goals</h2>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(148px,100%),1fr))",gap:10}}>
-              {list.map(g=>(
+            <div style={gridStyle}>
+              {active.map(g=>(
                 <GoalSquare key={g.id} {...{g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
               ))}
               {/* add-goal square */}
@@ -14337,6 +14354,26 @@ function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGo
                 <I.Plus size={20}/>Add goal
               </button>
             </div>
+            {/* Reached goals — collapsed by default, only shown when any exist. */}
+            {done.length>0&&(
+              <>
+                <button onClick={()=>setShowDone(s=>({...s,[ok]:!s[ok]}))} aria-expanded={doneOpen}
+                  style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:40,marginTop:12,
+                    background:"transparent",border:"none",padding:"4px 2px",
+                    color:P.neuSub,fontSize:13,fontWeight:600,textAlign:"left"}}>
+                  <I.Chevron size={13} style={{flexShrink:0,transform:doneOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+                  Completed
+                  <span style={{fontSize:11,color:P.faint,fontWeight:600}}>{done.length}</span>
+                </button>
+                {doneOpen&&(
+                  <div style={{...gridStyle,marginTop:8}}>
+                    {done.map(g=>(
+                      <GoalSquare key={g.id} {...{g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </section>
         );
       })}
