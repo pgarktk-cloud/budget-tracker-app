@@ -41,11 +41,13 @@ t("1 · every one of the eleven headings survived the move",()=>{
     .forEach(s=>assert.ok(settings.includes(s),`"${s}" is gone`));
 });
 
-t("2 · six sections, all collapsed by default",()=>{
+t("2 · seven sections, all collapsed by default",()=>{
+  // Navigation joined the six v1.46.0 sections in v1.48.0 (Phase 7), placed
+  // after Home & display since it is also a display preference.
   const ids=[...settings.matchAll(/\{section\("([a-z]+)","([^"]+)"/g)].map(m=>({id:m[1],title:m[2]}));
-  assert.strictEqual(ids.length,6,"expected six sections, got "+JSON.stringify(ids));
+  assert.strictEqual(ids.length,7,"expected seven sections, got "+JSON.stringify(ids));
   assert.deepStrictEqual(ids.map(s=>s.id),
-    ["people","home","investments","cloud","backup","advanced"]);
+    ["people","home","nav","investments","cloud","backup","advanced"]);
   /* `useState({})` — every section closed, so the sheet opens as one short
      screen. An object with any `true` in it would defeat the point. */
   assert.ok(/const\[openSec,setOpenSec\]=useState\(\{\}\);/.test(settings),

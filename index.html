@@ -680,6 +680,34 @@ function useDialogA11y(onClose,active=true){
 const PRIMARY_TABS=["home","budget","expenses","banks","investments"];
 const MORE_TABS=["networth","goals","installments","advisor","bills","household","currency"];
 const HIDDEN_TABS=["targets"];
+/* The tabs a person may put on the bottom bar (Phase 7). HIDDEN_TABS are
+   reachable by code only and are deliberately not choosable. PRIMARY_TABS is
+   also the default bar for anyone who has never customised. */
+const SELECTABLE_TABS=[...PRIMARY_TABS,...MORE_TABS];
+const NAV_BAR_SIZE=5;
+/* The five (or fewer) tabs on this device's bar for `owner`. data.navTabs is a
+   stamped per-owner map — `{me:{v:[ids],updatedAt}}`, the same {v,updatedAt}
+   shape as trimPolicy so it inherits mergeTrimPolicy — never defaulted in
+   migrate(): an absent entry means "never customised" and falls back to
+   PRIMARY_TABS. Pure: validates against the live catalogue (a tab removed from
+   the app, a duplicate, or a stored `targets` is dropped) and caps at
+   NAV_BAR_SIZE so a corrupt longer list can't overflow the bar. Falls back to
+   PRIMARY_TABS when nothing valid survives. */
+function navTabsFor(navTabs,owner){
+  const raw=navTabs&&navTabs[owner]&&Array.isArray(navTabs[owner].v)?navTabs[owner].v:null;
+  if(!raw)return PRIMARY_TABS.slice();
+  const seen={},out=[];
+  for(const id of raw){
+    if(SELECTABLE_TABS.indexOf(id)===-1||seen[id])continue;
+    seen[id]=1;out.push(id);
+    if(out.length>=NAV_BAR_SIZE)break;
+  }
+  // Fresh copy of the shared constant on fallback, so a caller that treats the
+  // result as its own (a reorder splice) can't mutate PRIMARY_TABS in place.
+  return out.length?out:PRIMARY_TABS.slice();
+}
+/* The complement — everything selectable that isn't on the bar goes in More. */
+function moreTabsFor(navList){return SELECTABLE_TABS.filter(id=>navList.indexOf(id)===-1);}
 /* Tab direction tracker so we can slide left or right.
    Every tab must appear here, including "home" — it was missing, so
    indexOf returned -1 and every transition into or out of Home computed its
@@ -3072,8 +3100,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.47.0";
-const BUILD_ID="2026.08.14.0006";
+const APP_VERSION="1.48.0";
+const BUILD_ID="2026.08.14.0007";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -4143,6 +4171,9 @@ function validateBackup(obj){
      forward-compatibility property cloudguardtest.cjs pins. */
   if(obj.trimPolicy!==undefined&&(obj.trimPolicy===null||typeof obj.trimPolicy!=="object"||Array.isArray(obj.trimPolicy)))
     errors.push(`"trimPolicy" should be an object, but it isn't.`);
+  // navTabs — same stamped map as trimPolicy, same reasoning (Phase 7).
+  if(obj.navTabs!==undefined&&(obj.navTabs===null||typeof obj.navTabs!=="object"||Array.isArray(obj.navTabs)))
+    errors.push(`"navTabs" should be an object, but it isn't.`);
   if(obj.household!==undefined&&(obj.household===null||typeof obj.household!=="object"||Array.isArray(obj.household)))
     errors.push(`"household" should be an object, but it isn't.`);
   else if(obj.household&&obj.household.expenses!==undefined&&!Array.isArray(obj.household.expenses))
@@ -4692,6 +4723,7 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
       txTemplates:(rest.txTemplates||[]).length?sortedById(rest.txTemplates):undefined,
       /* Same undefined-when-empty rule: a map, so measured by key count. */
       trimPolicy:Object.keys(rest.trimPolicy||{}).length?rest.trimPolicy:undefined,
+      navTabs:Object.keys(rest.navTabs||{}).length?rest.navTabs:undefined,
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
       history:sortedByKey(hist,h=>h.month||""),
@@ -5201,6 +5233,9 @@ function tryAutoMergeAll(local,remote){
       installmentPayments:mergeArrayById(local.installmentPayments,remote.installmentPayments),
       txTemplates:mergeArrayById(local.txTemplates,remote.txTemplates),
       trimPolicy:mergeTrimPolicy(local.trimPolicy,remote.trimPolicy),
+      /* navTabs is the same {v,updatedAt} stamped map, so per-key newest-wins
+         from mergeTrimPolicy applies unchanged (Phase 7). */
+      navTabs:mergeTrimPolicy(local.navTabs,remote.navTabs),
       monthlyPlans:mergeKeyedByTs(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
@@ -5369,7 +5404,7 @@ const TAB_META={
 /* The More sheet. Portalled for the usual containing-block reason (see
    Portal near the top) — it is opened from the bottom bar, which lives
    outside TabPane, but portalling keeps it correct if that ever changes. */
-function MoreSheet({tab,onPick,onClose}){
+function MoreSheet({tab,moreTabs,onPick,onClose}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
   return(
@@ -5383,7 +5418,7 @@ function MoreSheet({tab,onPick,onClose}){
               style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
           </div>
           <div className="more-grid">
-            {MORE_TABS.map(id=>{
+            {moreTabs.map(id=>{
               const meta=TAB_META[id],Icon=meta.icon,on=tab===id;
               return(
                 <button key={id} className="more-item" onClick={()=>onPick(id)}
@@ -5402,12 +5437,12 @@ function MoreSheet({tab,onPick,onClose}){
 
 /* Bottom bar: five primary tabs + More. Rendered outside the page container
    so it is fixed to the viewport, not to the scrolling column. */
-function BottomNav({tab,setTab,onMore}){
-  const moreActive=MORE_TABS.includes(tab);
+function BottomNav({tab,tabs,setTab,onMore}){
+  const moreActive=tabs.indexOf(tab)===-1;
   return(
     <nav className="bottom-nav" aria-label="Sections">
       <div className="bottom-nav-inner" role="tablist">
-      {PRIMARY_TABS.map(id=>{
+      {tabs.map(id=>{
         const meta=TAB_META[id],Icon=meta.icon,on=tab===id;
         return(
           <button key={id} className="bottom-nav-btn" role="tab" aria-selected={on}
@@ -5660,6 +5695,14 @@ function App(){
   const[budgetOwner,setBudgetOwner]=useState(()=>{
     try{return localStorage.getItem(PROFILE_KEY)||"me";}catch(e){return "me";}
   });
+  /* The remembered default PERSON for this device — which owner's bottom-bar
+     layout is shown (Phase 7). Distinct from budgetOwner, which flips during
+     ordinary Budget/Expenses use and would rearrange the bar mid-use, and from
+     `profile`, which can be "household". It only moves when the default profile
+     is changed in Settings (chooseDefaultProfile). Same PROFILE_KEY source. */
+  const[defaultPerson,setDefaultPerson]=useState(()=>{
+    try{return localStorage.getItem(PROFILE_KEY)||"me";}catch(e){return "me";}
+  });
   const[showProfilePicker,setShowProfilePicker]=useState(()=>{
     try{return !localStorage.getItem(PROFILE_KEY);}catch(e){return false;}
   });
@@ -5688,6 +5731,7 @@ function App(){
 
   const chooseDefaultProfile=ok=>{
     setBudgetOwner(ok);
+    setDefaultPerson(ok);       // the bottom bar follows the default person, not budgetOwner
     setProfileSynced(ok);
     try{localStorage.setItem(PROFILE_KEY,ok);}catch(e){}
     setShowProfilePicker(false);
@@ -7045,6 +7089,14 @@ function App(){
     trimPolicy:{...(d.trimPolicy||{}),
       [id]:{v:!!value,updatedAt:new Date().toISOString()}}}));
 
+  /* Bottom-bar layout for one owner (Phase 7). data.navTabs is the same stamped
+     per-owner map as trimPolicy — merged by mergeTrimPolicy, never defaulted in
+     migrate(), emitted from fingerprint only when non-empty. `list` is the
+     ordered chosen tab ids; navTabsFor validates it on read. */
+  const setNavTabs=(owner,list)=>setData(d=>({...d,
+    navTabs:{...(d.navTabs||{}),
+      [owner]:{v:[...list],updatedAt:new Date().toISOString()}}}));
+
   const removePlanForMonth=(mo,owner=budgetOwner)=>setData(d=>({
     ...d,monthlyPlans:[...(d.monthlyPlans||[]).filter(m=>!(m.month===mo&&m.owner===owner)),{month:mo,owner,planId:null,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}]
   }));
@@ -7942,6 +7994,12 @@ function App(){
   const pct=n=>plan.income>0?((Number(n)||0)/plan.income)*100:0;
   const setInvestTarget=patch=>{setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));pushImportantRef.current();};
 
+  /* Bottom-bar layout for the device's default person (Phase 7). Computed here,
+     after `data` and `defaultPerson`, so no TDZ read. navTabsFor falls back to
+     PRIMARY_TABS when uncustomised. */
+  const navList=navTabsFor(data.navTabs,defaultPerson);
+  const moreList=moreTabsFor(navList);
+
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100dvh"}}>
       {cloudWaiting&&(
@@ -8143,6 +8201,7 @@ function App(){
       {showSettings&&<SettingsModal {...{data,setData,onClose:()=>setShowSettings(false),theme,
         pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,
         preCloudSlots,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners:data.owners,toggleTheme,setPayPeriod,setActualStart,
+        setNavTabs,defaultPerson,
         onViewPendingChanges:()=>setShowPendingDiff(true),onOpenRecentlyDeleted:()=>setShowRecentlyDeleted(true),
         localRev,cloudRev,syncStatus,isOnline,lastSyncError}}/>}
       {conflict&&<ConflictModal conflict={conflict} onUseCloud={resolveUseCloud} onSaveLocalToCloud={resolveSaveLocalToCloud}/>}
@@ -8199,8 +8258,8 @@ function App(){
           style={{background:P.gr}}>
           <I.Plus size={24}/>
         </button>}
-      <BottomNav tab={tab} setTab={setTab} onMore={()=>setShowMore(true)}/>
-      {showMore&&<MoreSheet tab={tab} onClose={()=>setShowMore(false)}
+      <BottomNav tab={tab} tabs={navList} setTab={setTab} onMore={()=>setShowMore(true)}/>
+      {showMore&&<MoreSheet tab={tab} moreTabs={moreList} onClose={()=>setShowMore(false)}
         onPick={id=>{setTab(id);setShowMore(false);}}/>}
     </div>
   );
@@ -16803,7 +16862,7 @@ function SyncDiagnostics({localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,h
   );
 }
 
-function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudSlots,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
+function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvReady,setSyncTokenSet,hasUnsyncedChanges,lastCloudSavedAt,lastCloudPulledAt,changesSinceSave,syncOp,preCloudSlots,restorePreCloudBackup,importBackup,importPending,openProfilePicker,setOwnerName,owners,toggleTheme,setPayPeriod,setActualStart,setNavTabs,defaultPerson,onViewPendingChanges,onOpenRecentlyDeleted,localRev,cloudRev,syncStatus,isOnline,lastSyncError}){
   useScrollLock(true); // only ever mounted while open
   const dlgRef=useDialogA11y(onClose);
   const[confirm,setConfirm]=useState(false);
@@ -16919,6 +16978,23 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
      section you left open is about this screen, not about the household. All
      closed by default, so the sheet opens short. */
   const[openSec,setOpenSec]=useState({});
+  /* Navigation editor (Phase 7). Which owner's bar you're editing defaults to
+     this device's default person, but either can be edited from here — each
+     person's layout syncs under its own key. Chosen tabs render first in their
+     saved order (with reorder arrows), the rest below; toggling a checkbox adds
+     or removes, capped at NAV_BAR_SIZE. */
+  const[navOwner,setNavOwner]=useState(defaultPerson==="wife"?"wife":"me");
+  const navChosen=navTabsFor(data.navTabs,navOwner);
+  const navMoveNav=(id,delta)=>{
+    const arr=[...navChosen],i=arr.indexOf(id),j=i+delta;
+    if(i<0||j<0||j>=arr.length)return;
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+    setNavTabs(navOwner,arr);
+  };
+  const navToggle=id=>{
+    if(navChosen.indexOf(id)!==-1)setNavTabs(navOwner,navChosen.filter(x=>x!==id));
+    else if(navChosen.length<NAV_BAR_SIZE)setNavTabs(navOwner,[...navChosen,id]);
+  };
   const section=(id,title,children)=>{
     const isOpen=!!openSec[id];
     return(
@@ -17223,6 +17299,48 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               );
             });
           })()}
+        </div>
+        </>)}
+        {section("nav","Navigation",<>
+        <div style={{fontSize:12,color:P.faint,marginBottom:10,lineHeight:1.5}}>
+          Pick up to {NAV_BAR_SIZE} tabs for the bottom bar, in order — the rest live under More.
+          Set per person, and synced to that person's devices.
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          {["me","wife"].map(o=>(
+            <button key={o} onClick={()=>setNavOwner(o)} aria-pressed={navOwner===o}
+              style={{flex:1,borderRadius:10,padding:"7px 10px",fontSize:13,fontWeight:600,
+                background:navOwner===o?P.jade:P.sfA,color:navOwner===o?"#fff":P.sub,
+                border:`1px solid ${navOwner===o?P.jade:P.line}`}}>
+              {owners[o]||(o==="me"?"Me":"Wife")}
+            </button>
+          ))}
+        </div>
+        <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:8}}>{navChosen.length} of {NAV_BAR_SIZE} chosen</div>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {[...navChosen,...SELECTABLE_TABS.filter(id=>navChosen.indexOf(id)===-1)].map(id=>{
+            const idx=navChosen.indexOf(id),chosen=idx!==-1,meta=TAB_META[id],Icon=meta.icon;
+            const full=!chosen&&navChosen.length>=NAV_BAR_SIZE;
+            return(
+              <div key={id} style={{display:"flex",alignItems:"center",gap:10,borderRadius:10,padding:"7px 10px",
+                background:chosen?P.grS:P.sfA,border:`1px solid ${chosen?P.grS:P.line}`,opacity:full?.5:1}}>
+                <button onClick={()=>navToggle(id)} disabled={full} aria-pressed={chosen}
+                  aria-label={`${chosen?"Remove":"Add"} ${meta.label}`}
+                  style={{width:22,height:22,flexShrink:0,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",
+                    background:chosen?P.jade:"transparent",border:`1px solid ${chosen?P.jade:P.line}`,color:"#fff",padding:0}}>
+                  {chosen&&<I.Check size={14}/>}
+                </button>
+                <Icon size={16} style={{flexShrink:0,color:chosen?P.grD:P.sub}}/>
+                <span style={{flex:1,minWidth:0,fontSize:14,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{meta.label}</span>
+                {chosen&&<>
+                  <IconButton icon={I.ArrowUp} label={`Move ${meta.label} up`} onClick={()=>navMoveNav(id,-1)} size={16}
+                    disabled={idx===0} style={{color:P.sub,opacity:idx===0?.3:.7}}/>
+                  <IconButton icon={I.ArrowDown} label={`Move ${meta.label} down`} onClick={()=>navMoveNav(id,1)} size={16}
+                    disabled={idx===navChosen.length-1} style={{color:P.sub,opacity:idx===navChosen.length-1?.3:.7}}/>
+                </>}
+              </div>
+            );
+          })}
         </div>
         </>)}
         {section("investments","Investments",<>

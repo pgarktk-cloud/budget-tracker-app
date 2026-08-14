@@ -736,12 +736,26 @@ runners were green, and both are now pinned by test.
 
 ## Navigation
 
-Tabs live in three module-scope lists — `PRIMARY_TABS` (bottom bar),
-`MORE_TABS` (More sheet — Net Worth, Goals, Installments, Purchase Advisor,
-Bills, Household, Currency), `HIDDEN_TABS` (reachable by code only; Forecast
-sits here). `TAB_ORDER` is derived from all three, so a new tab cannot be
-added without landing in the slide-direction tracker. Labels/icons come from
-the single `TAB_META` registry (`short` is bar-only). z-index ladder:
+Tabs live in three module-scope lists — `PRIMARY_TABS` (the DEFAULT bottom bar),
+`MORE_TABS` (default More sheet — Net Worth, Goals, Installments, Purchase
+Advisor, Bills, Household, Currency), `HIDDEN_TABS` (reachable by code only;
+Forecast sits here). `TAB_ORDER` is derived from all three, so a new tab cannot
+be added without landing in the slide-direction tracker. Labels/icons come from
+the single `TAB_META` registry (`short` is bar-only).
+
+**Since v1.48.0 the bar is customisable per owner** (Phase 7). What actually
+renders is `navTabsFor(data.navTabs,defaultPerson)` + `moreTabsFor(...)` — not
+`PRIMARY_TABS`/`MORE_TABS` directly. `data.navTabs` is a stamped per-owner map
+(`{me:{v:[ids],updatedAt}}`, the SAME map-not-array shape and touch points as
+`trimPolicy` — reuses `mergeTrimPolicy`, `fingerprint`-when-non-empty,
+`validateBackup` object check, and is **not** defaulted in `migrate()`).
+`navTabsFor` validates against `SELECTABLE_TABS` (= PRIMARY+MORE, so `targets`
+and unknown ids are dropped), dedupes, caps at `NAV_BAR_SIZE`, and falls back to
+a **copy** of `PRIMARY_TABS`. The bar follows `defaultPerson` (seeded from
+`PROFILE_KEY`, moved only by `chooseDefaultProfile`) — deliberately not
+`budgetOwner` (flips during Budget use) or `profile` (can be `"household"`).
+The editor is the Settings **Navigation** section; `navtabtest.cjs` covers it.
+z-index ladder:
 bottom nav 30 → FAB 35 → pull-to-sync indicator 38 → sheets/modals 40 →
 undo toast 80. (The indicator was 60 until v1.42.0, which painted it over an
 open sheet — only ever visible because the gesture could arm inside one.)
@@ -897,7 +911,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are twenty-four, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty-five, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -952,6 +966,13 @@ and an error naming a collection the user has never heard of.
   against ITS plan, unmatched transfers are named, the legacy goal fallback, and
   a source assertion that the function never mentions `editPlanForMonth`,
   `setData` or the clock).
+  and `navtabtest.cjs` (customisable bottom navigation: `navTabsFor`
+  fallback/validation/dedupe/cap and its no-mutation-of-`PRIMARY_TABS`
+  guarantee, `moreTabsFor` as the exact complement, `mergeTrimPolicy` over the
+  navTabs shape, and six source-structure assertions pinning the out-of-function
+  wiring — merged in `tryAutoMergeAll`, normalised in `fingerprint`, checked in
+  `validateBackup`, NOT defaulted in `migrate`/`defaultData`, NOT in
+  `BACKUP_ARRAY_KEYS`, and `BottomNav` rendering its `tabs` prop).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -967,7 +988,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  twenty-four" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty-five" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -982,7 +1003,7 @@ and an error naming a collection the user has never heard of.
   against the app's own Budget tab before trusting a clean run.
 - **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
   four times, needs four free ports and takes ~25s, so it stays out of the
-  "run all twenty-four" sweep. It is the **only** coverage `SyncRoom` has: every
+  "run all twenty-five" sweep. It is the **only** coverage `SyncRoom` has: every
   other runner slices pure functions out of `index.html`, and the thing under
   test here is the storage runtime's serialisation guarantee, not an
   expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.

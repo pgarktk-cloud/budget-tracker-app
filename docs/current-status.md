@@ -5,6 +5,20 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
+**BUILT, not deployed: v1.48.0 / build `2026.08.14.0007`** — phase 7,
+customisable bottom navigation. Each person picks and orders which five tabs sit
+on the bar (Home removable), edited in a new **Navigation** section in Settings.
+`data.navTabs` is a stamped per-owner map mirroring `trimPolicy` exactly (reuses
+`mergeTrimPolicy`, emitted from `fingerprint` only when non-empty, checked in
+`validateBackup`, not defaulted in `migrate`). New runner `navtabtest.cjs`
+(19 cases); `settingstest.cjs` 6→7 sections; **all 25 runners green**,
+parse-check clean, and verified in a browser (default bar, editor + cap, live
+bar update on reorder, correct `{v,updatedAt}` persistence, per-owner
+separation). **Next step: deploy** —
+`node stage.cjs && npx wrangler pages deploy site --project-name=whered-it-go --branch=main`
+(Worker untouched), then confirm on both phones. See `roadmap.md` "Phase 7 as
+built".
+
 **Live: v1.47.0 / build `2026.08.14.0006`**, deployed 2026-08-14 (`c945dd55`)
 — phase 6. Confirmed on the production origin: all three version sites agree,
 `reconcilePeriod` and `reconcileSentence` are served, the old `useMemo`

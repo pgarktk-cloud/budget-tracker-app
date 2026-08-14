@@ -19,7 +19,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 4 | **1.45.0 — DONE** | low | Header simplification + one sync sentence |
 | 5 | **1.46.0 — DONE** | low | Settings reorganised into accordion sections |
 | 6 | **1.47.0 — DONE** | med | Salary reconciliation (5b, spec below) |
-| 7 | 1.48.0 | med | Customisable bottom navigation |
+| 7 | **1.48.0 — BUILT, not deployed** | med | Customisable bottom navigation |
 | 8 | 1.49.0 | low | Collapsible completed/healthy sections |
 | 9 | 1.50.0 | low | Purchase Advisor result hierarchy |
 | 10 | 1.51.0 | low | Focus Home mode |
@@ -268,6 +268,57 @@ section rows fit at 296px without wrapping. **The v1.42.0 pull-gesture check
 still passes** — with Settings open and scrolled 120px, `window.scrollY` reads
 0 (the lying condition) and the synthetic `touchmove` comes back
 `defaultPrevented:false` with no indicator.
+
+### Phase 7 as built (2026-08-14, v1.48.0) — NOT yet deployed
+
+Each person chooses and orders which five tabs sit on the bottom bar (Home
+included, and removable). The rest fall to More. Edited in a new **Navigation**
+section in Settings — the empty slot phase 5 deliberately left.
+
+- **`data.navTabs` is a stamped per-owner map**, `{me:{v:[ids],updatedAt}}` —
+  the same `{v,updatedAt}` shape as `trimPolicy`, so it reuses `mergeTrimPolicy`
+  (per-key newest-wins) for free, is emitted from `fingerprint` only when
+  non-empty, and is checked as an object in `validateBackup`. **Not** defaulted
+  in `migrate()`/`defaultData()`, **not** in `BACKUP_ARRAY_KEYS`/`_OPTIONAL_KEYS`,
+  `CONFLICT_COLLECTIONS` or `purgeOldTombstones` — the exact map-not-array
+  touch-point set `trimPolicy` established.
+- **Read through module-scope `navTabsFor(navTabs,owner)`** — validates against
+  the live catalogue (drops unknown/hidden/`targets` ids and duplicates), caps
+  at `NAV_BAR_SIZE`, and falls back to `PRIMARY_TABS` (a fresh copy, so a
+  caller's reorder can't mutate the shared constant). `moreTabsFor` is its
+  complement. `BottomNav`/`MoreSheet` render the passed-in lists; More is active
+  whenever the open tab isn't on the bar.
+- **The bar follows the device's remembered default person**, a new
+  `defaultPerson` state seeded from `PROFILE_KEY` and moved only by
+  `chooseDefaultProfile` — deliberately **not** `budgetOwner` (flips during
+  Budget use) or `profile` (can be `"household"`), either of which would
+  rearrange the bar mid-use.
+- **Editor UX:** a single checklist (chosen first, in order, with up/down
+  arrows; the rest below), a per-person Me/Wife toggle, and a "N of 5 chosen"
+  counter that disables adding a sixth. `SettingsModal` gained `setNavTabs` +
+  `defaultPerson`; the Navigation section sits after Home & display.
+
+**New runner `navtabtest.cjs`, 19 cases** — `navTabsFor` fallback/validation/
+dedupe/cap/no-mutation, `moreTabsFor` complement, `mergeTrimPolicy` over the
+navTabs shape, and six source-structure assertions pinning the out-of-function
+wiring (merge, fingerprint, validateBackup, not-in-migrate/defaults, not in
+`BACKUP_ARRAY_KEYS`, and that `BottomNav` renders its `tabs` prop).
+`settingstest.cjs` updated 6→7 sections. **All 25 runners green**, parse-check
+clean.
+
+**Verified in a browser at `localhost:8912`:** no blank screen; default bar is
+`PRIMARY_TABS`; the editor renders with the cap enforced (rows dim/disable at
+5); removing Investments + adding Goals + reordering live-updated the bar to
+Home/Budget/Expenses/Goals/Banks + More; the doc persisted
+`navTabs.me={v:[…],updatedAt}`; and editing **My wife** stored a separate entry
+and left this device's (me's) bar unchanged — the per-owner separation the
+design turns on.
+
+**Not driven against `sandboxworker.cjs`:** navTabs mirrors `trimPolicy`'s
+already-proven sync path exactly and only ever changes on explicit user action
+(no background effect touches it), so the KV-write/dirty traps the sandbox
+guards against don't apply. The two-phone merge is covered by `navtabtest` +
+the shared `mergeTrimPolicy`. Confirm on both phones after deploy anyway.
 
 ### Phase 6 as built and deployed (2026-08-14, v1.47.0, `c945dd55`)
 
