@@ -176,7 +176,7 @@ cleared when the other, still holding the old value, syncs after. Period
 identity did not move. That is the first time the corrections map has been
 proven to reconcile, and it closes roadmap item 3C-3.
 
-### Phase 4 as built (2026-08-14, v1.45.0) — NOT yet deployed
+### Phase 4 as built and deployed (2026-08-14, v1.45.0, `f64dec0b`)
 
 The header carried four controls on the right, three of which were shortcuts
 for things the app already does by itself, and a sentence that contradicted

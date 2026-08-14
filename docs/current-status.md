@@ -5,11 +5,14 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
-**In the repo, staged, NOT deployed: v1.45.0 / build `2026.08.14.0004`** —
-phase 4, the header. All twenty-two runners green, browser-verified including
-a 320px layout check. Deploying it is the next action.
+**Live: v1.45.0 / build `2026.08.14.0004`**, deployed 2026-08-14 (`f64dec0b`)
+— phase 4, the header. Confirmed on the production origin: all three version
+sites agree, `SyncSheet` and `syncPill` are present, and the old instruction
+line and header income field are both gone. Worker untouched (`d8b5b9ad`).
+**Not yet seen on either phone** — worth a look, since the header is the screen
+you see most and this is the first release to change it.
 
-**Live: v1.44.0 / build `2026.08.14.0003`**, deployed 2026-08-14 (`174db319`)
+**Previously live: v1.44.0 / build `2026.08.14.0003`** (`174db319`)
 — phase 3b. Confirmed on the production origin: all three version sites agree,
 and `mergeActualStarts`, `withMergedActualStarts`, `tombstonedActualStarts` and
 `actualStartValue` are all present in the served file. The Worker was not
@@ -152,13 +155,15 @@ is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
 **Phases 1, 2, 3a, 3b and 4 are done. Nothing is half-built.**
 
-**Next: deploy v1.45.0**, then programme phase 5 — Settings reorganised into
-accordion sections (v1.46.0). Phase 5 must ship before phase 7 (customisable
-bottom navigation): the Settings container comes before its contents.
+**Next: programme phase 5 — Settings reorganised into accordion sections
+(v1.46.0).** It must ship before phase 7 (customisable bottom navigation): the
+Settings container comes before its contents. **Phase 5 reworks Settings, so
+the v1.42.0 pull-gesture checklist above is its regression list** — nested
+sheets, scrolling both ways, and Close reachable from the bottom.
 
 ### v1.45.0 — the header carries one sync control (programme phase 4)
 
-**Built and verified; NOT yet deployed.** Presentation only — `saveToCloud`,
+**Deployed 2026-08-14** (`f64dec0b`). Presentation only — `saveToCloud`,
 `pullFromCloud` and `reconcile` were deliberately not touched.
 
 Four controls became one status pill that opens a **`SyncSheet`** (theme was
