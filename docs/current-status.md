@@ -5,13 +5,15 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
-**BUILT, not deployed: v1.49.0 / build `2026.08.14.0008`** — phase 8,
-collapsible completed goals. Reached goals (`goalReached(g)`: target>0 &&
-saved>=target) fold into a per-owner "Completed (N)" group in the Goals tab,
-collapsed by default; expansion is local state, never synced. Goals-only scope
-(confirmed with the user); no data-model or sync change. `goaltest.cjs` 39→43,
-all 25 runners green, parse-check clean, browser-verified. Not yet committed or
-deployed.
+**Live: v1.49.0 / build `2026.08.14.0008`**, deployed 2026-08-14 (`a6948556`,
+commit `d8973cf`) — phase 8, collapsible completed goals. Reached goals
+(`goalReached(g)`: target>0 && saved>=target) fold into a per-owner
+"Completed (N)" group in the Goals tab, collapsed by default; expansion is local
+state, never synced. Goals-only scope (confirmed with the user); no data-model
+or sync change. `goaltest.cjs` 39→43, all 25 runners green, parse-check clean,
+browser-verified. Confirmed on the production origin (immutable + cache-busted):
+all three version sites agree, `goalReached` and the Completed fold are served.
+Worker untouched (`d8b5b9ad`).
 
 **Live: v1.48.0 / build `2026.08.14.0007`**, deployed 2026-08-14 (`5abf277c`,
 commit `b2db74b`) — phase 7, customisable bottom navigation. Each person picks
@@ -20,11 +22,9 @@ and orders which five tabs sit on the bar (Home removable), edited in a new
 mirroring `trimPolicy` exactly (reuses `mergeTrimPolicy`, emitted from
 `fingerprint` only when non-empty, checked in `validateBackup`, not defaulted in
 `migrate`). New runner `navtabtest.cjs` (19 cases); `settingstest.cjs` 6→7
-sections. Verified on the production origin (immutable + cache-busted): all
-three version sites agree, `navTabsFor` and the Navigation section are served.
-Worker untouched (`d8b5b9ad`). **Not yet confirmed on either phone** — the
-two-phone sync check (customise on one, receive on the other) is the standard
-closeout for a synced-data change. See `roadmap.md` "Phase 7 as built".
+sections. **Confirmed on both phones (2026-08-14)** — customising the bar on one
+device is received on the other. Worker untouched (`d8b5b9ad`). See `roadmap.md`
+"Phase 7 as built".
 
 **Live: v1.47.0 / build `2026.08.14.0006`**, deployed 2026-08-14 (`c945dd55`)
 — phase 6. Confirmed on the production origin: all three version sites agree,
