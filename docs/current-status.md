@@ -5,12 +5,16 @@ phase 3b — v1.44.0, `actualStarts` merges per key, built but not yet deployed)
 
 ## State of play — read this first
 
-**In the repo, staged, NOT deployed: v1.44.0 / build `2026.08.14.0003`** —
-phase 3b. All twenty-one runners green, browser-verified. Deploying it is the
-next action.
+**Live: v1.44.0 / build `2026.08.14.0003`**, deployed 2026-08-14 (`174db319`)
+— phase 3b. Confirmed on the production origin: all three version sites agree,
+and `mergeActualStarts`, `withMergedActualStarts`, `tombstonedActualStarts` and
+`actualStartValue` are all present in the served file. The Worker was not
+touched, so `d8b5b9ad` still stands.
+**Not yet opened on either phone, and the two-phone merge scenarios have not
+been run** — that is the remaining work, and it is what the release exists for.
 
-**Live: v1.43.0 / build `2026.08.14.0002`**, deployed 2026-08-14
-(`537a5e51`), and **confirmed on both phones** — which is what unblocked 3b.
+**Previously live: v1.43.0 / build `2026.08.14.0002`** (`537a5e51`), phase 3a,
+confirmed on both phones — which is what unblocked 3b.
 
 **Previously live: v1.42.0 / build `2026.08.14.0001`** at
 https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
@@ -138,7 +142,7 @@ Full detail in `roadmap.md`; the reasoning in `decisions.md`.
 `SyncRoom` now has twelve end-to-end cases against a real local Worker, which
 is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
-**Next: deploy v1.44.0, then run the two-phone scenarios** — they are the only
+**Next: open both phones on v1.44.0, then run the two-phone scenarios** — they are the only
 part of 3b that cannot be verified from a desktop, and they are the thing the
 release exists for. See the checklist under phase 3b in `roadmap.md`.
 
@@ -202,8 +206,8 @@ Worker's fallback behaviour was correct throughout; only the test was wrong.
    of C1 is silent on a fresh document. Deliberate (an advisor that opens by
    proposing you cut your rent is worse than one that says nothing), but it is
    a real first-run gap.
-2. **Deploy v1.44.0, then run the two-phone merge scenarios.** (v1.43.0 is
-   confirmed on both phones, so the gate is satisfied and 3b may ship.) The
+2. **Open both phones on v1.44.0, then run the two-phone merge scenarios.**
+   (Deployed 2026-08-14; neither phone has opened it yet.) The
    scenarios are in `roadmap.md`: different periods corrected on each phone,
    the same done offline then reconnected one at a time, and a clear on one
    while the other still holds the value. Watch that every period label and

@@ -129,7 +129,7 @@ prevents, demonstrated rather than argued.
 
 **Do not ship 3b until both phones report v1.43.0.** — satisfied 2026-08-14.
 
-### Phase 3b as built (2026-08-14, v1.44.0) — NOT yet deployed
+### Phase 3b as built and deployed (2026-08-14, v1.44.0, `174db319`)
 
 `actualStarts` is now a mergeable map, and `payPeriods` no longer has a field
 that only one device can own.
