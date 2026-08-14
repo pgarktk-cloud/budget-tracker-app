@@ -652,6 +652,37 @@ console then shows a plausible error for the *last* edit while the earlier ones
 have vanished. Prefer the `Edit` tool for anything with awkward quoting; when
 scripting, verify with `grep` afterwards rather than trusting the exit code.
 
+## The header carries one sync control
+
+Since v1.45.0 the header is the wordmark, **one** status pill, and Settings.
+Everything else moved: theme to Settings → Appearance, Pull and "what's
+pending" into the **`SyncSheet`** the pill opens. Three rules hold it together.
+
+- **`syncPill` is the only place a sync label is decided.** Four controls each
+  deriving their own wording from the same state is how a pill could read
+  "Cloud synced" beside a badge showing a pending count. It reads
+  **worst-first** — offline is more useful than "3 pending" when both are true.
+- **`SyncSheet` owns no sync logic.** It calls `saveToCloud` / `pullFromCloud` /
+  the pending viewer unchanged, and **routes recovery to Settings rather than
+  repeating it**: restoring a pre-cloud slot overwrites the document, and a
+  destructive action with two homes eventually differs between them — the
+  reason `addContribution` was deleted. `headertest.cjs` asserts the sheet
+  contains no `setData`, `fetch`, `KVSync`, `localStorage` or `migrate`.
+- **Header copy states the rule, never an instruction.** The old line told you
+  to pull before editing and save when finished, which the app has not required
+  for a long time — and Settings said the opposite three screens away. If a
+  sentence tells someone to do something the app already does, delete it.
+
+**Nothing editable belongs in the header.** Income was a live `NumField` shown
+on every tab, one mis-tap from rewriting the plan while looking at Investments;
+it is a figure that taps through to Budget now. Before removing an editor,
+check the destination has one — `headertest.cjs` case 6 pins both halves.
+
+**A header change is a 320px change.** The right-hand controls need ~178px of a
+288px content box, so the wordmark shrinks and ellipses and no sync label may
+exceed 16 characters. Both were found by measuring in a browser after the
+runners were green, and both are now pinned by test.
+
 ## Navigation
 
 Tabs live in three module-scope lists — `PRIMARY_TABS` (bottom bar),
@@ -815,7 +846,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are twenty-one, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty-two, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -855,6 +886,11 @@ and an error naming a collection the user has never heard of.
   edit, a v1.43.0 document merges with a v1.44.0 one, `payday`/`enabled` still
   resolve through `mergeSettingPaths` untouched, and an unchanged map is
   returned by identity).
+  and `headertest.cjs` (the header and its sync sheet: the old instruction line
+  cannot come back, exactly one sync entry point, the sheet contains no
+  `setData`/`fetch`/`KVSync`, it is mounted after `</TabPane>`, every prop its
+  body names is passed at the mount site, income is display-only *and* still
+  editable in Budget, and every sync label fits a 320px header).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -870,7 +906,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  twenty-one" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty-two" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -885,7 +921,7 @@ and an error naming a collection the user has never heard of.
   against the app's own Budget tab before trusting a clean run.
 - **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
   four times, needs four free ports and takes ~25s, so it stays out of the
-  "run all twenty-one" sweep. It is the **only** coverage `SyncRoom` has: every
+  "run all twenty-two" sweep. It is the **only** coverage `SyncRoom` has: every
   other runner slices pure functions out of `index.html`, and the thing under
   test here is the storage runtime's serialisation guarantee, not an
   expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.

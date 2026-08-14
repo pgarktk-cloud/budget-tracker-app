@@ -2970,8 +2970,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.44.0";
-const BUILD_ID="2026.08.14.0003";
+const APP_VERSION="1.45.0";
+const BUILD_ID="2026.08.14.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -5357,6 +5357,7 @@ function App(){
   const[planMenu,setPlanMenu]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
   const[showPendingDiff,setShowPendingDiff]=useState(false);
+  const[showSyncSheet,setShowSyncSheet]=useState(false);   // v1.45.0 header control
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
   const[expensesFilterRequest,setExpensesFilterRequest]=useState(null); // {catNames,nonce} — Home's Savings & Investing card drill-down (Phase 4)
   const[syncMsg,setSyncMsg]=useState("");
@@ -7814,6 +7815,27 @@ function App(){
   const allocated=useMemo(()=>plan.categories.reduce((s,c)=>s+(Number(c.amount)||0),0),[plan]);
   const remaining=(Number(plan.income)||0)-allocated;
   const fmt=n=>formatMoney(n,{code:cur});
+  /* The header's ONE sync control (v1.45.0). Every state the four old controls
+     between them could express, resolved to a single label in one place — so
+     the pill, its colour, its accessible name and the sheet that opens from it
+     cannot disagree. Order matters: it reads worst-first, because "offline" is
+     more useful than "3 pending" when both are true. */
+  const syncPill=(()=>{
+    if(!kvReady)      return{label:"Not connected",bg:P.sf,fg:P.sub,bd:P.line,
+                             title:"Enter your sync passphrase in Settings to enable sync"};
+    if(syncOp==="push")return{label:"Saving…",bg:P.grS,fg:P.grD,bd:P.grS,title:"Saving to the cloud"};
+    if(syncOp==="pull")return{label:"Pulling…",bg:P.grS,fg:P.grD,bd:P.grS,title:"Fetching the latest copy"};
+    if(!isOnline)     return{label:"Offline",bg:P.sf,fg:P.sub,bd:P.line,
+                             title:"Offline — changes are saved here and will sync when you're back online"};
+    if(syncStatus==="failed")return{label:"Sync failed",bg:P.amberS,fg:P.amber,bd:P.amberS,
+                             title:`Sync failed${lastSyncError?`: ${lastSyncError}`:""}`};
+    // "Newer data available" was 140px of a 288px content box at 320px wide.
+    if(syncStatus==="stale")return{label:"Cloud is newer",bg:P.amberS,fg:P.amber,bd:P.amberS,
+                             title:"The other device has saved since this one last pulled"};
+    if(hasUnsyncedChanges)return{label:changesSinceSave?`${changesSinceSave} pending`:"Not synced",
+                             bg:P.sf,fg:P.sub,bd:P.line,title:"Saved on this device, not yet in the cloud"};
+    return{label:"Synced",bg:P.grS,fg:P.grD,bd:P.grS,title:"Everything is in the cloud"};
+  })();
   const fmt2=n=>`${cur} ${(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
   const pct=n=>plan.income>0?((Number(n)||0)/plan.income)*100:0;
   const setInvestTarget=patch=>{setData(d=>({...d,investTarget:{...(d.investTarget||{}),[budgetOwner]:{...((d.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]}),...patch}}}));pushImportantRef.current();};
@@ -7902,59 +7924,52 @@ function App(){
         {/* header */}
         <header style={{paddingTop:28,paddingBottom:16}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,color:P.gr}}>
-              <I.Wallet size={18} sw={2.2}/>
-              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase"}}>Where'dItGo</span>
+            {/* The wordmark is the one thing here that can afford to give way.
+                At 320px the pill and Settings need ~178px of the 288px content
+                box, and the wordmark at full width does not fit in what's left
+                — so it shrinks and ellipses rather than pushing the controls
+                out of the row. Measured, not guessed. */}
+            <div style={{display:"flex",alignItems:"center",gap:8,color:P.gr,minWidth:0,flexShrink:1}}>
+              <I.Wallet size={18} sw={2.2} style={{flexShrink:0}}/>
+              <span style={{fontSize:12,fontWeight:600,letterSpacing:".18em",textTransform:"uppercase",
+                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Where'dItGo</span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
-              {syncMsg&&<span style={{fontSize:11,color:P.sub}}>{syncMsg}</span>}
-              <button onClick={toggleTheme} title={theme==="dark"?"Switch to light mode":"Switch to dark mode"}
-                aria-label={theme==="dark"?"Switch to light mode":"Switch to dark mode"}
-                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
-                {theme==="dark"?<I.Sun size={17}/>:<I.Moon size={17}/>}
+            {/* ONE sync control, plus Settings. The theme toggle moved out (it
+                already exists in Settings → Appearance) and Pull moved into the
+                sheet below. Four controls competing for the right-hand side is
+                what made the header wrap on a narrow phone, and three of them
+                were shortcuts for things the app does by itself. */}
+            <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+              <button onClick={()=>setShowSyncSheet(true)} title={syncPill.title}
+                aria-label={`Sync: ${syncPill.label}. Open sync options`}
+                style={{display:"flex",alignItems:"center",gap:6,borderRadius:999,padding:"0 14px",minHeight:44,
+                  fontSize:12,fontWeight:500,whiteSpace:"nowrap",
+                  background:syncPill.bg,color:syncPill.fg,border:`1px solid ${syncPill.bd}`}}>
+                <I.Cloud size={14} style={syncOp?{animation:"spin .9s linear infinite"}:null}/>
+                {syncPill.label}
               </button>
-              <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"}
-                title={kvReady?"Pull from Cloud":"Enter your sync passphrase in Settings to enable sync"}
-                aria-label="Pull from Cloud"
-                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
-                  color:P.sub,background:"transparent",border:`1px solid ${P.line}`,opacity:kvReady?1:.5}}>
-                <I.Refresh size={14} style={syncOp==="pull"?{animation:"spin .9s linear infinite"}:null}/>
-              </button>
-              <button onClick={()=>saveToCloud()} disabled={!kvReady||syncOp==="push"}
-                title={kvReady?(!isOnline?"Offline — will sync when back online":syncStatus==="failed"?`Sync failed${lastSyncError?`: ${lastSyncError}`:""}`:hasUnsyncedChanges?"Save to Cloud":"Cloud is up to date"):"Enter your sync passphrase in Settings to enable sync"}
-                style={{position:"relative",display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"5px 10px",fontSize:12,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,
-                  background:!kvReady?P.sf:!isOnline?P.sf:syncStatus==="failed"?P.amberS:P.grS,
-                  color:!kvReady?P.sub:!isOnline?P.sub:syncStatus==="failed"?P.amber:P.grD,
-                  border:`1px solid ${!kvReady?P.line:P.grS}`,opacity:kvReady?1:.5}}>
-                <I.Cloud size={13} style={syncOp==="push"?{animation:"spin .9s linear infinite"}:null}/>
-                {syncOp==="push"?"Saving…"
-                  :!isOnline?"Offline"
-                  :syncStatus==="failed"?"Sync failed"
-                  :syncStatus==="stale"?"Newer data available"
-                  :hasUnsyncedChanges?`Save to Cloud${changesSinceSave?` (${changesSinceSave})`:""}`
-                  :"Cloud synced"}
-                {hasUnsyncedChanges&&kvReady&&syncOp!=="push"&&
-                  <span style={{position:"absolute",top:-2,right:-2,width:7,height:7,borderRadius:999,background:P.red,border:`1px solid ${P.bg}`}}/>}
-              </button>
-              {hasUnsyncedChanges&&kvReady&&
-                <button onClick={()=>setShowPendingDiff(true)} title="View what's pending" aria-label="View what's pending"
-                  style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,padding:8,
-                    color:P.sub,background:"transparent",border:`1px solid ${P.line}`}}>
-                  <I.Receipt size={14}/>
-                </button>}
-              <button onClick={()=>setShowSettings(true)} aria-label="Settings" title="Settings" style={{borderRadius:999,padding:8,color:P.sub,background:"transparent",border:"none"}}>
+              <button onClick={()=>setShowSettings(true)} aria-label="Settings" title="Settings"
+                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:999,
+                  minWidth:44,minHeight:44,color:P.sub,background:"transparent",border:"none"}}>
                 <I.Settings size={18}/>
               </button>
             </div>
           </div>
 
+          {/* One rule, not an instruction. The old line said "Pull before
+              editing on another device; Save to Cloud when finished", which
+              described a manual model the app outgrew — and Settings has said
+              the opposite ("nothing here is manual") ever since. A state line
+              replaces it when there is a state worth naming. */}
           {kvReady&&
-            <div style={{marginTop:8,fontSize:11,color:P.faint}}>
-              {!isOnline?"Offline — changes are saved on this device and will sync automatically once you're back online. "
-                :hasUnsyncedChanges?"Saved on this device — not yet in the cloud. "
-                :"Saved on this device. "}
-              {lastCloudSavedAt&&<>Last synced {lastCloudSavedAt.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}. </>}
-              Pull before editing on another device; Save to Cloud when finished.
+            <div style={{marginTop:8,fontSize:11,color:P.faint,lineHeight:1.5}}>
+              {!isOnline?"Offline — saved on this device, and it'll sync by itself once you're back online."
+                :syncStatus==="failed"?"The last sync didn't go through. Tap the status pill to try again."
+                :<>
+                  {hasUnsyncedChanges?"Saved on this device — syncing automatically. ":
+                    "Changes save on this device immediately and sync automatically when online. "}
+                  {lastCloudSavedAt&&<>Last synced {lastCloudSavedAt.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}.</>}
+                </>}
             </div>}
 
           <div style={{marginTop:16,display:"flex",flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between",gap:16}}>
@@ -7962,15 +7977,24 @@ function App(){
               <I.Wallet size={13}/>
               <span style={{fontSize:12}}>{data.owners?.me||"Me"} &amp; {data.owners?.wife||"Wife"}</span>
             </div>
-            <div style={{textAlign:"right"}}>
+            {/* Display-only. It was a live NumField sitting in the header of
+                every tab — an editable figure nobody set out to edit, one
+                mis-tap from rewriting the plan's income while looking at
+                Investments. Editing lives in Budget, which is where the number
+                means something, so this navigates there instead. */}
+            <button onClick={()=>setTab("budget")} aria-label={`Income ${fmt(plan.income)} — open Budget`}
+              style={{textAlign:"right",background:"transparent",border:"none",padding:"4px 0",minHeight:44}}>
               <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".1em"}}>Income</div>
               <div style={{display:"flex",alignItems:"baseline",gap:6,justifyContent:"flex-end"}}>
                 <span style={{fontSize:14,color:P.sub}}>{cur}</span>
-                <NumField value={plan.income} onCommit={v=>patchPlan({income:v})} min={0}
-                  onBlur={()=>pushImportantRef.current()}
-                  className="bare tnum serif" style={{fontSize:30,fontWeight:600,width:170,textAlign:"right",color:P.ink}}/>
+                <span className="tnum serif" style={{fontSize:30,fontWeight:600,color:P.ink}}>
+                  {(Number(plan.income)||0).toLocaleString("en-US",{maximumFractionDigits:0})}
+                </span>
               </div>
-            </div>
+              <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                {plan.name||"Plan"} · {data.owners?.[budgetOwner]||(budgetOwner==="me"?"Me":"Wife")}
+              </div>
+            </button>
           </div>
         </header>
 
@@ -8034,6 +8058,18 @@ function App(){
           <button onClick={()=>setAdoptedSettingsNote(false)}
             style={{border:"none",background:"transparent",color:P.jade,fontWeight:600,fontSize:12,padding:"4px 2px"}}>Got it</button>
         </div>}
+      {/* Rendered here, at App level, NOT inside the header. The header sits
+          inside the content column; a `position:fixed` overlay rendered from
+          there is fine today only because the column is not the animated
+          TabPane — and that is far too subtle a thing to rely on. Every other
+          App-level modal lives on this list for the same reason. */}
+      {showSyncSheet&&<SyncSheet onClose={()=>setShowSyncSheet(false)}
+        {...{kvReady,isOnline,syncOp,syncStatus,syncMsg,lastSyncError,hasUnsyncedChanges,
+             changesSinceSave,lastCloudSavedAt,lastCloudPulledAt,localRev,cloudRev}}
+        onSave={()=>{setShowSyncSheet(false);saveToCloud();}}
+        onPull={()=>{setShowSyncSheet(false);pullFromCloud();}}
+        onViewPending={()=>{setShowSyncSheet(false);setShowPendingDiff(true);}}
+        onOpenSettings={()=>{setShowSyncSheet(false);setShowSettings(true);}}/>}
       {showPendingDiff&&<PendingChangesModal data={data} onClose={()=>setShowPendingDiff(false)}
         onSaveToCloud={()=>{setShowPendingDiff(false);saveToCloud();}}/>}
       {showRecentlyDeleted&&<RecentlyDeletedModal data={data} restoreRecord={restoreRecord}
@@ -16304,6 +16340,94 @@ function FirstConnectSheet({info,onUseCloud,onMerge,onLater}){
   );
 }
 
+/* ── The sync sheet (v1.45.0) — everything the four old header controls did,
+   behind one status pill.
+
+   It OWNS NO SYNC LOGIC. Every button here calls a handler App already had,
+   unchanged: this release moved controls, and deliberately did not touch
+   saveToCloud, pullFromCloud or reconcile. If a sync behaviour needs changing,
+   it does not change here.
+
+   Recovery deliberately ROUTES to Settings rather than repeating itself.
+   Restoring a pre-cloud slot overwrites the document, and a destructive action
+   with two homes is one that will eventually differ between them — the whole
+   reason `addContribution` was deleted. A link is enough. ── */
+function SyncSheet({onClose,kvReady,isOnline,syncOp,syncStatus,syncMsg,lastSyncError,
+                    hasUnsyncedChanges,changesSinceSave,lastCloudSavedAt,lastCloudPulledAt,
+                    localRev,cloudRev,onSave,onPull,onViewPending,onOpenSettings}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const time=d=>d?d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
+  const row={borderRadius:10,padding:"12px 14px",fontSize:14,fontWeight:600,minHeight:44,
+    border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",width:"100%",display:"block"};
+  const busy=!!syncOp;
+  /* One sentence saying where the document actually is. The header pill says
+     the state in two words; this says what it means. */
+  const explain=!kvReady?"This device isn't connected to the cloud yet, so everything stays on it."
+    :!isOnline?"You're offline. Changes are saved on this device and will sync by themselves once you're back online."
+    :syncStatus==="failed"?"The last sync didn't go through. Your data is safe on this device — try again, and if it keeps failing, check the passphrase in Settings."
+    :syncStatus==="stale"?"The other device has saved since this one last pulled. Pulling now brings its changes in; nothing of yours is lost either way."
+    :hasUnsyncedChanges?"Saved on this device and syncing automatically. You don't have to press anything — this is here for when you'd rather not wait."
+    :"Everything on this device is in the cloud.";
+  return(
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
+        style={{maxWidth:380,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <h3 style={{margin:"0 0 8px",fontWeight:600}}>Sync</h3>
+        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>{explain}</p>
+        {syncMsg&&<p style={{fontSize:12,color:P.gr,fontWeight:600,marginBottom:12}}>{syncMsg}</p>}
+        {syncStatus==="failed"&&lastSyncError&&
+          <p style={{fontSize:11,color:P.amber,marginBottom:12,wordBreak:"break-word"}}>{lastSyncError}</p>}
+
+        <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,lineHeight:1.8}}>
+          <div><span style={{color:P.faint}}>Last saved to cloud: </span>
+            <strong>{time(lastCloudSavedAt)||"never from this device"}</strong></div>
+          <div><span style={{color:P.faint}}>Last pulled: </span>
+            <strong>{time(lastCloudPulledAt)||"never"}</strong></div>
+          <div><span style={{color:P.faint}}>Waiting to sync: </span>
+            <strong>{hasUnsyncedChanges?(changesSinceSave?`${changesSinceSave} change${changesSinceSave===1?"":"s"}`:"yes"):"nothing"}</strong></div>
+          {(localRev||cloudRev)?
+            <div><span style={{color:P.faint}}>Revision: </span>
+              <strong className="tnum">{localRev}{cloudRev>localRev?` (cloud ${cloudRev})`:""}</strong></div>:null}
+        </div>
+
+        {kvReady?
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <button onClick={onSave} disabled={busy}
+              style={{...row,border:"none",background:P.gr,color:"#fff",opacity:busy?.6:1}}>
+              {syncOp==="push"?"Saving…":"Save now"}
+              <div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Upload straight away instead of waiting for the automatic save.</div>
+            </button>
+            <button onClick={onPull} disabled={busy} style={{...row,opacity:busy?.6:1}}>
+              {syncOp==="pull"?"Pulling…":"Pull now"}
+              <div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Fetch the latest copy from the other device.</div>
+            </button>
+            {hasUnsyncedChanges&&
+              <button onClick={onViewPending} style={row}>
+                See what's waiting
+                <div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Exactly what would go up on the next save.</div>
+              </button>}
+          </div>
+        :
+          <button onClick={onOpenSettings} style={{...row,border:"none",background:P.gr,color:"#fff"}}>
+            Connect this device
+            <div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Enter the sync passphrase in Settings.</div>
+          </button>}
+
+        <div style={{display:"flex",gap:12,marginTop:14,justifyContent:"space-between",alignItems:"center"}}>
+          {kvReady?
+            <button onClick={onOpenSettings}
+              style={{background:"none",border:"none",padding:"10px 0",fontSize:12,fontWeight:600,color:P.gr,minHeight:44}}>
+              Sync settings &amp; recovery
+            </button>:<span/>}
+          <button onClick={onClose}
+            style={{background:"none",border:"none",padding:"10px 0",fontSize:13,color:P.faint,minHeight:44}}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Pending-changes viewer — diffs the current local data against the last
    full snapshot known to be in sync with the cloud (cached locally, so this
    works offline / without a round-trip). Answers "what exactly is the N in
@@ -17076,7 +17200,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               <br/><br/>
               <b style={{color:P.sub}}>Offline is fine.</b> Edits queue up on this device and go up by themselves the next time you're connected. Nothing is lost while you wait.
               <br/><br/>
-              <b style={{color:P.sub}}>The two buttons are shortcuts, not requirements.</b> Save to Cloud uploads right now instead of waiting; Pull from Cloud fetches the latest copy from the other device. Opening the app already checks for you, and pull-to-sync on mobile does whichever of the two is needed.
+              <b style={{color:P.sub}}>The buttons are shortcuts, not requirements.</b> Save now uploads right away instead of waiting; Pull now fetches the latest copy from the other device. Both live behind the sync pill at the top of the screen, along with what's waiting to go up. Opening the app already checks for you, and pull-to-sync on mobile does whichever of the two is needed.
             </div>
             <div style={{fontSize:11,color:P.sub,padding:"8px 10px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
               You and {owners.wife||"your partner"} share one dataset. If you both change different things, they're combined automatically. If you both change the <i>same</i> thing, the app stops and asks you which to keep rather than picking one silently.

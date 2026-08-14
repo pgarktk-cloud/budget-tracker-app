@@ -16,7 +16,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 2 | **— DONE** | none | `dotest.cjs` — Durable Object e2e harness (tooling only) |
 | 3a | **1.43.0 — DONE** | med | `actualStarts` — tolerant readers, old writer |
 | 3b | **1.44.0 — DONE** | med | `actualStarts` — stamped writer + per-key merge |
-| 4 | 1.45.0 | low | Header simplification + one sync sentence |
+| 4 | **1.45.0 — DONE** | low | Header simplification + one sync sentence |
 | 5 | 1.46.0 | low | Settings reorganised into accordion sections |
 | 6 | 1.47.0 | med | Salary reconciliation (5b, spec below) |
 | 7 | 1.48.0 | med | Customisable bottom navigation |
@@ -175,6 +175,50 @@ and reconnected one at a time both survive; and a clear on one phone stays
 cleared when the other, still holding the old value, syncs after. Period
 identity did not move. That is the first time the corrections map has been
 proven to reconcile, and it closes roadmap item 3C-3.
+
+### Phase 4 as built (2026-08-14, v1.45.0) — NOT yet deployed
+
+The header carried four controls on the right, three of which were shortcuts
+for things the app already does by itself, and a sentence that contradicted
+Settings.
+
+- **One sync control.** The pill, the pending badge, the Pull button and the
+  theme toggle collapse to a single status pill that opens a **`SyncSheet`**.
+  Theme was already in Settings → Appearance; Pull and "view what's pending"
+  moved into the sheet. `syncPill` is the one place a sync label is derived,
+  ordered worst-first (offline beats a pending count when both are true).
+- **`SyncSheet` owns no sync logic.** It calls `saveToCloud` / `pullFromCloud` /
+  the pending viewer unchanged, and **routes recovery to Settings rather than
+  repeating it** — restoring a pre-cloud slot overwrites the document, and a
+  destructive action with two homes will eventually differ between them. It is
+  mounted at App level, beside the other modals, not from the header.
+- **The instruction line is gone.** "Pull before editing on another device;
+  Save to Cloud when finished" described a manual model the app outgrew, while
+  Settings said "Nothing here is manual". One rule now, with a state line
+  instead when offline / pending / failed.
+- **Income is display-only** — it was a live `NumField` in a header shown on
+  every tab, one mis-tap from rewriting the plan while looking at Investments.
+  It now shows the figure, names the plan, and taps through to Budget, which
+  has had its own income field all along.
+
+**New runner `headertest.cjs`, 7 cases** — the claims here are all structural
+and every one of them would fail silently otherwise: the old line cannot come
+back, exactly one sync entry point, the sheet contains no `setData`/`fetch`/
+`KVSync`, it is mounted after `</TabPane>`, every prop its body names is passed
+at the mount site, income is display-only *and* still editable in Budget, and
+every sync label fits a 320px header.
+
+**Two things the browser caught that the runners could not.** The header
+**overflowed at 320px** — the wordmark now shrinks and ellipses, since it is
+the one element that can afford to give way, and "Newer data available" became
+"Cloud is newer" (it alone was ~140px of a 288px content box). Verified after
+the fix at exactly 320px with the longest label forced in: one row, 44px
+targets, no horizontal scroll.
+
+Also verified: the sheet opens and closes, the scroll lock releases, and the
+income tap lands on Budget with its editable field. A frozen `.sheet` entrance
+animation in the automation tab is the known backgrounded-tab artifact, not a
+regression — it is the shared `.sheet` class, unchanged by this release.
 
 ## ▶ NEXT SESSION — 5b, salary reconciliation
 

@@ -5,6 +5,10 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
+**In the repo, staged, NOT deployed: v1.45.0 / build `2026.08.14.0004`** —
+phase 4, the header. All twenty-two runners green, browser-verified including
+a 320px layout check. Deploying it is the next action.
+
 **Live: v1.44.0 / build `2026.08.14.0003`**, deployed 2026-08-14 (`174db319`)
 — phase 3b. Confirmed on the production origin: all three version sites agree,
 and `mergeActualStarts`, `withMergedActualStarts`, `tombstonedActualStarts` and
@@ -146,11 +150,31 @@ Full detail in `roadmap.md`; the reasoning in `decisions.md`.
 `SyncRoom` now has twelve end-to-end cases against a real local Worker, which
 is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
-**Phases 1, 2, 3a and 3b are all done and verified. Nothing is half-built.**
+**Phases 1, 2, 3a, 3b and 4 are done. Nothing is half-built.**
 
-**Next: programme phase 4 — header simplification + one sync sentence
-(v1.45.0).** Low risk, no synced-data change. The two contradictory sync
-sentences it resolves are listed in `roadmap.md`.
+**Next: deploy v1.45.0**, then programme phase 5 — Settings reorganised into
+accordion sections (v1.46.0). Phase 5 must ship before phase 7 (customisable
+bottom navigation): the Settings container comes before its contents.
+
+### v1.45.0 — the header carries one sync control (programme phase 4)
+
+**Built and verified; NOT yet deployed.** Presentation only — `saveToCloud`,
+`pullFromCloud` and `reconcile` were deliberately not touched.
+
+Four controls became one status pill that opens a **`SyncSheet`** (theme was
+already in Settings; Pull and the pending badge moved into the sheet). The
+sheet owns **no sync logic** — it calls the existing handlers and routes
+recovery to Settings rather than duplicating a destructive restore. The
+contradictory instruction line is gone: the header said "Pull before editing…
+Save to Cloud when finished" while Settings said "Nothing here is manual".
+Income is display-only and taps through to Budget, where the editable field has
+always been.
+
+New runner `headertest.cjs` (7 cases) pins all of it — the claims are
+structural and would otherwise fail silently. **Twenty-two runners in the sweep
+now.** The browser caught what the runners could not: the header **overflowed
+at 320px**, fixed by letting the wordmark shrink and shortening the longest
+label. See `roadmap.md`.
 
 ### v1.42.1 — no such release. Phase 2 (2026-08-14) — `dotest.cjs`
 
