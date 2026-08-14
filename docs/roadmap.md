@@ -21,7 +21,7 @@ Ordering is risk-aware: the confirmed bug first, then the data-correctness gap
 | 6 | **1.47.0 — DONE** | med | Salary reconciliation (5b, spec below) |
 | 7 | **1.48.0 — DONE** | med | Customisable bottom navigation |
 | 8 | **1.49.0 — DONE** | low | Collapsible completed/healthy sections |
-| 9 | 1.50.0 | low | Purchase Advisor result hierarchy |
+| 9 | **1.50.0 — 9a+9b DONE, 9c pending** | low | Purchase Advisor polish (period fix, savings clarity, schedule, compare sheet, preview; 9c = durable Use-this-plan + trim→budget + atomic undo) |
 | 10 | 1.51.0 | low | Focus Home mode |
 | 11 | 1.52.0 | low | Type & touch-target pass |
 | 12 | 1.53.0 | low | Draft/context preservation (add-transaction only) |

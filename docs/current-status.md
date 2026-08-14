@@ -5,6 +5,55 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
+**Live: v1.50.0 / build `2026.08.14.0009`**, deployed 2026-08-14 (`b7fbf9a0`,
+commit `d6af9db`) — **Phase 9a + 9b** of the Purchase Advisor polish. Worker
+untouched (`d8b5b9ad`). Confirmed on the production origin (immutable):
+`purchaseSavingsSchedule` and `PurchaseCompareSheet` are served, version sites
+agree. **Not yet seen on either phone.**
+
+- **9a** — the purchase period now counts as a saving period (current period
+  still doesn't): `purchaseSaveableBuckets(n)=max(0,n)`, both walks count
+  buckets 1…n; 4 periods away = 4 saving periods (7350/4=1837.50). New pure
+  `purchaseSavingsSchedule` (deterministic water-filling, totals the shortfall
+  exactly, reports `gap` when infeasible). Savings card rewritten with verdict
+  language + arithmetic + per-period schedule + real bucket labels. See
+  `decisions.md` "The purchase period counts as a saving period".
+- **9b** — options moved into `PurchaseCompareSheet` behind an "Explore other
+  ways to make this work" button; **preview-before-apply** with a "Previewing…"
+  banner (Use this plan / Cancel preview restores the exact draft). No durable
+  writes on this path (test S4).
+- `purchasetest` 70→77 (13 re-derived by hand + 12p/q/r, 12s/2/3, S4). All 25
+  runners green, parse-check clean, browser-verified (both the 7350÷4 card and
+  the preview/cancel flow).
+
+### ▶ NEXT SESSION: Phase 9c — durable "Use this plan" (NOT started)
+
+The plan is at `~/.claude/plans/we-re-touching-phase-9-immutable-patterson.md`
+(machine-local); the 9c section there is the spec. In short:
+
+- Route the banner's **"Use this plan"** by option: saving→`startSaving`
+  (already targets the shortfall), financing→`openCreate`/`InstallmentEditSheet`,
+  waiting→keep `draft.desiredDate`, spend-less→set `draft.price`,
+  **trimming→ a new `PurchaseTrimApplySheet` confirmation**.
+- **Temporary trim → future budgets**: apply to buckets **1…n inclusive**
+  (current period untouched), write a **restore override at n+1**
+  (mandatory — later buckets otherwise inherit the trimmed values via
+  `resolvePlanForMonth`), **subcategory-aware** (distribute the cut across subs,
+  cent-reconciled, never write a dead parent `amount`).
+- **Atomic multi-period undo**: new module-scope pure
+  `applyPurchaseTrimPlan(d,spec)→{d,preImage}` (installment `apply*` pattern);
+  App mutator wraps it in one `setData` + `triggerUndo` with a new
+  **`undoKind:"planSnapshot"`** that restores surgically by id (created records
+  dropped, edited reverted, unrelated edits untouched). The view stays pure
+  (S3 intact) — the durable write lives in App and is passed as a prop.
+- Update **S3/13m2** if the view gains an `applyTrimPlan` prop; add
+  `budgettest`/`purchasetest` cases (buckets touched, restore, subcategory
+  reconciliation, undo restores all). Re-run `headroomcheck.cjs` after (per-
+  bucket headroom now writeable). Also finish requirement 7's deferred
+  progressive-disclosure of the secondary cash/financed/What-if cards.
+
+
+
 **Live: v1.49.0 / build `2026.08.14.0008`**, deployed 2026-08-14 (`a6948556`,
 commit `d8973cf`) — phase 8, collapsible completed goals. Reached goals
 (`goalReached(g)`: target>0 && saved>=target) fold into a per-owner
