@@ -313,6 +313,67 @@ loop and `projectPurchaseScenarios`'s earliest walk, which now banks a bucket
 12b, 12c, 12d, 12d2, 12d3, 13i, 13l, plus new 12p/12q/12r and the schedule
 cases. `headroomcheck.cjs` is unaffected (per-bucket headroom didn't change).
 
+## "Use this plan" can change a real budget — but only through one confined door (2026-08-14, Phase 9c)
+
+**The narrowed invariant.** Until 9c the Purchase Advisor's whole contract was
+"it derives, it never writes" — S3 asserted that the view *and* the engine reach
+no `editPlanForMonth` and no `setData`. 9c keeps that literally true and adds a
+single new writer beside them: a durable **temporary trim** of future budgets,
+reachable only through an explicit confirmation. The view still calls neither
+`setData` nor `editPlanForMonth`; it calls a prop, `applyTrimPlan`, and the App
+mutator behind it wraps one pure module-scope helper, **`applyPurchaseTrimPlan(d,
+spec) → {d, preImage}`** — the installment `apply*` pattern. Keeping the write in
+App + a pure helper (never the view) is what keeps S3 meaningful, so `purchasetest`
+S3 now asserts the narrowed shape by source: view/engine clean, the writer names
+no `editPlanForMonth`/`setData`/`localStorage` and takes `now`/`uid` in.
+
+**What the trim does.** It reduces the chosen categories in buckets **1 … n
+inclusive** (next period through the purchase period; the current period, bucket
+0, is left alone exactly as `purchaseSaveableBuckets` excludes it) and writes a
+**restore override at n+1** setting those categories back to their originals.
+
+- **The restore at n+1 is mandatory, not optional politeness.** After trimming
+  the purchase bucket, every later bucket would otherwise *inherit the trimmed
+  values* through `resolvePlanForMonth` — the cut would leak forever. The restore
+  re-establishes the original values so the chain continues untrimmed. The no-op
+  guard means it only materialises where it genuinely differs.
+- **Absolute targets, not relative cuts.** Each bucket's target for a category is
+  `(its ORIGINAL resolved amount − cut)`, computed against the document *before*
+  any bucket was touched, and written absolutely. This is what stops a later
+  bucket that inherits an already-trimmed earlier clone from being cut twice —
+  and it means the copy-on-write naturally materialises *fewer* plans than
+  buckets (an unmapped bucket that inherits an equal trimmed value is a no-op).
+  Verified in-browser: a 4-period trim materialised exactly 2 plans, and buckets
+  10/11/12 correctly inherited 09's trimmed clone.
+- **Subcategory-aware.** A category with subs has the cut distributed across them
+  proportionally, the last sub absorbing the cent remainder so the reductions sum
+  to *exactly* the cut; the parent `amount` is kept equal to the new sub sum (the
+  cache `clonePlanRecord`/`syncAmt` maintain), never written as an independent
+  manual figure.
+- **Restore without clobber.** The n+1 write only sets the *trimmed* categories
+  back; an existing n+1 override keeps its other edits, because every write is a
+  normal `editPlanForMonth`-shaped category mutation (resolve → clone with
+  `{preserveIds:true}` → mutate → stamp), all folded into one returned `d` so the
+  multi-period change is atomic and can never be synced half-written.
+
+**Atomic multi-period undo (`undoKind:"planSnapshot"`).** `applyPurchaseTrimPlan`
+returns a `preImage` capturing, by id, every plan record it created (value null →
+drop) or edited (deep copy → revert) and every `monthlyPlans` mapping it created
+(keyed `"<month>|<owner>"`, null → drop). `performUndo` restores **surgically by
+id**, so it reverts *every* affected bucket and leaves unrelated edits made inside
+the 6s window alone. A wholesale plans/monthlyPlans snapshot was rejected for
+exactly that reason — it would revert concurrent unrelated edits. Verified
+in-browser end-to-end: apply took Shopping 09 to 875 (08 untouched, Jan restored),
+undo returned the document to its exact base (plans 4→2, all amounts restored).
+
+**Routing "Use this plan".** The preview banner button routes on the previewed
+option: trim → the `PurchaseTrimApplySheet` confirmation; finance → the existing
+`openCreate`/`InstallmentEditSheet`; waiting/spend-less → accept the draft the
+preview already loaded (localStorage-only, nothing durable). Saving keeps its own
+dedicated `startSaving` button. `purchasetest` §14 covers the writer, undo,
+subcategory reconciliation, owner isolation, restore-without-clobber and the
+absolute-target guard (85/85).
+
 The block below is the earlier decision, kept for its reasoning; its
 `max(0, n−1)` conclusion is now superseded by the above.
 

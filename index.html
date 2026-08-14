@@ -2493,6 +2493,148 @@ function purchaseHistoryWarning(bucketHistory,fmt){
     +`${rows.length} averaged ${f(actual)}. These projections use the plan.`;
 }
 
+/* ── Purchase trim, applied to future budgets (9c) ─────────────────────────
+   The Purchase Advisor's ONE durable budget write, and the reason its S3
+   invariant is now *narrowed* rather than absolute: the view and the engine
+   above still never call editPlanForMonth or setData, but this pure helper —
+   living outside the engine, taking `d` and returning a new `d` like the
+   installment apply* functions below — may cause a real budget change, and
+   only ever through the App mutator that wraps it behind an explicit confirm.
+
+   What it does: a TEMPORARY trim. It reduces the chosen categories in every
+   bucket from next period (offset 1) through the purchase period (offset n)
+   INCLUSIVE — the current period (offset 0) is untouched, exactly as
+   purchaseSaveableBuckets excludes it — and writes a RESTORE override at offset
+   n+1 setting those same categories back to their original amounts. The restore
+   is mandatory: without it, buckets after the purchase would inherit the
+   *trimmed* values through resolvePlanForMonth and the cut would leak forever.
+
+   Copy-on-write per bucket, mirroring editPlanForMonth (resolve the inherited
+   plan, clone with preserveIds, mutate the category rows, stamp) but folded
+   into ONE returned `d` so the whole multi-period change is atomic and cannot
+   be synced half-written. It deliberately does NOT go through editPlanForMonth:
+   that writes the one *viewed* month and reads render state; this writes a
+   fixed, pre-computed set of buckets from the passed document.
+
+   ABSOLUTE, not relative. Each bucket's target for a cut category is
+   (its ORIGINAL resolved amount − cut), computed against the document as it was
+   BEFORE any bucket was touched. Setting absolute targets is what stops a later
+   bucket that inherits an already-trimmed earlier clone from being cut twice.
+
+   Returns {d, preImage}. preImage captures, by id, every plan record it created
+   (value null → drop on undo) or edited (value = deep copy of the pre-edit
+   record → revert on undo) and every monthlyPlans mapping it created
+   (keyed "<month>|<owner>", value null → drop on undo), so performUndo can
+   restore the change surgically without disturbing unrelated edits. */
+function purchaseTrimApplyPatch(cat,cut){
+  /* Subcategory-aware. A category with subs has the cut spread across them in
+     proportion to their size, the last sub absorbing the cent remainder so the
+     reductions sum to EXACTLY the cut; the parent `amount` is kept equal to the
+     new sub sum (the same cache clonePlanRecord/syncAmt maintain) rather than
+     written as an independent manual figure. A plain category just moves its
+     `amount`. Both clamp at zero — a 30%-capped cut never reaches it, but a
+     hand-built spec might. */
+  const c=cat||{};
+  const subs=c.subs||[];
+  const take=Math.max(0,Number(cut)||0);
+  if(subs.length>0){
+    const total=subs.reduce((s,x)=>s+(Number(x.amount)||0),0);
+    let allocated=0;
+    const newSubs=subs.map((s,i)=>{
+      const curAmt=Number(s.amount)||0;
+      let red;
+      if(i===subs.length-1)red=roundTo(take-allocated,2);
+      else{red=total>0?roundTo(take*(curAmt/total),2):0;allocated=roundTo(allocated+red,2);}
+      return{...s,amount:roundTo(Math.max(0,curAmt-red),2)};
+    });
+    const sum=roundTo(newSubs.reduce((s,x)=>s+(Number(x.amount)||0),0),2);
+    return{subs:newSubs,amount:sum};
+  }
+  return{amount:roundTo(Math.max(0,(Number(c.amount)||0)-take),2)};
+}
+
+function applyPurchaseTrimPlan(d,{owner,cuts,buckets,restoreBucket,now,uid}){
+  const doc=d||{};
+  const preImage={plans:{},maps:{}};
+  const cutList=(cuts||[]).filter(x=>x&&x.catId&&(Number(x.amount)||0)>0);
+  if(!cutList.length||!Array.isArray(buckets)||!buckets.length)return{d:doc,preImage};
+
+  const activePlanId=doc.activePlanId||{};
+  const live0=(doc.plans||[]).filter(p=>!p.deletedAt);
+  // Resolved plan for a bucket from the UNTOUCHED document — the source of every
+  // absolute target, so a cascade of inherited-from-trimmed clones can't corrupt it.
+  const origPlanFor=key=>resolvePlanForMonth(doc.monthlyPlans,key,owner,activePlanId,live0).plan;
+
+  const patchesFor=(key,builder)=>{
+    const cats=(origPlanFor(key)||{}).categories||[];
+    const m=new Map();
+    cutList.forEach(cut=>{
+      const cat=cats.find(c=>c.id===cut.catId&&!c.deletedAt);
+      if(cat)m.set(cut.catId,builder(cat,cut));
+    });
+    return m;
+  };
+  const trimPlans=buckets.map(b=>({key:b.key,label:b.label,
+    patches:patchesFor(b.key,(cat,cut)=>purchaseTrimApplyPatch(cat,cut.amount))}));
+  let restorePlan=null;
+  if(restoreBucket&&restoreBucket.key){
+    const patches=patchesFor(restoreBucket.key,cat=>{
+      const subs=cat.subs||[];
+      return subs.length>0
+        ?{subs:subs.map(s=>({...s})),amount:roundTo(subs.reduce((s,x)=>s+(Number(x.amount)||0),0),2)}
+        :{amount:Number(cat.amount)||0};
+    });
+    if(patches.size)restorePlan={key:restoreBucket.key,label:restoreBucket.label,patches};
+  }
+
+  let plans=(doc.plans||[]).slice();
+  let maps=(doc.monthlyPlans||[]).slice();
+
+  const applyBucket=({key,label,patches})=>{
+    if(!patches||!patches.size)return;
+    const mutate=p=>{
+      let touched=false;
+      const cats=(p.categories||[]).map(c=>{
+        const patch=patches.get(c.id);
+        if(!patch)return c;
+        touched=true;
+        const nc={...c};
+        if(patch.subs)nc.subs=patch.subs.map(s=>({...s}));
+        if("amount" in patch)nc.amount=patch.amount;
+        return nc;
+      });
+      return touched?{...p,categories:cats}:p;
+    };
+    const own=maps.find(m=>m.month===key&&m.owner===owner&&!m.deletedAt&&m.planId);
+    if(own){
+      plans=plans.map(p=>{
+        if(p.id!==own.planId)return p;
+        const m=mutate(p);
+        if(m===p||JSON.stringify(m)===JSON.stringify(p))return p;
+        if(!(p.id in preImage.plans))preImage.plans[p.id]=JSON.parse(JSON.stringify(p));
+        return{...stampPlanRecords(p,m,now),updatedAt:now};
+      });
+      return;
+    }
+    const src=resolvePlanForMonth(maps,key,owner,activePlanId,plans.filter(p=>!p.deletedAt)).plan;
+    if(!src)return;
+    const cloned=clonePlanRecord(src,uid,owner,label,key,{preserveIds:true});
+    const edited=mutate(cloned);
+    if(JSON.stringify(edited)===JSON.stringify(cloned))return;
+    const finalPlan={...stampPlanRecords(cloned,edited,now),updatedAt:now};
+    preImage.plans[finalPlan.id]=null;                 // created → drop on undo
+    const mk=key+"|"+owner;
+    if(!(mk in preImage.maps))preImage.maps[mk]=null;   // no prior mapping → drop on undo
+    plans=[...plans,finalPlan];
+    maps=[...maps.filter(m=>!(m.month===key&&m.owner===owner)),{month:key,owner,planId:cloned.id,updatedAt:now}];
+  };
+
+  trimPlans.forEach(applyBucket);
+  if(restorePlan)applyBucket(restorePlan);
+
+  return{d:{...doc,plans,monthlyPlans:maps},preImage};
+}
+
 /* ── Installment state transactions ────────────────────────────────────────
    Every installment mutation is a pure (data, args) => data function here, and
    the App-level mutator is one line: setData(d=>applyX(d,args)) plus
@@ -3183,8 +3325,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.50.0";
-const BUILD_ID="2026.08.14.0009";
+const APP_VERSION="1.51.0";
+const BUILD_ID="2026.08.14.0010";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -5712,6 +5854,30 @@ function App(){
       setData(d=>({...d,[collection]:(d[collection]||[]).map(x=>
         x.id===id?{...x,deletedAt:now,updatedAt:now}:x)}));
       pushImportantRef.current();
+    }else if(undoAction.undoKind==="planSnapshot"){
+      /* Surgical multi-period restore (9c). The trim touched a fixed set of
+         plan records and monthlyPlans mappings; preImage holds each one's
+         pre-value (null = the op created it). Restoring by id reverts exactly
+         those and leaves any unrelated edit made inside the 6s window alone —
+         a wholesale plans/monthlyPlans snapshot would clobber those. */
+      const pre=undoAction.preImage||{plans:{},maps:{}};
+      setData(d=>{
+        let plans=d.plans||[];
+        let maps=d.monthlyPlans||[];
+        Object.keys(pre.plans||{}).forEach(id=>{
+          const val=pre.plans[id];
+          plans=val===null?plans.filter(p=>p.id!==id):plans.map(p=>p.id===id?val:p);
+        });
+        Object.keys(pre.maps||{}).forEach(k=>{
+          const idx=k.lastIndexOf("|");
+          const month=k.slice(0,idx),owner=k.slice(idx+1),val=pre.maps[k];
+          maps=val===null
+            ?maps.filter(m=>!(m.month===month&&m.owner===owner))
+            :[...maps.filter(m=>!(m.month===month&&m.owner===owner)),val];
+        });
+        return{...d,plans,monthlyPlans:maps};
+      });
+      pushImportantRef.current();
     }else{
       restoreRecord(undoAction.collection,undoAction.id,undoAction.childKey,undoAction.childId);
     }
@@ -7172,6 +7338,24 @@ function App(){
     trimPolicy:{...(d.trimPolicy||{}),
       [id]:{v:!!value,updatedAt:new Date().toISOString()}}}));
 
+  /* The Purchase Advisor's one durable budget write (9c). Computes the whole
+     multi-period trim + restore in a single pure pass so the preImage and the
+     new document share the SAME freshly-minted ids (computing them twice would
+     mint different ids and the by-id undo would miss the created plans), then
+     commits it and arms an atomic undo. dataRef.current is the base: this only
+     ever fires from an explicit confirm sheet, with no other budget write in
+     flight. S3 stays literally true — the view and engine never call setData or
+     editPlanForMonth; the write lives here and in the pure applyPurchaseTrimPlan. */
+  const applyTrimPlan=spec=>{
+    const now=new Date().toISOString();
+    const{d:nd,preImage}=applyPurchaseTrimPlan(dataRef.current,{...spec,now,uid});
+    setData(nd);
+    const k=((spec&&spec.cuts)||[]).length,m=((spec&&spec.buckets)||[]).length;
+    triggerUndo(`Trimmed ${k} categor${k===1?"y":"ies"} across ${m} period${m===1?"":"s"}`,
+      {undoKind:"planSnapshot",preImage});
+    pushImportantRef.current();
+  };
+
   /* Bottom-bar layout for one owner (Phase 7). data.navTabs is the same stamped
      per-owner map as trimPolicy — merged by mergeTrimPolicy, never defaulted in
      migrate(), emitted from fingerprint only when non-empty. `list` is the
@@ -8277,7 +8461,7 @@ function App(){
             payPeriods:data.payPeriods,convert,ratesStaleDays,
             fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,
             addInstallment,addGoal,openInstallment,setTab,
-            trimPolicy:data.trimPolicy}}/>}
+            trimPolicy:data.trimPolicy,applyTrimPlan}}/>}
           {tab==="targets"&&<TargetsView {...{targets,addTarget,updateTarget,removeTarget,plans,activePlanId:data.activePlanId,owners:data.owners,invSar,banksSar,fmt:n=>formatMoney(n,{code:"SAR"})}}/>}
         </TabPane>
       </div>
@@ -15566,6 +15750,87 @@ function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
   );
 }
 
+/* The trim confirmation (9c). The ONE screen in the advisor that precedes a
+   durable budget change. It states plainly that future budgets will change and
+   that the change is temporary, itemises every affected period × category with
+   current→proposed amounts, and only on "Trim these budgets" calls onConfirm —
+   which is the App mutator applyTrimPlan, passed down through the view. The
+   sheet itself holds no writer; it renders the spec and confirms. Same Portal +
+   scroll-lock + a11y pattern as every other sheet. */
+function PurchaseTrimApplySheet({spec,trimCats,fmt,noun,plural,label,product,onConfirm,onClose}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  const cuts=(spec&&spec.cuts)||[];
+  const buckets=(spec&&spec.buckets)||[];
+  const rows=cuts.map(cut=>{
+    const c=(trimCats||[]).find(x=>x.id===cut.catId);
+    const cur=c?Number(c.effAmt)||0:0;
+    return{name:(c&&c.name)||"a category",cur,cut:Number(cut.amount)||0,
+      proposed:Math.max(0,cur-(Number(cut.amount)||0))};
+  });
+  const perPeriod=rows.reduce((s,r)=>s+r.cut,0);
+  const total=perPeriod*buckets.length;
+  const restLabel=spec&&spec.restoreBucket?spec.restoreBucket.label:null;
+  const rowLine={display:"flex",justifyContent:"space-between",gap:10,fontSize:12,color:P.neuSub,padding:"4px 0"};
+  return(
+    <Portal>
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" aria-label="Trim future budgets"
+        tabIndex={-1} onClick={e=>e.stopPropagation()} style={{maxWidth:480,maxHeight:"88dvh",overflowY:"auto"}}>
+        <div className="sheet-head">
+          <h3 style={{margin:0,fontWeight:600}}>Trim your future budgets</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
+        </div>
+        <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6,marginBottom:12}}>
+          This changes your budget for the next {buckets.length} {plural(buckets.length,noun)} — from{" "}
+          {buckets[0]?buckets[0].label:""} through {buckets.length?buckets[buckets.length-1].label:""}.
+          It's temporary{restLabel?`: your original amounts come back for ${restLabel}`:""}.
+        </div>
+
+        <div style={{...neuInset(12),padding:"4px 0",marginBottom:12}}>
+          {rows.map((r,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px"}}>
+              <span style={{flex:1,minWidth:0,fontSize:13,color:P.neuInk,overflow:"hidden",
+                textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+              <span className="tnum" style={{fontSize:12,color:P.faint,flexShrink:0}}>{fmt(r.cur)}</span>
+              <span style={{fontSize:12,color:P.faint,flexShrink:0}}>→</span>
+              <span className="tnum" style={{fontSize:13,fontWeight:600,color:P.grD,flexShrink:0,minWidth:70,textAlign:"right"}}>{fmt(r.proposed)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={rowLine}><span>Freed each {noun}</span>
+          <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(perPeriod)}</span></div>
+        <div style={rowLine}><span>Over {buckets.length} {plural(buckets.length,noun)}</span>
+          <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(total)}</span></div>
+
+        <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".08em",
+          margin:"12px 0 4px"}}>Periods affected</div>
+        <div style={{...neuInset(12),padding:"4px 0",marginBottom:14}}>
+          {buckets.map(b=>(
+            <div key={b.key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
+              <span style={{flex:1,minWidth:0,fontSize:12,color:P.neuSub,overflow:"hidden",
+                textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.label}
+                {b.key===(buckets[buckets.length-1]||{}).key?` · Buy ${product||"it"}`:""}</span>
+              <span className="tnum" style={{fontSize:12,color:P.grD,flexShrink:0}}>−{fmt(perPeriod)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose}
+            style={{flex:1,borderRadius:12,padding:"12px 0",fontSize:13,fontWeight:600,
+              border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub,minHeight:44}}>Cancel</button>
+          <button onClick={onConfirm}
+            style={{flex:2,borderRadius:12,padding:"12px 0",fontSize:13,fontWeight:700,
+              border:"none",background:P.gr,color:"#fff",minHeight:44}}>Trim these budgets</button>
+        </div>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
 /* The comparison sheet (9b). Shows the current answer plus every genuinely
    available option, each expandable to a period-by-period detail. Choosing one
    only PREVIEWS it — `onPreview` loads it into the draft and the caller shows a
@@ -15641,7 +15906,7 @@ function PurchaseCompareSheet({options,describe,sav,label,fmt,noun,plural,produc
 function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,installmentPayments,
   banks,goals,expenses,planForMonth,payPeriods,convert,ratesStaleDays,
   fmt,cur,budgetOwner,setBudgetOwner,owners,addInstallment,addGoal,openInstallment,setTab,
-  trimPolicy}){
+  trimPolicy,applyTrimPlan}){
   const todayStr=todayISO();
   const bucket=bucketNow(payPeriods,budgetOwner);
 
@@ -15665,6 +15930,11 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      previewing. Never synced — draft is localStorage-only scratchpad. */
   const[previewBackup,setPreviewBackup]=useState(null);
   const[previewLabel,setPreviewLabel]=useState("");
+  /* Which option is being previewed (9c). The banner's "Use this plan" routes
+     on it: a trim opens a confirmation, a finance plan opens the installment
+     sheet, waiting/spend-less just accept the already-loaded draft. */
+  const[previewOpt,setPreviewOpt]=useState(null);
+  const[trimApply,setTrimApply]=useState(null);   // the trim confirmation spec, or null
 
   const financedMode=draft.method!=="cash";
   const trims=draft.trims||{};
@@ -15805,16 +16075,17 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
   const previewOption=useCallback((o,labelText)=>{
     setPreviewBackup(prev=>prev||draft);
     setPreviewLabel(labelText||"");
+    setPreviewOpt(o);
     applyOption(o);
     setShowCompare(false);
   },[draft,applyOption]);
+  const clearPreview=useCallback(()=>{
+    setPreviewBackup(null);setPreviewLabel("");setPreviewOpt(null);
+  },[]);
   const cancelPreview=useCallback(()=>{
     if(previewBackup)setDraft(previewBackup);
-    setPreviewBackup(null);setPreviewLabel("");
-  },[previewBackup]);
-  const keepPreview=useCallback(()=>{        // accept the previewed draft as the working one
-    setPreviewBackup(null);setPreviewLabel("");
-  },[]);
+    clearPreview();
+  },[previewBackup,clearPreview]);
 
   /* ONE description per option, used by the row and by the suggestion panel.
      Two call sites phrasing the same option differently is how a suggestion
@@ -15887,6 +16158,29 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
     });
   };
 
+  /* The banner's "Use this plan" (9c). Routes on the previewed option: a trim
+     opens a confirmation before the durable write; a finance plan opens the
+     ordinary installment sheet; waiting and spend-less just accept the draft
+     the preview already loaded (localStorage-only, nothing to commit). The
+     durable trim write happens only inside PurchaseTrimApplySheet's onConfirm,
+     never here — so this handler holds no writer into `data`. */
+  const usePreviewedPlan=()=>{
+    const o=previewOpt;
+    if(o&&o.id==="trim"){
+      const n=Math.max(0,Number(o.periods)||0);
+      if(n>0){
+        const buckets=[];
+        for(let k=1;k<=n;k++){const key=bucketShift(bucket,payPeriods,budgetOwner,k);buckets.push({key,label:label(key)});}
+        const rKey=bucketShift(bucket,payPeriods,budgetOwner,n+1);
+        setTrimApply({option:o,buckets,restoreBucket:{key:rKey,label:label(rKey)},
+          cuts:(o.picks||[]).map(p=>({catId:p.id,amount:p.amount}))});
+        return;   // preview banner stays until the confirmation resolves
+      }
+    }
+    if(o&&o.id==="finance")openCreate();
+    clearPreview();   // waiting / spend-less / finance: the draft is already the plan
+  };
+
   return(
     <div>
       <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
@@ -15904,7 +16198,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
           <button onClick={cancelPreview}
             style={{flexShrink:0,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,
               border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub,minHeight:40}}>Cancel preview</button>
-          <button onClick={keepPreview}
+          <button onClick={usePreviewedPlan}
             style={{flexShrink:0,borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:700,
               border:"none",background:P.gr,color:"#fff",minHeight:40}}>Use this plan</button>
         </div>}
@@ -16390,6 +16684,16 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
         <PurchaseTrimSheet categories={trimCats} trims={trims} cur={cur} fmt={fmt}
           setTrim={(id,v)=>setDraft(d=>({...d,trims:{...(d.trims||{}),[id]:Number(v)||0}}))}
           onClose={()=>setShowTrims(false)}/>}
+
+      {trimApply&&
+        <PurchaseTrimApplySheet spec={trimApply} trimCats={trimCats} fmt={fmt}
+          noun={noun} plural={plural} label={label} product={product}
+          onConfirm={()=>{
+            if(applyTrimPlan)applyTrimPlan({owner:budgetOwner,cuts:trimApply.cuts,
+              buckets:trimApply.buckets,restoreBucket:trimApply.restoreBucket});
+            setTrimApply(null);clearPreview();
+          }}
+          onClose={()=>setTrimApply(null)}/>}
 
       {createSheet&&
         <InstallmentEditSheet prefill={createSheet} payments={[]}

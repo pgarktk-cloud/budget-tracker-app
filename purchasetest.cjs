@@ -70,6 +70,7 @@ const{
   purchaseHistoryWarning,purchaseBucketsBetween,purchaseSavingsPlan,purchaseSavingsSchedule,goalSavedTotal,
   purchaseSaveableBuckets,trimPolicyFor,mergeTrimPolicy,cuttableCategories,
   purchaseOptionsFor,PURCHASE_TRIM_MAX_PCT,
+  applyPurchaseTrimPlan,purchaseTrimApplyPatch,clonePlanRecord,stampPlanRecords,
   bankIsAccessible,bankIsReserved,
   resolvePlanForMonth,derivedInstallmentRowsFor,bucketKeyFor,bucketShift,bucketStartDate,
   generateInstallmentSchedule,scheduleDiff,scheduleTotal,roundTo,addMonthsISO,
@@ -963,10 +964,15 @@ t("S2 · PURCHASE_DRAFT_KEY is nowhere near anything synced",()=>{
     assert.ok(shape.indexOf(k)<0,`the empty/sample document must gain no "${k}" field`));
 });
 
-t("S3 · the advisor's render path can never materialise a plan",()=>{
+t("S3 · the advisor's render path can never materialise a plan (narrowed 9c)",()=>{
   /* Viewing must not write. The advisor resolves up to 24 future buckets, so
      one editPlanForMonth on this path would clone a plan into every month
-     somebody merely looked at — the trap the derived Budget rows avoid. */
+     somebody merely looked at — the trap the derived Budget rows avoid.
+
+     9c narrows this: the advisor may NOW cause a durable budget change, but only
+     via applyTrimPlan (an App mutator) → applyPurchaseTrimPlan (a pure helper
+     OUTSIDE the engine). The view and the engine still contain no setData and no
+     editPlanForMonth; the writer lives in App and in the pure helper. */
   /* Comments are stripped first — this block's own prose names the very
      functions it forbids, and a substring match would flag the explanation. */
   const code=s=>s.replace(/\/\*[\s\S]*?\*\//g,"").replace(/(^|[^:])\/\/.*$/gm,"$1");
@@ -974,11 +980,32 @@ t("S3 · the advisor's render path can never materialise a plan",()=>{
   assert.ok(view.indexOf("editPlanForMonth")<0,
     "PurchaseAdvisorView must not reach editPlanForMonth");
   assert.ok(view.indexOf("setData")<0,"the advisor holds no writer into `data`");
-  const engine=code(slice("/* ── Purchase Advisor engine","/* ── Installment state transactions"));
+  assert.ok(view.indexOf("applyTrimPlan")>=0,
+    "the view routes the durable trim through the applyTrimPlan prop, not its own writer");
+  const engine=code(slice("/* ── Purchase Advisor engine","/* ── Purchase trim, applied to future budgets"));
   assert.ok(engine.indexOf("editPlanForMonth")<0,"nor may the engine");
+  assert.ok(engine.indexOf("setData")<0,"the engine is pure — no writer");
   assert.ok(engine.indexOf("localStorage")<0,"the engine is pure — no storage");
   assert.ok(!/new Date\(\)|Date\.now\(\)|todayISO\(\)/.test(engine),
     "the engine must take todayStr, never read the clock");
+  /* The one durable writer, isolated. It is a pure (d,args)=>{d,preImage} like
+     the installment apply* helpers — it does its own copy-on-write, so it must
+     not reach editPlanForMonth or setData, and it takes `now`/`uid` in rather
+     than reading the clock or minting ids itself. */
+  const writer=code(slice("function applyPurchaseTrimPlan(","/* ── Installment state transactions"));
+  ["editPlanForMonth","setData","localStorage"].forEach(bad=>
+    assert.ok(writer.indexOf(bad)<0,`applyPurchaseTrimPlan must not reference ${bad}`));
+  assert.ok(!/new Date\(\)|Date\.now\(\)|todayISO\(\)|Math\.random\(\)/.test(writer),
+    "applyPurchaseTrimPlan takes now/uid — it must not read the clock or mint its own ids");
+  /* The App mutator is the one place setData appears for this feature, and it
+     wraps the pure helper and arms the atomic undo. */
+  const mut=code(slice("const applyTrimPlan=spec=>{","const removePlanForMonth="));
+  assert.ok(mut.indexOf("applyPurchaseTrimPlan")>=0&&mut.indexOf("setData")>=0,
+    "applyTrimPlan wraps applyPurchaseTrimPlan in a setData");
+  assert.ok(mut.indexOf('undoKind:"planSnapshot"')>=0,
+    "the durable trim must arm the atomic planSnapshot undo");
+  assert.ok(html.indexOf("trimPolicy:data.trimPolicy,applyTrimPlan}}/>")>=0,
+    "the mount must pass applyTrimPlan into the view");
 });
 
 t("S4 · the comparison sheet and preview write nothing durable (9b)",()=>{
@@ -1206,6 +1233,149 @@ t("13o · one description per option, and no AI path left behind",()=>{
    "buildPurchaseAiContext","fetchPurchaseNarration","ai/advice"]
     .forEach(dead=>assert.ok(html.indexOf(dead)<0,
       `"${dead}" survived the removal of the AI path`));
+});
+
+/* ── 14 · applyPurchaseTrimPlan — the durable temporary trim (9c) ──────────
+   The one place the advisor writes to the budget. Buckets 1…n inclusive get
+   trimmed, the current period is untouched, a restore override at n+1 puts the
+   originals back, subcategory cuts are distributed and cent-exact, and the
+   preImage round-trips so the undo restores everything. */
+console.log("\n14 · applyPurchaseTrimPlan (9c)\n");
+
+/* Deterministic id factory — the vm stub uid returns a constant, which would
+   collide across created plans. */
+const mkUid=()=>{let i=0;return()=>`new${i++}`;};
+const NOW="2026-08-10T00:00:00.000Z";
+const doc0=(over={})=>({plans:[basePlan()],monthlyPlans:[],activePlanId:{me:"p1"},...over});
+const shiftKey=(k)=>bucketShift("2026-08",CAL,"me",k);
+const bucketsFor=(n)=>{const out=[];for(let k=1;k<=n;k++){const key=shiftKey(k);out.push({key,label:key});}return out;};
+const restoreFor=(n)=>{const key=shiftKey(n+1);return{key,label:key};};
+const catAmt=(d,key,id)=>{
+  const plan=resolvePlanForMonth(d.monthlyPlans,key,"me",d.activePlanId,(d.plans||[]).filter(p=>!p.deletedAt)).plan;
+  const c=(plan.categories||[]).find(x=>x.id===id);
+  return c?categoryEffectiveAmt(c):null;
+};
+/* Mirrors performUndo's planSnapshot branch — the App handler is React-bound,
+   so its restore logic is reproduced here to prove the preImage round-trips. */
+const undoSnapshot=(d,pre)=>{
+  let plans=d.plans||[],maps=d.monthlyPlans||[];
+  Object.keys(pre.plans||{}).forEach(id=>{const v=pre.plans[id];
+    plans=v===null?plans.filter(p=>p.id!==id):plans.map(p=>p.id===id?v:p);});
+  Object.keys(pre.maps||{}).forEach(k=>{const idx=k.lastIndexOf("|");
+    const month=k.slice(0,idx),owner=k.slice(idx+1),v=pre.maps[k];
+    maps=v===null?maps.filter(m=>!(m.month===month&&m.owner===owner))
+      :[...maps.filter(m=>!(m.month===month&&m.owner===owner)),v];});
+  return{...d,plans,monthlyPlans:maps};
+};
+
+t("14a · trims buckets 1…n, leaves the current period, restores at n+1",()=>{
+  const{d}=applyPurchaseTrimPlan(doc0(),{owner:"me",
+    cuts:[{catId:"c1",amount:300}],buckets:bucketsFor(3),restoreBucket:restoreFor(3),
+    now:NOW,uid:mkUid()});
+  assert.equal(catAmt(d,"2026-08","c1"),2000,"the current period is untouched");
+  ["2026-09","2026-10","2026-11"].forEach(k=>
+    assert.equal(catAmt(d,k,"c1"),1700,`bucket ${k} must be trimmed to 1700`));
+  assert.equal(catAmt(d,"2026-12","c1"),2000,"the restore override at n+1 puts the original back");
+  assert.equal(catAmt(d,"2027-01","c1"),2000,"buckets after the restore inherit the original");
+  // a category the trim never named is unchanged everywhere.
+  ["2026-09","2026-11","2026-12"].forEach(k=>
+    assert.equal(catAmt(d,k,"c2"),3000,`Rent must be untouched in ${k}`));
+});
+
+t("14b · the preImage round-trips — undo restores the document exactly",()=>{
+  const start=doc0();
+  const{d,preImage}=applyPurchaseTrimPlan(start,{owner:"me",
+    cuts:[{catId:"c1",amount:300}],buckets:bucketsFor(3),restoreBucket:restoreFor(3),
+    now:NOW,uid:mkUid()});
+  assert.ok(d.plans.length>start.plans.length,"the trim materialised new plans");
+  const back=undoSnapshot(d,preImage);
+  deepEqual(back.plans,start.plans,"undo drops every created plan");
+  deepEqual(back.monthlyPlans,start.monthlyPlans,"undo drops every created mapping");
+});
+
+t("14c · a subcategory-backed cut is distributed, cent-exact, and keeps the cache honest",()=>{
+  // c3 = Music 300 + Cloud 200 = 500; cut 100 → Music 240, Cloud 160 (sum 400).
+  const{d}=applyPurchaseTrimPlan(doc0(),{owner:"me",
+    cuts:[{catId:"c3",amount:100}],buckets:bucketsFor(2),restoreBucket:restoreFor(2),
+    now:NOW,uid:mkUid()});
+  const plan=resolvePlanForMonth(d.monthlyPlans,"2026-09","me",d.activePlanId,d.plans).plan;
+  const c3=plan.categories.find(x=>x.id==="c3");
+  assert.equal(c3.subs.length,2,"subs are preserved, not flattened");
+  const sum=c3.subs.reduce((s,x)=>s+x.amount,0);
+  assert.equal(sum,400,"the sub reductions sum to exactly the cut (500−100)");
+  assert.equal(c3.subs.find(s=>s.id==="s1").amount,240,"Music takes its proportional share");
+  assert.equal(c3.subs.find(s=>s.id==="s2").amount,160,"Cloud takes the remainder");
+  assert.equal(c3.amount,400,"the parent amount is the sub sum, never the stale 9999");
+  assert.equal(categoryEffectiveAmt(c3),400,"effective amount reads the reduced subs");
+  // restore puts the original subs and cache back.
+  const rp=resolvePlanForMonth(d.monthlyPlans,"2026-11","me",d.activePlanId,d.plans).plan;
+  const rc3=rp.categories.find(x=>x.id==="c3");
+  assert.equal(rc3.subs.find(s=>s.id==="s1").amount,300,"restore returns Music to 300");
+  assert.equal(rc3.subs.find(s=>s.id==="s2").amount,200,"restore returns Cloud to 200");
+  assert.equal(categoryEffectiveAmt(rc3),500,"restore returns the effective amount to 500");
+});
+
+t("14d · a cent-remainder cut still sums exactly (last sub absorbs it)",()=>{
+  // three equal subs of 100 (total 300), cut 100 → 33.33+33.33+33.34 reduction.
+  const plan=basePlan({categories:[
+    {id:"cx",groupId:"g1",name:"Trio",amount:300,ord:0,
+      subs:[{id:"a",name:"A",amount:100},{id:"b",name:"B",amount:100},{id:"cc",name:"C",amount:100}]}]});
+  const{d}=applyPurchaseTrimPlan({plans:[plan],monthlyPlans:[],activePlanId:{me:"p1"}},
+    {owner:"me",cuts:[{catId:"cx",amount:100}],buckets:bucketsFor(1),restoreBucket:restoreFor(1),
+     now:NOW,uid:mkUid()});
+  const cx=resolvePlanForMonth(d.monthlyPlans,"2026-09","me",d.activePlanId,d.plans).plan
+    .categories.find(x=>x.id==="cx");
+  const sum=cx.subs.reduce((s,x)=>s+x.amount,0);
+  near(sum,200,"three-way split still totals exactly 300−100");
+});
+
+t("14e · owner isolation — trimming me never touches wife's plan",()=>{
+  const wifePlan={id:"pw",owner:"wife",name:"W",income:8000,
+    groups:[{id:"wg",name:"E",ord:0}],
+    categories:[{id:"wc1",groupId:"wg",name:"Food",amount:1500,ord:0}]};
+  const start={plans:[basePlan(),wifePlan],monthlyPlans:[],activePlanId:{me:"p1",wife:"pw"}};
+  const{d}=applyPurchaseTrimPlan(start,{owner:"me",
+    cuts:[{catId:"c1",amount:300}],buckets:bucketsFor(2),restoreBucket:restoreFor(2),
+    now:NOW,uid:mkUid()});
+  assert.ok(!(d.monthlyPlans||[]).some(m=>m.owner==="wife"),
+    "no wife mapping may be created by a me-scoped trim");
+  const wifeStill=d.plans.find(p=>p.id==="pw");
+  deepEqual(wifeStill,wifePlan,"wife's plan record is byte-identical");
+});
+
+t("14f · restore without clobber — an existing n+1 override keeps its other edits",()=>{
+  // 2026-12 already has its own override raising Rent to 2500; the restore of c1
+  // must land there without disturbing c2.
+  const override={...basePlan(),id:"p2",name:"Dec",
+    categories:basePlan().categories.map(c=>c.id==="c2"?{...c,amount:2500}:c)};
+  const start={plans:[basePlan(),override],
+    monthlyPlans:[{month:"2026-12",owner:"me",planId:"p2",updatedAt:"x"}],
+    activePlanId:{me:"p1"}};
+  const{d}=applyPurchaseTrimPlan(start,{owner:"me",
+    cuts:[{catId:"c1",amount:300}],buckets:bucketsFor(3),restoreBucket:restoreFor(3),
+    now:NOW,uid:mkUid()});
+  assert.equal(catAmt(d,"2026-12","c1"),2000,"c1 is at its original in the restore period");
+  assert.equal(catAmt(d,"2026-12","c2"),2500,"the pre-existing Rent override is preserved");
+  ["2026-09","2026-10","2026-11"].forEach(k=>
+    assert.equal(catAmt(d,k,"c1"),1700,`bucket ${k} is trimmed`));
+});
+
+t("14g · absolute targets — a later bucket inheriting a trimmed clone is not cut twice",()=>{
+  const{d}=applyPurchaseTrimPlan(doc0(),{owner:"me",
+    cuts:[{catId:"c1",amount:300}],buckets:bucketsFor(4),restoreBucket:restoreFor(4),
+    now:NOW,uid:mkUid()});
+  // every trimmed bucket lands at 1700 exactly — never 1400 (double-applied).
+  ["2026-09","2026-10","2026-11","2026-12"].forEach(k=>
+    assert.equal(catAmt(d,k,"c1"),1700,`bucket ${k} trimmed once, not compounded`));
+  assert.equal(catAmt(d,"2027-01","c1"),2000,"restore at n+1 then originals onward");
+});
+
+t("14h · a no-op spec (no cuts) returns the document and an empty preImage",()=>{
+  const start=doc0();
+  const{d,preImage}=applyPurchaseTrimPlan(start,{owner:"me",cuts:[],
+    buckets:bucketsFor(2),restoreBucket:restoreFor(2),now:NOW,uid:mkUid()});
+  assert.equal(d,start,"nothing to do returns the identical document");
+  deepEqual(preImage,{plans:{},maps:{}},"and an empty preImage");
 });
 
 console.log(`\n${n-fails}/${n} passed`);

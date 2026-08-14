@@ -396,6 +396,37 @@ build step: React + Recharts + Babel loaded from CDN, JSX compiled in-browser.
   existing helpers (`purchaseHeadroomForBucket`, `buildPurchaseSchedule`,
   `purchaseSavingsPlan`) rather than a second reduce — the rule A3 established.
   `optionLine` in the view is the ONE place an option is put into words.
+- **The advisor may now cause ONE durable budget change — a temporary trim —
+  and the "never materialises a plan" invariant is NARROWED, not gone** (Phase
+  9c). The view and the engine still reach no `setData`/`editPlanForMonth` (S3
+  asserts it); the single writer is the pure module-scope
+  **`applyPurchaseTrimPlan(d,{owner,cuts,buckets,restoreBucket,now,uid}) →
+  {d,preImage}`** (installment `apply*` pattern, its own section between the
+  engine and the installment block). The App mutator `applyTrimPlan` wraps it
+  (computed once from `dataRef.current` so preImage ids match the committed doc)
+  and arms **`undoKind:"planSnapshot"`**; it's passed into `PurchaseAdvisorView`
+  as a prop. Load-bearing rules, each pinned by `purchasetest` §14:
+  - **Trims buckets 1…n inclusive, restore override at n+1.** Current period
+    (bucket 0) untouched. The restore is **mandatory** — later buckets otherwise
+    inherit the trimmed values via `resolvePlanForMonth` and the cut leaks
+    forever.
+  - **Absolute targets, computed from the pre-touch document** (`original − cut`),
+    written absolutely — this is what stops a later bucket that inherits an
+    already-trimmed clone from being cut twice, and it makes the copy-on-write
+    materialise *fewer* plans than buckets (an inherited-equal bucket is a no-op).
+  - **Subcategory-aware**: distribute the cut across subs proportionally, last
+    sub absorbs the cent remainder, keep parent `amount` = new sub sum (never a
+    dead manual figure). **Restore without clobber**: the n+1 write only sets the
+    trimmed categories back; other edits in an existing n+1 override survive.
+  - **Atomic + surgical undo.** One returned `d`; `preImage` captures created
+    (null → drop) and edited (deep copy → revert) plan records and created
+    `monthlyPlans` mappings (keyed `"<month>|<owner>"`). `performUndo` restores
+    by id, so unrelated edits inside the 6s window are left alone. A wholesale
+    snapshot was rejected for that reason.
+  - The confirm sheet is `PurchaseTrimApplySheet` (placed before
+    `PurchaseCompareSheet`, outside the S4 slice). The banner "Use this plan"
+    routes by previewed option: trim → confirm sheet, finance → `openCreate`,
+    waiting/spend-less → accept the draft, saving → the separate `startSaving`.
 - **`data.trimPolicy` decides what the Purchase Advisor may suggest cutting,
   and it is a MAP, not a record array** (2026-08-08). Shape is
   `{ "<catId|groupId>": {v:bool, updatedAt} }`, resolved **category → group →
@@ -946,10 +977,13 @@ and an error naming a collection the user has never heard of.
   and three source-structure assertions pinning the `cloudConfirmedRef` and
   no-baseline guards that live in `App()` effects rather than a pure function),
   and `purchasetest.cjs` (the Purchase Advisor engine: headroom vs the SLICED
-  BudgetView expression, per-bank withholding, the savings plan, and three
-  source-structure assertions pinning "touches no synced data" and "never
-  materialises a plan"; plus the options engine, cuttability, and a sweep
-  asserting no reference to the removed AI path survives anywhere in the file),
+  BudgetView expression, per-bank withholding, the savings plan, and
+  source-structure assertions pinning "touches no synced data" and the NARROWED
+  "never materialises a plan except through `applyPurchaseTrimPlan`" invariant
+  (S3); plus the options engine, cuttability, a sweep asserting no reference to
+  the removed AI path survives, and §14 for the durable temporary trim — buckets
+  1…n + restore at n+1, absolute targets, subcategory cent-exactness, atomic
+  planSnapshot undo, owner isolation, restore-without-clobber),
   and `pulltest.cjs` (pull-to-sync may not arm inside a sheet: `mayArmPull` as a
   pure predicate over all sixteen input combinations, plus source-structure
   assertions pinning the wiring that lives in an `App()` effect — the arm order,

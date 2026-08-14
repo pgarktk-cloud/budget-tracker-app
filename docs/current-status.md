@@ -1,15 +1,17 @@
 # Current Status
 
-_Last updated: 2026-08-14 (phases 2, 3a and 3b all done — `dotest.cjs`, then
-v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
+_Last updated: 2026-08-14 (Phase 9c deployed as v1.51.0 — durable Purchase
+Advisor trim + atomic undo)_
 
 ## State of play — read this first
 
-**Live: v1.50.0 / build `2026.08.14.0009`**, deployed 2026-08-14 (`b7fbf9a0`,
-commit `d6af9db`) — **Phase 9a + 9b** of the Purchase Advisor polish. Worker
-untouched (`d8b5b9ad`). Confirmed on the production origin (immutable):
-`purchaseSavingsSchedule` and `PurchaseCompareSheet` are served, version sites
-agree. **Not yet seen on either phone.**
+**Live: v1.51.0 / build `2026.08.14.0010`**, deployed 2026-08-14 (`a02d26dc`) —
+**Phase 9c**: durable "Use this plan" + temporary trim → future budgets + atomic
+undo. Worker untouched (`d8b5b9ad`). Confirmed on the production origin
+(immutable + cache-busted): all three version sites agree, and
+`applyPurchaseTrimPlan` / `PurchaseTrimApplySheet` / `planSnapshot` are served.
+**Not yet seen on either phone.** (Previous: v1.50.0 / `2026.08.14.0009`,
+`b7fbf9a0`, commit `d6af9db` — Phase 9a+9b.)
 
 - **9a** — the purchase period now counts as a saving period (current period
   still doesn't): `purchaseSaveableBuckets(n)=max(0,n)`, both walks count
@@ -26,31 +28,46 @@ agree. **Not yet seen on either phone.**
   runners green, parse-check clean, browser-verified (both the 7350÷4 card and
   the preview/cancel flow).
 
-### ▶ NEXT SESSION: Phase 9c — durable "Use this plan" (NOT started)
+### Phase 9c — durable "Use this plan" (DONE + DEPLOYED)
 
-The plan is at `~/.claude/plans/we-re-touching-phase-9-immutable-patterson.md`
-(machine-local); the 9c section there is the spec. In short:
+**Live: v1.51.0 / build `2026.08.14.0010`**, deployed 2026-08-14
+(`a02d26dc`). Confirmed on the production origin (immutable + cache-busted): all
+three version sites agree, and `applyPurchaseTrimPlan` / `PurchaseTrimApplySheet`
+/ `planSnapshot` are served. Worker untouched. **Not yet seen on either phone.**
+Implemented 2026-08-14.
 
-- Route the banner's **"Use this plan"** by option: saving→`startSaving`
-  (already targets the shortfall), financing→`openCreate`/`InstallmentEditSheet`,
-  waiting→keep `draft.desiredDate`, spend-less→set `draft.price`,
-  **trimming→ a new `PurchaseTrimApplySheet` confirmation**.
-- **Temporary trim → future budgets**: apply to buckets **1…n inclusive**
-  (current period untouched), write a **restore override at n+1**
-  (mandatory — later buckets otherwise inherit the trimmed values via
-  `resolvePlanForMonth`), **subcategory-aware** (distribute the cut across subs,
-  cent-reconciled, never write a dead parent `amount`).
-- **Atomic multi-period undo**: new module-scope pure
-  `applyPurchaseTrimPlan(d,spec)→{d,preImage}` (installment `apply*` pattern);
-  App mutator wraps it in one `setData` + `triggerUndo` with a new
-  **`undoKind:"planSnapshot"`** that restores surgically by id (created records
-  dropped, edited reverted, unrelated edits untouched). The view stays pure
-  (S3 intact) — the durable write lives in App and is passed as a prop.
-- Update **S3/13m2** if the view gains an `applyTrimPlan` prop; add
-  `budgettest`/`purchasetest` cases (buckets touched, restore, subcategory
-  reconciliation, undo restores all). Re-run `headroomcheck.cjs` after (per-
-  bucket headroom now writeable). Also finish requirement 7's deferred
-  progressive-disclosure of the secondary cash/financed/What-if cards.
+- **New pure module-scope writer** `applyPurchaseTrimPlan(d,{owner,cuts,buckets,
+  restoreBucket,now,uid}) → {d,preImage}` (index.html, its own section right
+  after the Purchase Advisor engine, before the installment `apply*` block).
+  Trims buckets **1…n inclusive**, current period untouched, **restore override
+  at n+1** (mandatory), **absolute targets** (computed from the pre-touch doc, so
+  no double-cut on inherited clones), **subcategory-aware** (proportional split,
+  last sub absorbs the cent remainder, parent `amount` kept = sub sum), **restore
+  without clobber**. Atomic — one returned `d`.
+- **App mutator** `applyTrimPlan(spec)` computes it once from `dataRef.current`
+  (so preImage ids match the committed doc), `setData(nd)`, then `triggerUndo`
+  with **`undoKind:"planSnapshot"`**; `performUndo` restores surgically by id.
+  Passed as a prop into `PurchaseAdvisorView`.
+- **View**: banner "Use this plan" routes by previewed option (trim →
+  `PurchaseTrimApplySheet` confirm; finance → `openCreate`; waiting/spend-less →
+  accept draft). New `PurchaseTrimApplySheet` (placed before `PurchaseCompareSheet`,
+  outside the S4 slice).
+- **Tests**: `purchasetest` 77→**85** (S3 rewritten to the narrowed invariant +
+  new §14: buckets touched, restore at n+1, subcategory cent-exactness, undo
+  round-trip, owner isolation, restore-without-clobber, absolute-target guard).
+  All 25 runners green, parse-check clean.
+- **Browser-verified end-to-end** on a sample-data sandbox: 9a math (÷4, "4 months
+  away"), 9b compare sheet + all four options + preview banner, 9c confirm sheet
+  (correct current→proposed + restore note), the durable write (current untouched,
+  Sep–Dec trimmed to exact values, Jan 2027 restored — only 2 plans materialised),
+  and the atomic undo (document returned to its exact base). `headroomcheck.cjs`
+  not re-run (needs a real backup; per-bucket headroom arithmetic is unchanged by
+  9c, which only adds a writer).
+- **Deferred**: requirement 7's progressive-disclosure collapse of the secondary
+  cash/financed/What-if cards (cosmetic; the cards render fully today).
+
+**Next**: bump version (three sites) + deploy when asked; then confirm on both
+phones. Consider the deferred progressive-disclosure as a small follow-up.
 
 
 
