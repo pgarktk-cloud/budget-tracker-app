@@ -5,10 +5,13 @@ _Last updated: 2026-08-14 (phase 2 — `dotest.cjs`; phase 3a — v1.43.0,
 
 ## State of play — read this first
 
-**In the repo but NOT deployed: v1.43.0 / build `2026.08.14.0002`** — staged,
-all runners green, browser-verified. Deploying it is the next action.
+**Live: v1.43.0 / build `2026.08.14.0002`**, deployed 2026-08-14
+(`537a5e51`). Confirmed on the production origin: `version.json`, `index.html`
+and `sw.js` all report the same build, and `actualStartValue` is present in the
+served file. **Not yet opened on either phone** — that is the next action, and
+it is the gate on phase 3b.
 
-**Live: v1.42.0 / build `2026.08.14.0001`** at
+**Previously live: v1.42.0 / build `2026.08.14.0001`** at
 https://whered-it-go.pages.dev, Worker version `d8b5b9ad` (unchanged — v1.42.0
 touches no Worker code). All **twenty** runners green, including the new
 `pulltest.cjs`. Confirmed on both phones against the checklist below.
@@ -73,9 +76,10 @@ and `decisions.md` — the design is in git at v1.40.0 if it is ever wanted back
 
 ### v1.43.0 — `actualStarts` tolerant readers (programme phase 3a)
 
-**Built and verified locally; NOT yet deployed** (see "Open" below). Readers
-only: nothing writes the new shape, and a legacy document is byte-identical
-through `migrate()`, so this costs no device a KV write.
+**Deployed 2026-08-14** (`537a5e51`). Readers only: nothing writes the new
+shape, and a legacy document is byte-identical through `migrate()`, so this
+costs no device a KV write. The Worker was **not** touched — v1.43.0 is a Pages
+release only, so `d8b5b9ad` still stands.
 
 An `actualStarts` entry now has two legal shapes — the legacy `"YYYY-MM-DD"`
 string, and the stamped `{v,updatedAt}` that **v1.44.0** will write so that
@@ -103,9 +107,9 @@ Full detail in `roadmap.md`; the reasoning in `decisions.md`.
 `SyncRoom` now has twelve end-to-end cases against a real local Worker, which
 is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
-**Next: deploy v1.43.0, then open BOTH phones on it.** Phase 3b (the stamped
-writer + per-key merge) must not ship until both report v1.43.0 — that gate is
-the entire reason 3a exists as its own release.
+**Next: open BOTH phones and confirm each reports v1.43.0.** Phase 3b (the
+stamped writer + per-key merge) must not ship until they do — that gate is the
+entire reason 3a exists as its own release.
 
 ### v1.42.1 — no such release. Phase 2 (2026-08-14) — `dotest.cjs`
 
@@ -167,7 +171,8 @@ Worker's fallback behaviour was correct throughout; only the test was wrong.
    of C1 is silent on a fresh document. Deliberate (an advisor that opens by
    proposing you cut your rent is worse than one that says nothing), but it is
    a real first-run gap.
-2. **Deploy v1.43.0, then open BOTH phones on it and confirm the version.**
+2. **Open BOTH phones on v1.43.0 and confirm the version in Settings.**
+   (Deployed 2026-08-14; neither phone has opened it yet.)
    This is a hard gate, not housekeeping: phase 3b starts writing the stamped
    `actualStarts` shape, and a phone still on ≤ v1.42.0 would strip it and push
    the stripped document back. Also re-check that existing corrections still

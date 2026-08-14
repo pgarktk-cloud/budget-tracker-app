@@ -92,7 +92,7 @@ and the preflight's allowed headers. Everything else stays local-only unless a
 future change gives the Worker a second room name — which is not worth doing
 for a test.
 
-### Phase 3a as built (2026-08-14, v1.43.0)
+### Phase 3a as built and deployed (2026-08-14, v1.43.0, `537a5e51`)
 
 Readers only — nothing writes the stamped shape yet, and a legacy document is
 byte-identical through `migrate()`.
