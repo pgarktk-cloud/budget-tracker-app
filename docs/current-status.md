@@ -5,11 +5,12 @@ v1.43.0 and v1.44.0: `actualStarts` merges per key, verified on both phones)_
 
 ## State of play — read this first
 
-**In the repo, staged, NOT deployed: v1.46.0 / build `2026.08.14.0005`** —
-phase 5, Settings as six collapsed sections. All twenty-three runners green,
-browser-verified including the v1.42.0 pull-gesture regression check.
+**Live: v1.46.0 / build `2026.08.14.0005`**, deployed 2026-08-14 (`621df4dd`)
+— phase 5. Confirmed on the production origin: all three version sites agree,
+all six sections are served in order, `section` is a helper and every panel
+starts closed. Worker untouched (`d8b5b9ad`).
 
-**Live: v1.45.0 / build `2026.08.14.0004`**, deployed 2026-08-14 (`f64dec0b`)
+**Previously live: v1.45.0 / build `2026.08.14.0004`** (`f64dec0b`)
 — phase 4, the header. Confirmed on the production origin: all three version
 sites agree, `SyncSheet` and `syncPill` are present, and the old instruction
 line and header income field are both gone. Worker untouched (`d8b5b9ad`).
@@ -159,14 +160,14 @@ is what makes phases 3a/3b (the `actualStarts` merge) safe to attempt.
 
 **Phases 1, 2, 3a, 3b and 4 are done. Nothing is half-built.**
 
-**Next: deploy v1.46.0**, then programme phase 6 — salary reconciliation (5b,
+**Next: programme phase 6** — salary reconciliation (5b,
 v1.47.0). Phase 7 (customisable bottom navigation) is now unblocked too, since
 its Settings container exists — but **6 and 7 must not share a release**, both
 being on hourly-use tabs.
 
 ### v1.46.0 — Settings is six collapsed sections (programme phase 5)
 
-**Built and verified; NOT yet deployed.** Only JSX moved — no data model, no
+**Deployed 2026-08-14** (`621df4dd`). Only JSX moved — no data model, no
 sync, no behaviour change.
 
 Eleven flat headings became six sections, and Settings now opens at **380px, a

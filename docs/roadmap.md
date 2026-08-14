@@ -220,7 +220,7 @@ income tap lands on Budget with its editable field. A frozen `.sheet` entrance
 animation in the automation tab is the known backgrounded-tab artifact, not a
 regression — it is the shared `.sheet` class, unchanged by this release.
 
-### Phase 5 as built (2026-08-14, v1.46.0) — NOT yet deployed
+### Phase 5 as built and deployed (2026-08-14, v1.46.0, `621df4dd`)
 
 Eleven flat headings became **six collapsed sections**. Settings now opens at
 **380px — one short screen that does not scroll at all** until you open
