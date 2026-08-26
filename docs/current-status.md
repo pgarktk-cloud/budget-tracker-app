@@ -1,70 +1,68 @@
 # Current Status
 
-_Last updated: 2026-08-26 — **Technical Ledger UI redesign in progress**
-(uncommitted, not deployed). Feature/logic baseline unchanged at v1.51.0._
+_Last updated: 2026-08-26 — **Technical Ledger UI redesign SHIPPED**
+(v1.52.0, committed `a5baf71`, deployed). Feature/logic baseline unchanged._
 
-## Technical Ledger redesign — read this FIRST (2026-08-26, in progress)
+## Technical Ledger redesign — read this FIRST (2026-08-26, DEPLOYED)
 
-A large **visual-only** overhaul to the approved Stitch "Technical Ledger"
-language is underway in the working tree (NOT committed, NOT deployed; BUILD_ID
-still `.0010`). It is **presentation-only** — `git diff` confirms no
-mutator/logic/data lines changed. Full detail lives in the memory file
-`stitch-redesign-progress.md`; plan in `~/.claude/plans/implement-the-major-
-where-ditgo-fluffy-swing.md`; interpretation in `docs/design-system.md` +
-`docs/ui-audit.md`; per-screen status + computed-font evidence in
-`docs/ui-verification.md`. Approved refs: `stitch-reference/*/screen.png`
-(screenshots are the source of truth; `code.html` confirms exact fonts).
+The large **visual-only** overhaul to the approved Stitch "Technical Ledger"
+language is **committed and live**: **v1.52.0 / build `2026.08.26.0011`**, commit
+`a5baf71` on `main` (pushed), deployed to Cloudflare Pages and **confirmed on the
+production apex** `https://whered-it-go.pages.dev` (version.json + root BUILD_ID
++ `fonts/*.woff2` + `PeriodNav`/`exp-plan-row` markers all served). It is
+**presentation-only** — `git diff` showed no mutator/logic/data lines changed;
+all 25 runners + parse green. Worker untouched. Full detail: memory file
+`stitch-redesign-progress.md`; `docs/design-system.md` ("Proven shared
+patterns") + `docs/ui-audit.md`; per-screen status in `docs/ui-verification.md`.
+Approved refs: `stitch-reference/*/screen.png`.
 
-**Done + browser-verified (true-390 PNGs via headless Chromium, all 25 runners +
-parse green):**
-- Self-hosted fonts (`fonts/*.woff2`): Inter 400/500/600/700, JetBrains Mono
-  400/500/600, Source Serif 4 600 — offline-safe, in `SERVED`+`APP_SHELL`.
-- Full token flip: cream/ink/hairline semantic palette; neumorphism/glass gone
-  (flattened the `neu*`/`glass*` helpers + CSS in one move); flat surfaces,
-  radius 0, 1px hairlines.
-- Responsive shell: 256px desktop sidebar (mono nav) + full-width workspace;
-  compact mono mobile header (page-title only — income/owner-line REMOVED,
-  headertest case 6 updated: income edited in Budget); bottom nav/FAB/seg
-  controls mono; ink active states.
-- **Typography = JetBrains-Mono-dominant** (nav/titles/labels/most figures);
-  Source Serif ONLY on the Investments portfolio total. `.t-section`=JBM 12/500,
-  `.t-label`=JBM 10/400.
-- 5 direct-reference screens recomposed: Home, Budget (metric strip + envelope
-  ledger), Expenses (burn/daily-avg grid), Investments (portfolio hero +
-  holdings ledger), and **Add Transaction rebuilt as a full-screen TaskSurface**
-  (`.sheet-task`).
+**Shipped in this redesign:**
+- Self-hosted fonts (`fonts/*.woff2`, committed): Inter 400/500/600/700,
+  JetBrains Mono 400/500/600, Source Serif 4 600 — offline-safe, in
+  `SERVED`+`APP_SHELL`.
+- Full token flip: cream/ink/hairline palette; neumorphism/glass gone; flat
+  surfaces, radius 0–2, 1px hairlines. Typography JetBrains-Mono-dominant; Source
+  Serif ONLY on the Investments portfolio total.
+- Responsive shell: 256px desktop sidebar + compact utility bar; compact mono
+  mobile header (icon-only sync); **squared floating bottom-nav rail** (icons
+  only, 4 custom + More); square FAB preserved.
+- **Home** rebuilt as the open three-panel workspace; **Budget** (8/4 + metric
+  strip + open-ledger groups; plan banner → compact button + sheet); **Expenses**
+  (8/4 with activity split; plan banner → compact button + sheet; owner toggle +
+  button share a row on mobile via `.exp-plan-row`); **Investments** (6/6
+  overview+allocation / holdings ledger); **Add/Edit Transaction** (full-screen
+  mono task surface / bounded desktop canvas, `.tx-field` rows).
+- Shared primitives: `PeriodNav` (Budget+Expenses month control),
+  `.split-8-4`/`.split-6-6`, `.ledger-*`, `.period-chip`.
 
-**NEXT SESSION — focused per-screen passes.** Open items (see
-`docs/ui-verification.md` "Known remaining items"):
-- Expenses + Investments **desktop right-column ledger split** (currently
-  full-width single column).
-- **Category B/C screens not yet recomposed** (Banks, Net Worth, Forecast-hidden,
-  Goals, Installments, Purchase Advisor, Bills, Household, Currency, More,
-  Settings, system overlays) — they inherit the flat/mono system but keep their
-  Inter-600 `h3`/card-title patterns; recompose from the proven primitives
-  (`GridSection`/`MetricStrip`/`ProgressMeter`/`Status`, all defined after the
-  icon registry ~L1000).
-- Polish: rounded/tinted status chips → flat status; hero mono weight 600↔500
-  consistency; Budget inline `bare tnum` amount inputs → mono.
-- **At deploy time:** bump BUILD_ID in all three sites (index.html/sw.js/
-  version.json) together — index.html/sw.js/fonts all changed. `node stage.cjs`
-  enforces the 3-way match. Do NOT deploy without an explicit ask.
-- Test tooling (kept in `scratchpad/`, not committed): local server
-  `serve.cjs` :8099; `shots.cjs` (headless Chromium true-390 + 1600 PNGs —
-  the ONLY way to a real 390px viewport; the in-browser tool clamps to ~500px);
-  `probe.cjs` (computed font-family/weight). Seed sample data via Settings →
-  Advanced → Load sample → "Tap again"; set localStorage
-  `allocation:preferredProfile`/`allocation:viewProfile` to skip the picker.
+**NEXT SESSION — Category B/C screens (partial/no direct Stitch reference).**
+Not yet recomposed; they inherit the flat/mono system but keep older
+Inter-600 `h3`/card-title patterns: Banks, standalone Net Worth,
+Forecast (hidden), Goals, Installments, Purchase Advisor, Bills, Household,
+Currency, More, Settings, and system overlays. Extrapolate from the proven
+primitives above. Minor polish still open (see `docs/ui-verification.md`
+"remaining differences"): Budget income `NumField` shows the raw ungrouped
+value; a few sample-data empty/`$0` states.
+- Test tooling lives in this session's `scratchpad/` (NOT committed; recreate
+  next time): `serve.cjs` :8099; `shots.cjs` (headless Chromium via `/tmp/pw`
+  playwright — true-390 + 1600 PNGs; **bottom-nav buttons now match on
+  `aria-label`**, they have no text). Verification PNGs are gitignored
+  (`artifacts/`). Seed sample data via Settings → Advanced → Load sample → "Tap
+  again"; set localStorage `allocation:preferredProfile`/`allocation:viewProfile`
+  to skip the picker.
 
 ## State of play — read this first
 
-**Live: v1.51.0 / build `2026.08.14.0010`**, deployed 2026-08-14 (`a02d26dc`) —
-**Phase 9c** (commit `b8eb079`): durable "Use this plan" + temporary trim →
-future budgets + atomic undo. Worker untouched (`d8b5b9ad`). Confirmed on the production origin
-(immutable + cache-busted): all three version sites agree, and
-`applyPurchaseTrimPlan` / `PurchaseTrimApplySheet` / `planSnapshot` are served.
-**Not yet seen on either phone.** (Previous: v1.50.0 / `2026.08.14.0009`,
-`b7fbf9a0`, commit `d6af9db` — Phase 9a+9b.)
+**Live: v1.52.0 / build `2026.08.26.0011`**, deployed 2026-08-26 (`db85a07a`,
+commit `a5baf71`) — the **Technical Ledger UI redesign** (Home + Budget/Expenses/
+Investments/Add-Transaction, shared shell). Presentation-only; feature/logic
+baseline unchanged from v1.51.0. Worker untouched. Confirmed on the production
+apex (all three version sites agree; fonts + new source markers served). Note the
+Cloudflare production alias took ~15 min of edge-PoP propagation to flip even
+though the API canonical deployment was correct immediately — not a pinning
+issue. Devices with the old cached shell (`.0010`) update via the app's
+version.json check / a hard reload. (Previous: v1.51.0 / `2026.08.14.0010`,
+`a02d26dc`, commit `b8eb079` — Phase 9c.)
 
 - **9a** — the purchase period now counts as a saving period (current period
   still doesn't): `purchaseSaveableBuckets(n)=max(0,n)`, both walks count
