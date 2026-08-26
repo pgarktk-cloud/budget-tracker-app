@@ -3703,8 +3703,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.53.1";
-const BUILD_ID="2026.08.27.0002";
+const APP_VERSION="1.53.2";
+const BUILD_ID="2026.08.27.0003";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -9469,24 +9469,36 @@ function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsC
         </div>
       :(
         <>
-          <div style={{display:"flex",alignItems:"center",gap:14}}>
-            <div style={{position:"relative",width:64,height:64,flexShrink:0}}>
-              <ProgressRing pct={Math.min(100,rate)} size={64} stroke={7} color={P.jade}/>
-              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <span className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{rate.toFixed(0)}%</span>
-              </div>
-            </div>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:11,color:P.faint}}>Savings rate this month</div>
-              <div className="tnum" style={{fontSize:13,fontWeight:600,color:P.ink,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                {show(total)} of {show(sum.income)}
-              </div>
+          {/* Flat Technical Ledger treatment, matching the sibling Home cards
+              (TrackedSpendingCard): lead with the money figure, a ProgressMeter
+              ruler (rate vs target, with the shared tick), then the Saved-vs-
+              Invested split as calm supporting detail. Replaces the old
+              circular ProgressRing that skipped the redesign. */}
+          <div className="mono tnum home-panel-value" style={{fontWeight:500,color:P.ink}}>{show(total)}</div>
+          <div style={{fontSize:13,color:P.muted,marginTop:4}}>saved &amp; invested · of {show(sum.income)}</div>
+
+          {/* Main ruler — progress toward the savings-rate target. Success when
+              met, neutral blue otherwise (never an alarming red savings bar;
+              the Verdict above already carries good/warn/bad). */}
+          <div style={{marginTop:14}}>
+            <ProgressMeter pct={Math.min(100,target>0?(rate/target)*100:rate)} color={rate>=target?P.success:P.info} height={6}/>
+            <div className="mono" style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:8,
+              fontSize:10,letterSpacing:".06em",textTransform:"uppercase",color:P.muted}}>
+              <span>{rate.toFixed(0)}% of income</span>
+              <span className="tnum">target {target}%</span>
             </div>
           </div>
-          <div className="home-fill" style={{marginTop:12,display:"flex",flexDirection:"column",justifyContent:"center",gap:8,minHeight:0}}>
-            <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,color:P.faint}}>
-              <span className="tnum">Saved {show(sum.saved)}</span>
-              <span className="tnum">Invested {show(sum.invested)}</span>
+
+          {/* Saved vs Invested split — supporting detail, absorbs the panel's
+              leftover height like the sibling cards' chart regions. */}
+          <div className="home-fill" style={{marginTop:16,display:"flex",flexDirection:"column",justifyContent:"flex-end",gap:8,minHeight:0}}>
+            <div className="mono" style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,color:P.muted}}>
+              <span className="tnum" style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{width:8,height:8,borderRadius:0,background:P.success,flexShrink:0}}/>Saved {show(sum.saved)}
+              </span>
+              <span className="tnum" style={{display:"flex",alignItems:"center",gap:6}}>
+                Invested {show(sum.invested)}<span style={{width:8,height:8,borderRadius:0,background:P.info,flexShrink:0}}/>
+              </span>
             </div>
             <div style={{height:6,borderRadius:0,background:P.surfaceMuted,overflow:"hidden",display:"flex"}}>
               {total>0?(<>
