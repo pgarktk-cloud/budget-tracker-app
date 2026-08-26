@@ -222,16 +222,26 @@ function bareTicker(sym) {
 }
 
 async function yahooChartMeta(symbol) {
-  const r = await fetch(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`,
-    { headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Accept": "application/json",
-    }}
-  );
-  if (!r.ok) return null;
-  const data = await r.json();
-  return data?.chart?.result?.[0]?.meta || null;
+  // Try both Yahoo hosts: a shared Worker egress IP is often rate-limited (429)
+  // or cookie-challenged (401) on one host but not the other, so a second host
+  // is a cheap retry that recovers most of a batch that would otherwise be lost.
+  const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
+  for (const host of hosts) {
+    try {
+      const r = await fetch(
+        `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`,
+        { headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+        }}
+      );
+      if (!r.ok) continue;            // 429/401 → try the other host
+      const data = await r.json();
+      const meta = data?.chart?.result?.[0]?.meta || null;
+      if (meta) return meta;
+    } catch (e) { /* try next host */ }
+  }
+  return null;
 }
 
 export default {
@@ -324,10 +334,14 @@ export default {
 
       // 1. Yahoo — handles everything, including LSE-listed ETFs like VWRA.L
       //    and the gold futures ticker GC=F.
-      await Promise.all(symbols.map(async (sym) => {
+      //    SEQUENTIAL, not Promise.all: firing the whole batch at once from a
+      //    single shared Worker IP tripped Yahoo's burst rate limiter, so most
+      //    of the batch came back 429 and only one or two symbols resolved
+      //    ("Got 1/6"). One-at-a-time keeps every symbol under the limit.
+      for (const sym of symbols) {
         try {
           const meta = await yahooChartMeta(sym);
-          if (!meta) return;
+          if (!meta) continue;
           const price = meta.regularMarketPrice;
           // previousClose/chartPreviousClose come from the same chart-meta
           // object Yahoo already returns for this endpoint — no extra request
@@ -336,7 +350,7 @@ export default {
           const prevClose = meta.previousClose ?? meta.chartPreviousClose;
           if (price && price > 0) results[sym] = { price, previousClose: (prevClose && prevClose > 0) ? prevClose : null };
         } catch (e) { /* skip */ }
-      }));
+      }
 
       // 2. Finnhub — fills in whatever Yahoo missed (it's good at US stocks and
       //    real-time). This fallback used to run in the browser with the key in

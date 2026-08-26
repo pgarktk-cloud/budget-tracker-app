@@ -3703,8 +3703,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.53.0";
-const BUILD_ID="2026.08.27.0001";
+const APP_VERSION="1.53.1";
+const BUILD_ID="2026.08.27.0002";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -9006,7 +9006,7 @@ function ProgressRing({pct,size=60,stroke=7,color,track}){
    (used by Portfolio/Hero for a slightly richer look) — same Recharts import,
    no new dependency. `height` lets Hero use a taller trend than Portfolio's
    compact one. */
-function Sparkline({data,color,area,height=40,fill,fillOpacity=0.28}){
+function Sparkline({data,color,area,height=40,fill,fillOpacity=0.28,strokeWidth=2}){
   if(!data||data.length<2)return null;
   const c=color||P.gr;
   const gid=`spark-${c.replace(/[^a-zA-Z0-9]/g,"")}`;
@@ -9035,7 +9035,7 @@ function Sparkline({data,color,area,height=40,fill,fillOpacity=0.28}){
               </linearGradient>
             </defs>
             <YAxis hide domain={domain}/>
-            <Area type="monotone" dataKey="value" stroke={c} strokeWidth={2} fill={`url(#${gid})`} dot={false} isAnimationActive={false}/>
+            <Area type="monotone" dataKey="value" stroke={c} strokeWidth={strokeWidth} fill={`url(#${gid})`} dot={false} isAnimationActive={false}/>
           </AreaChart>
         ):(
           <LineChart data={data} margin={{top:2,right:0,bottom:0,left:0}}>
@@ -9298,7 +9298,7 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
         marginTop:isMobile?12:16,...(isMobile?{marginBottom:-22,marginLeft:-2,marginRight:-2}:null)}}>
         {sorted.length>=2
           ?<Sparkline data={trendPts} color={momAmt!=null&&momAmt<0?P.attention:P.success} area
-             height={isMobile?190:150} fillOpacity={isMobile?0.5:0.28}/>
+             height={isMobile?190:150} fillOpacity={isMobile?0.18:0.28} strokeWidth={isMobile?2.75:2}/>
           :<div style={{fontSize:11,color:P.faint,paddingBottom:4}}>Trend appears after 2+ months of history</div>}
       </div>
     </div>
