@@ -43,6 +43,17 @@ const SERVED=[
   "icon-180.png",
   "icon-192.png",
   "icon-512.png",
+  // Self-hosted webfonts (Technical Ledger redesign). @font-face in index.html
+  // references ./fonts/*.woff2; sw.js's APP_SHELL precaches the same paths so
+  // the app renders correctly offline on first load.
+  "fonts/inter-400.woff2",
+  "fonts/inter-500.woff2",
+  "fonts/inter-600.woff2",
+  "fonts/inter-700.woff2",
+  "fonts/source-serif-4-600.woff2",
+  "fonts/jetbrains-mono-400.woff2",
+  "fonts/jetbrains-mono-500.woff2",
+  "fonts/jetbrains-mono-600.woff2",
 ];
 
 const die=msg=>{console.error("\n  STAGE FAILED — "+msg+"\n");process.exit(1);};
@@ -97,7 +108,9 @@ let bytes=0;
 for(const f of SERVED){
   const src=path.join(ROOT,f);
   if(!fs.existsSync(src))die(`${f} is listed as a served file but is missing.`);
-  fs.copyFileSync(src,path.join(OUT,f));
+  const dst=path.join(OUT,f);
+  fs.mkdirSync(path.dirname(dst),{recursive:true});
+  fs.copyFileSync(src,dst);
   bytes+=fs.statSync(src).size;
 }
 

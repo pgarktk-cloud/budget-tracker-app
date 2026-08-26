@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+
+<html class="h-full bg-surface-cream text-on-surface antialiased font-sans" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Budgets - Where'dItGo</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#dae2fd",
+                        "on-primary-container": "#7c839b",
+                        "primary-container": "#131b2e",
+                        "tertiary-container": "#271901",
+                        "on-surface": "#1b1b1d",
+                        "surface-container-low": "#f6f3f5",
+                        "surface-variant": "#e4e2e4",
+                        "on-surface-variant": "#45464d",
+                        "secondary-fixed": "#6ffbbe",
+                        "on-error-container": "#93000a",
+                        "surface-container-highest": "#e4e2e4",
+                        "on-secondary-fixed-variant": "#005236",
+                        "on-primary-fixed": "#131b2e",
+                        "on-tertiary": "#ffffff",
+                        "inverse-surface": "#303032",
+                        "on-secondary-container": "#00714d",
+                        "success-jade": "#059669",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary-container": "#6cf8bb",
+                        "outline-variant": "#c6c6cd",
+                        "error": "#ba1a1a",
+                        "outline": "#76777d",
+                        "inverse-primary": "#bec6e0",
+                        "on-tertiary-container": "#98805d",
+                        "surface-dim": "#dcd9db",
+                        "surface-container": "#f0edef",
+                        "tertiary": "#000000",
+                        "primary": "#000000",
+                        "attention-coral": "#F87171",
+                        "investment-blue": "#3B82F6",
+                        "surface-tint": "#565e74",
+                        "surface-bright": "#fcf8fa",
+                        "background": "#fcf8fa",
+                        "surface-container-high": "#eae7e9",
+                        "on-tertiary-fixed": "#271901",
+                        "surface-cream": "#FDFCF9",
+                        "primary-fixed-dim": "#bec6e0",
+                        "secondary-fixed-dim": "#4edea3",
+                        "on-secondary": "#ffffff",
+                        "secondary": "#006c49",
+                        "surface": "#fcf8fa",
+                        "inverse-on-surface": "#f3f0f2",
+                        "on-secondary-fixed": "#002113",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed-variant": "#574425",
+                        "tertiary-fixed-dim": "#dec29a",
+                        "on-primary-fixed-variant": "#3f465c",
+                        "error-container": "#ffdad6",
+                        "on-primary": "#ffffff",
+                        "text-muted": "#64748B",
+                        "on-background": "#1b1b1d",
+                        "tertiary-fixed": "#fcdeb5"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "mono": ["\"JetBrains Mono\"", "monospace"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        /* Hairline borders for pure grid */
+        .hairline-border {
+            border-color: rgba(198, 198, 205, 0.4);
+        }
+        .grid-border { border: 1px solid rgba(198, 198, 205, 0.4); }
+        .grid-border-r { border-right: 1px solid rgba(198, 198, 205, 0.4); }
+        .grid-border-b { border-bottom: 1px solid rgba(198, 198, 205, 0.4); }
+        .grid-border-t { border-top: 1px solid rgba(198, 198, 205, 0.4); }
+        .grid-border-l { border-left: 1px solid rgba(198, 198, 205, 0.4); }
+    </style>
+</head>
+<body class="h-full bg-surface-cream text-on-surface font-body-lg flex overflow-hidden">
+<!-- SideNavBar: Technical Grid Aesthetic -->
+<nav class="hidden md:flex flex-col h-screen w-64 fixed left-0 top-0 bg-surface-cream border-r hairline-border z-20">
+<div class="p-6 border-b hairline-border flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-2xl" data-icon="cloud">cloud</span>
+<div>
+<h1 class="font-mono text-xs uppercase tracking-widest font-medium text-primary">Where'dItGo</h1>
+</div>
+</div>
+<div class="flex-1 flex flex-col pt-4">
+<!-- Dashboard -->
+<a class="flex items-center gap-4 px-6 py-4 text-on-surface-variant hover:text-primary transition-colors hover:bg-surface-variant/10 border-l-2 border-transparent hover:border-outline-variant/30" href="#">
+<span class="material-symbols-outlined text-xl font-light">dashboard</span>
+<span class="font-mono text-xs uppercase tracking-wider">Dashboard</span>
+</a>
+<!-- Budgets (Active) -->
+<a class="flex items-center gap-4 px-6 py-4 text-primary bg-surface-variant/30 border-l-2 border-primary" href="#">
+<span class="material-symbols-outlined text-xl" style="font-variation-settings: 'FILL' 1;">account_balance_wallet</span>
+<span class="font-mono text-xs uppercase tracking-wider font-medium">Budgets</span>
+</a>
+<!-- Transactions -->
+<a class="flex items-center gap-4 px-6 py-4 text-on-surface-variant hover:text-primary transition-colors hover:bg-surface-variant/10 border-l-2 border-transparent hover:border-outline-variant/30" href="#">
+<span class="material-symbols-outlined text-xl font-light">receipt_long</span>
+<span class="font-mono text-xs uppercase tracking-wider">Transactions</span>
+</a>
+<!-- Accounts -->
+<a class="flex items-center gap-4 px-6 py-4 text-on-surface-variant hover:text-primary transition-colors hover:bg-surface-variant/10 border-l-2 border-transparent hover:border-outline-variant/30" href="#">
+<span class="material-symbols-outlined text-xl font-light">account_balance</span>
+<span class="font-mono text-xs uppercase tracking-wider">Accounts</span>
+</a>
+<!-- Settings -->
+<a class="flex items-center gap-4 px-6 py-4 text-on-surface-variant hover:text-primary transition-colors hover:bg-surface-variant/10 border-l-2 border-transparent hover:border-outline-variant/30" href="#">
+<span class="material-symbols-outlined text-xl font-light">settings</span>
+<span class="font-mono text-xs uppercase tracking-wider">Settings</span>
+</a>
+</div>
+<div class="p-6 mt-auto border-t hairline-border">
+<button class="w-full bg-primary text-on-primary font-mono text-[10px] uppercase tracking-wider py-4 rounded-sm hover:scale-[1.02] transition-transform flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+                Add Transaction
+            </button>
+</div>
+</nav>
+<!-- Main Content Wrapper -->
+<div class="flex-1 flex flex-col md:ml-64 relative min-h-screen bg-surface-cream">
+<!-- TopNavBar: Minimalist Header -->
+<header class="fixed top-0 right-0 w-[calc(100%-16rem)] h-16 bg-surface-cream flex items-center justify-between px-8 z-10 border-b hairline-border hidden md:flex">
+<div class="flex items-center gap-8">
+<div class="flex gap-8 text-xs font-mono uppercase tracking-wider">
+<a class="text-primary font-medium" href="#">Overview</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors" href="#">Reports</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors" href="#">Analytics</a>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex border hairline-border p-0.5 bg-surface-cream">
+<button class="px-4 py-1.5 text-primary text-[10px] font-mono tracking-wider uppercase hover:bg-surface-variant/50 transition-all">Me</button>
+<button class="px-4 py-1.5 text-primary text-[10px] font-mono tracking-wider uppercase hover:bg-surface-variant/50 transition-all">Partner</button>
+<button class="px-4 py-1.5 bg-primary text-on-primary text-[10px] font-mono tracking-wider uppercase transition-all">Household</button>
+</div>
+<div class="flex items-center gap-4 border-l hairline-border pl-6">
+<button class="text-text-muted hover:text-primary transition-colors font-light flex items-center justify-center">
+<span class="material-symbols-outlined text-lg">sync</span>
+</button>
+<button class="w-8 h-8 rounded-sm overflow-hidden border hairline-border">
+<img alt="User Avatar" class="w-full h-full object-cover grayscale" data-alt="A small, professional avatar portrait of a modern individual in soft natural lighting, used as a profile picture in a clean, minimalist UI." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAP0GalLaERamDewbZAr44_naRkQS7zjJ4F5WuOPOth4oU8ULG4T7ePkBo9hrYDd7F9BwckBnDfyoHeCIaISheeLZ5LQd9rqk5yE9XeuLh8-UFXBmngB1b0I7uZdec5B5v_G2NspKaaY8gHdMpL7wYKKUePauv7GdI2nmypiFKWUTm8dY1eihHh1-1ze-f6gPSs5gggbgMEfR8yHyFo-eDOTggnyQ5GiI6dQxF_slRlvyA5BYqHAiWN"/>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Canvas: Pure Grid System -->
+<main class="flex-1 overflow-y-auto pt-16 grid grid-cols-1 lg:grid-cols-12 relative min-h-full">
+<!-- Left Column: Primary Metrics & Envelope Utilization -->
+<div class="lg:col-span-8 flex flex-col grid-border-r h-full">
+<!-- Top Section: Technical Header -->
+<div class="px-10 py-6 border-b hairline-border flex justify-between items-center bg-surface-container-lowest/50">
+<div>
+<h2 class="text-[10px] tracking-widest uppercase text-primary/60 font-mono">Budget Overview</h2>
+</div>
+<div class="flex items-center gap-2 border border-outline-variant/50 p-1 px-2 bg-surface-container-lowest cursor-pointer">
+<span class="material-symbols-outlined text-[14px] text-on-surface-variant">calendar_today</span>
+<span class="text-[10px] text-primary font-mono tracking-wider uppercase">OCT 2023</span>
+<span class="material-symbols-outlined text-[14px] text-on-surface-variant">expand_more</span>
+</div>
+</div>
+<!-- Top Row: Metrics (High-density monospaced) -->
+<div class="grid grid-cols-3 grid-border-b bg-surface-cream">
+<!-- Metric 1 -->
+<div class="p-10 grid-border-r">
+<p class="text-[10px] tracking-widest uppercase text-primary/60 font-mono mb-3">Net Monthly Income</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl text-primary font-mono font-medium tracking-tight">$8,450.00</span>
+</div>
+</div>
+<!-- Metric 2 -->
+<div class="p-10 grid-border-r">
+<p class="text-[10px] tracking-widest uppercase text-primary/60 font-mono mb-3">Total Allocated</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl text-primary font-mono font-medium tracking-tight">$4,250.00</span>
+</div>
+</div>
+<!-- Metric 3 -->
+<div class="p-10">
+<p class="text-[10px] tracking-widest uppercase text-primary/60 font-mono mb-3">Target</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl text-primary font-mono font-medium tracking-tight">$5,000.00</span>
+</div>
+<!-- Minimalist Progress -->
+<div class="relative w-full h-1 bg-surface-variant mb-2 mt-4">
+<div class="absolute top-0 left-0 h-full bg-success-jade" style="width: 85%"></div>
+<div class="absolute -top-1.5 left-[85%] w-0.5 h-4 bg-success-jade transform -translate-x-1/2"></div>
+</div>
+<div class="flex justify-between text-[10px] text-on-surface-variant font-mono uppercase">
+<span class="text-success-jade font-medium">85% Utilized</span>
+<span class="text-text-muted">On Track</span>
+</div>
+</div>
+</div>
+<!-- Bottom Section: Envelope Utilization (Technical Table) -->
+<div class="flex-1 bg-surface-cream">
+<div class="px-10 py-6 grid-border-b bg-surface-container-lowest/50 flex justify-between items-center">
+<h3 class="text-[10px] tracking-widest uppercase text-primary/60 font-mono">Budget Envelopes</h3>
+<button class="text-[10px] tracking-widest uppercase text-primary font-mono flex items-center gap-1 hover:opacity-70 transition-opacity">
+<span class="material-symbols-outlined text-sm">add</span> New Envelope
+                        </button>
+</div>
+<!-- Table Header -->
+<div class="grid grid-cols-12 gap-4 px-10 py-4 grid-border-b bg-surface-bright/50">
+<div class="col-span-3 text-[10px] font-mono uppercase text-on-surface-variant/70 tracking-widest">Category</div>
+<div class="col-span-5 text-[10px] font-mono uppercase text-on-surface-variant/70 tracking-widest">Utilization</div>
+<div class="col-span-2 text-right text-[10px] font-mono uppercase text-on-surface-variant/70 tracking-widest">Spent</div>
+<div class="col-span-2 text-right text-[10px] font-mono uppercase text-on-surface-variant/70 tracking-widest">Budget</div>
+</div>
+<!-- Table Rows -->
+<div class="divide-y divide-outline-variant/30">
+<!-- Row 1: Housing -->
+<div class="px-10 py-6 grid grid-cols-12 gap-4 items-center group hover:bg-surface-variant/10 transition-colors">
+<div class="col-span-3 flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant text-lg">home</span>
+<span class="text-sm text-primary font-medium">Housing</span>
+</div>
+<div class="col-span-5 px-4 flex items-center gap-4">
+<div class="relative w-full h-1 bg-surface-variant">
+<div class="absolute top-0 left-0 h-full bg-primary" style="width: 100%"></div>
+<div class="absolute -top-1.5 left-[100%] w-0.5 h-4 bg-primary transform -translate-x-1/2"></div>
+</div>
+<span class="text-[10px] text-on-surface-variant font-mono uppercase w-10 text-right">100%</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-sm text-primary font-mono font-medium">$2,100.00</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-[10px] text-on-surface-variant font-mono">$2,100.00</span>
+</div>
+</div>
+<!-- Row 2: Groceries (Over Budget) -->
+<div class="px-10 py-6 grid grid-cols-12 gap-4 items-center group hover:bg-surface-variant/10 transition-colors bg-error-container/5">
+<div class="col-span-3 flex items-center gap-4">
+<span class="material-symbols-outlined text-attention-coral text-lg">shopping_cart</span>
+<span class="text-sm text-attention-coral font-medium">Groceries</span>
+</div>
+<div class="col-span-5 px-4 flex items-center gap-4">
+<div class="relative w-full h-1 bg-surface-variant">
+<div class="absolute top-0 left-0 h-full bg-attention-coral" style="width: 100%"></div>
+<div class="absolute -top-1.5 left-[100%] w-0.5 h-4 bg-attention-coral transform -translate-x-1/2"></div>
+</div>
+<span class="text-[10px] text-attention-coral font-mono uppercase font-bold w-10 text-right">112%</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-sm text-attention-coral font-mono font-medium">$895.50</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-[10px] text-on-surface-variant font-mono">$800.00</span>
+</div>
+</div>
+<!-- Row 3: Dining Out -->
+<div class="px-10 py-6 grid grid-cols-12 gap-4 items-center group hover:bg-surface-variant/10 transition-colors">
+<div class="col-span-3 flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant text-lg">restaurant</span>
+<span class="text-sm text-primary font-medium">Dining Out</span>
+</div>
+<div class="col-span-5 px-4 flex items-center gap-4">
+<div class="relative w-full h-1 bg-surface-variant">
+<div class="absolute top-0 left-0 h-full bg-success-jade" style="width: 65%"></div>
+<div class="absolute -top-1.5 left-[65%] w-0.5 h-4 bg-primary transform -translate-x-1/2"></div>
+</div>
+<span class="text-[10px] text-on-surface-variant font-mono uppercase w-10 text-right">65%</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-sm text-primary font-mono font-medium">$325.00</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-[10px] text-on-surface-variant font-mono">$500.00</span>
+</div>
+</div>
+<!-- Row 4: Transportation -->
+<div class="px-10 py-6 grid grid-cols-12 gap-4 items-center group hover:bg-surface-variant/10 transition-colors">
+<div class="col-span-3 flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant text-lg">directions_car</span>
+<span class="text-sm text-primary font-medium">Transportation</span>
+</div>
+<div class="col-span-5 px-4 flex items-center gap-4">
+<div class="relative w-full h-1 bg-surface-variant">
+<div class="absolute top-0 left-0 h-full bg-success-jade" style="width: 42%"></div>
+<div class="absolute -top-1.5 left-[42%] w-0.5 h-4 bg-primary transform -translate-x-1/2"></div>
+</div>
+<span class="text-[10px] text-on-surface-variant font-mono uppercase w-10 text-right">42%</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-sm text-primary font-mono font-medium">$168.00</span>
+</div>
+<div class="col-span-2 text-right">
+<span class="text-[10px] text-on-surface-variant font-mono">$400.00</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: Allocation Summary -->
+<div class="lg:col-span-4 flex flex-col bg-surface-cream h-full">
+<div class="p-6 grid-border-b bg-surface-container-lowest/50 flex justify-between items-center">
+<h3 class="text-[10px] tracking-widest uppercase text-primary/60 font-mono">Allocation Summary</h3>
+<span class="material-symbols-outlined text-on-surface-variant text-sm">more_horiz</span>
+</div>
+<div class="flex-1 p-10 flex flex-col gap-10">
+<div class="flex-1 bg-surface-container-low/30 relative grid-border flex items-end justify-around px-8 pt-12 pb-0">
+<!-- Chart Grid Lines -->
+<div class="absolute inset-0 flex flex-col justify-between p-6 pointer-events-none">
+<div class="w-full h-[1px] bg-outline-variant/30"></div>
+<div class="w-full h-[1px] bg-outline-variant/30"></div>
+<div class="w-full h-[1px] bg-outline-variant/30"></div>
+<div class="w-full h-[1px] bg-outline-variant/30"></div>
+</div>
+<!-- Bars -->
+<div class="w-12 bg-surface-variant/50 h-[40%] relative z-10 border-t grid-border-t"></div>
+<div class="w-12 bg-surface-variant/50 h-[60%] relative z-10 border-t grid-border-t"></div>
+<div class="w-12 bg-surface-variant/50 h-[80%] relative z-10 border-t grid-border-t"></div>
+<div class="w-12 bg-success-jade/20 h-[95%] relative z-10 border-t-2 border-success-jade"></div>
+</div>
+<div class="grid grid-cols-2 gap-8 border-t hairline-border pt-8">
+<div>
+<div class="text-[10px] font-mono tracking-widest uppercase text-on-surface-variant mb-2">Total Spent</div>
+<div class="text-xl text-primary font-mono font-medium">$3,488.50</div>
+</div>
+<div>
+<div class="text-[10px] font-mono tracking-widest uppercase text-on-surface-variant mb-2">Remaining</div>
+<div class="text-xl text-success-jade font-mono font-medium">$761.50</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

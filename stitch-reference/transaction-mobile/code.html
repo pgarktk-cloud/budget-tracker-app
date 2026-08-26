@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Add Transaction - LEDGER</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "success-jade": "#059669",
+                      "surface-variant": "#e2e2e2",
+                      "secondary": "#006c49",
+                      "on-primary-fixed": "#1b1b1b",
+                      "secondary-fixed-dim": "#81d8ad",
+                      "tertiary": "#000000",
+                      "on-tertiary-container": "#848484",
+                      "primary-container": "#1b1b1b",
+                      "on-error-container": "#93000a",
+                      "tertiary-container": "#1b1b1b",
+                      "error": "#ba1a1a",
+                      "inverse-surface": "#303030",
+                      "surface-cream": "#FDFCF9",
+                      "tertiary-fixed": "#e2e2e2",
+                      "on-surface": "#1b1b1b",
+                      "on-primary": "#ffffff",
+                      "on-primary-container": "#848484",
+                      "surface": "#f9f9f9",
+                      "outline": "#7e7576",
+                      "attention-coral": "#F87171",
+                      "on-primary-fixed-variant": "#474747",
+                      "on-surface-variant": "#4c4546",
+                      "primary-fixed": "#e2e2e2",
+                      "surface-tint": "#5e5e5e",
+                      "secondary-container": "#9af2c5",
+                      "on-background": "#1b1b1b",
+                      "on-secondary": "#ffffff",
+                      "surface-container-lowest": "#ffffff",
+                      "on-tertiary-fixed-variant": "#474747",
+                      "surface-container": "#eeeeee",
+                      "primary": "#000000",
+                      "on-error": "#ffffff",
+                      "inverse-primary": "#c6c6c6",
+                      "surface-container-highest": "#e2e2e2",
+                      "on-secondary-container": "#0c714d",
+                      "on-tertiary": "#ffffff",
+                      "surface-bright": "#f9f9f9",
+                      "error-container": "#ffdad6",
+                      "on-tertiary-fixed": "#1b1b1b",
+                      "inverse-on-surface": "#f1f1f1",
+                      "secondary-fixed": "#9df4c8",
+                      "primary-fixed-dim": "#c6c6c6",
+                      "outline-variant": "#cfc4c5",
+                      "on-secondary-fixed": "#002113",
+                      "hairline-border": "rgba(198, 198, 205, 0.4)",
+                      "background": "#f9f9f9",
+                      "surface-dim": "#dadada",
+                      "surface-container-high": "#e8e8e8",
+                      "surface-container-low": "#f3f3f3",
+                      "tertiary-fixed-dim": "#c6c6c6",
+                      "on-secondary-fixed-variant": "#005236",
+                      "investment-blue": "#3B82F6"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "section-padding": "1.5rem",
+                      "container-margin": "1.25rem",
+                      "inner-card-padding": "1.25rem",
+                      "touch-target-min": "44px",
+                      "grid-gutter": "0px",
+                      "card-gap": "1rem"
+              },
+              "fontFamily": {
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "financial-display-md": [
+                              "\"Source Serif 4\""
+                      ],
+                      "financial-display-lg": [
+                              "\"Source Serif 4\""
+                      ],
+                      "data-mono-lg": [
+                              "JetBrains Mono"
+                      ],
+                      "mono": [
+                              "JetBrains Mono", "monospace"
+                      ],
+                      "technical-label": [
+                              "JetBrains Mono"
+                      ],
+                      "body-sm": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "financial-display-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "financial-display-lg": [
+                              "36px",
+                              {
+                                      "lineHeight": "44px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "data-mono-lg": [
+                              "30px",
+                              {
+                                      "lineHeight": "36px",
+                                      "letterSpacing": "-0.05em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "technical-label": [
+                              "10px",
+                              {
+                                      "lineHeight": "16px",
+                                      "letterSpacing": "0.1em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "body-sm": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style type="text/tailwindcss">
+        @layer utilities {
+            .hide-scrollbar::-webkit-scrollbar {
+                display: none;
+            }
+            .hide-scrollbar {
+                -ms-overflow-style: none;
+                scrollbar-width: none;
+            }
+            .material-symbols-outlined {
+              font-variation-settings:
+              'FILL' 0,
+              'wght' 400,
+              'GRAD' 0,
+              'opsz' 24
+            }
+        }
+    </style>
+</head>
+<body class="bg-surface-cream text-primary antialiased min-h-screen font-body-md flex flex-col md:hidden selection:bg-surface-variant selection:text-tertiary">
+<!-- Minimalist Header -->
+<header class="flex justify-between items-center px-4 py-4 w-full z-50 border-b border-outline-variant/30 bg-surface-cream fixed top-0">
+<div class="flex items-center gap-3">
+<button aria-label="Close" class="w-8 h-8 rounded-none flex items-center justify-center hover:bg-surface-variant/10 active:scale-[1.02] transition-transform duration-100 overflow-hidden">
+<span class="material-symbols-outlined text-primary text-xl">close</span>
+</button>
+<span class="font-mono text-xs uppercase tracking-widest font-medium text-primary">Add Transaction</span>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-xs font-mono uppercase tracking-widest text-primary/60 hover:text-primary transition-colors">Clear</button>
+</div>
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 mt-[65px] pb-24 overflow-y-auto max-w-3xl mx-auto w-full flex flex-col gap-0 border-x border-outline-variant/30 min-h-screen">
+<!-- Remaining Budget Instrumentation Header -->
+<div class="flex justify-between items-center px-6 py-4 border-b border-outline-variant/30 bg-surface-container-lowest/50">
+<div>
+<p class="text-[10px] tracking-widest uppercase text-primary/60 font-mono">Remaining Budget</p>
+</div>
+<div class="flex items-center gap-2 border border-outline-variant/50 p-1 px-2 bg-surface-container-lowest">
+<span class="text-[10px] text-primary font-mono tracking-wider">$1,240.00</span>
+</div>
+</div>
+<form class="flex flex-col border-b border-outline-variant/30 bg-surface-container-lowest/50">
+<!-- Type Selector -->
+<div class="flex border-b border-outline-variant/30 h-16 items-center">
+<label class="w-32 px-6 text-[10px] tracking-widest uppercase text-primary/60 font-mono shrink-0">Type</label>
+<div class="flex-1 flex gap-0 pr-6">
+<button class="flex-1 py-2 bg-primary text-on-primary font-mono text-[10px] tracking-wider uppercase border border-primary flex items-center justify-center gap-1 transition-all" type="button">
+<span class="material-symbols-outlined text-[14px]">remove</span>
+                        Expense
+                    </button>
+<button class="flex-1 py-2 bg-transparent text-primary font-mono text-[10px] tracking-wider uppercase border-y border-r border-outline-variant/50 hover:bg-surface-variant/10 flex items-center justify-center gap-1 transition-all" type="button">
+<span class="material-symbols-outlined text-[14px]">add</span>
+                        Income
+                    </button>
+</div>
+</div>
+<!-- Amount Input -->
+<div class="flex border-b border-outline-variant/30 h-24 items-center">
+<label class="w-32 px-6 text-[10px] tracking-widest uppercase text-primary/60 font-mono shrink-0" for="txn-amount">Amount</label>
+<div class="flex-1 flex items-baseline px-6 relative group h-full pt-6">
+<span class="font-financial-display-lg text-primary mr-1 select-none">$</span>
+<input class="w-full bg-transparent border-none p-0 focus:ring-0 font-financial-display-lg font-mono tracking-tighter text-primary placeholder:text-surface-dim h-full outline-none" id="txn-amount" inputmode="decimal" placeholder="0.00" type="number"/>
+</div>
+</div>
+<!-- Title Input -->
+<div class="flex border-b border-outline-variant/30 h-16 items-center hover:bg-surface-variant/10 transition-colors">
+<label class="w-32 px-6 text-[10px] tracking-widest uppercase text-primary/60 font-mono shrink-0" for="txn-title">Title</label>
+<div class="flex-1 flex items-center pr-6 h-full">
+<input class="w-full bg-transparent border-none p-0 focus:ring-0 font-body-md text-primary placeholder:text-outline h-full outline-none" id="txn-title" placeholder="Merchant or description" type="text"/>
+</div>
+</div>
+<!-- Category Select -->
+<div class="flex border-b border-outline-variant/30 h-16 items-center hover:bg-surface-variant/10 transition-colors cursor-pointer relative">
+<label class="w-32 px-6 text-[10px] tracking-widest uppercase text-primary/60 font-mono shrink-0" for="txn-category">Category</label>
+<div class="flex-1 flex items-center justify-between pr-6 h-full">
+<select class="w-full bg-transparent border-none p-0 focus:ring-0 font-body-md text-primary appearance-none h-full outline-none pr-8 z-10 cursor-pointer" id="txn-category">
+<option class="text-outline" disabled="" selected="" value="">Select a category</option>
+<option value="dining">Dining Out</option>
+<option value="groceries">Groceries</option>
+<option value="transport">Transportation</option>
+<option value="utilities">Utilities</option>
+<option value="software">Software</option>
+</select>
+<span class="material-symbols-outlined text-primary absolute right-6 pointer-events-none text-[18px]">expand_more</span>
+</div>
+</div>
+<!-- Date Picker -->
+<div class="flex border-b border-outline-variant/30 h-16 items-center hover:bg-surface-variant/10 transition-colors">
+<label class="w-32 px-6 text-[10px] tracking-widest uppercase text-primary/60 font-mono shrink-0" for="txn-date">Date</label>
+<div class="flex-1 flex items-center pr-6 h-full">
+<input class="w-full bg-transparent border-none p-0 focus:ring-0 font-mono text-[14px] text-primary h-full outline-none" id="txn-date" type="date" value="2023-10-27"/>
+</div>
+</div>
+<!-- Note Textarea -->
+<div class="flex border-b border-outline-variant/30 items-start hover:bg-surface-variant/10 transition-colors min-h-[120px]">
+<label class="w-32 px-6 py-4 text-[10px] tracking-widest uppercase text-primary/60 font-mono shrink-0 mt-1" for="txn-note">Note</label>
+<div class="flex-1 flex items-start pr-6 h-full py-4">
+<textarea class="w-full bg-transparent border-none p-0 focus:ring-0 font-body-sm text-primary placeholder:text-outline outline-none resize-none bg-transparent" id="txn-note" placeholder="Add optional details..." rows="3"></textarea>
+</div>
+</div>
+</form>
+</main>
+<!-- Bottom Action Area -->
+<div class="fixed bottom-0 w-full z-50 bg-surface-cream border-t border-outline-variant/30 p-6 pb-8">
+<button class="w-full bg-success-jade text-on-secondary font-mono text-[12px] tracking-widest uppercase py-4 rounded-none flex items-center justify-center gap-2 hover:opacity-90 active:scale-[1.02] transition-all duration-100" type="submit">
+<span class="material-symbols-outlined text-[16px]">check_circle</span>
+            Record Transaction
+        </button>
+</div>
+</body></html>

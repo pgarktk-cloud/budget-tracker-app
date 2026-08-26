@@ -1,5 +1,33 @@
 # Implementation Roadmap
 
+## ▶ NEXT: Technical Ledger redesign — focused per-screen passes (2026-08-26)
+
+The visual overhaul's foundation + 5 direct-reference screens are done in the
+working tree (see `docs/current-status.md` top block + memory
+`stitch-redesign-progress.md`). Remaining work is **one focused pass per screen**,
+composing strictly from the proven primitives — no new visual language.
+
+**Order (frequent/important first):** Purchase Advisor → Goals → Installments →
+Bills → Household → Currency → Net Worth → Banks → Settings → system overlays
+(Sync/connect/conflict/pending/deleted/import/profile/confirm/undo) → More →
+Forecast (stays hidden). Then desktop right-column ledger split for Expenses +
+Investments, and the polish items in `docs/ui-verification.md`.
+
+**Per-screen recipe:** flatten the root (already transparent), replace hero/
+metric blocks with `MetricStrip`/`MetricBlock`, rows with `LedgerRow`/hairline
+rows, progress with `ProgressMeter`, status with `Status`; instrument labels use
+`.t-label` (JBM 10/400), section/page titles `.t-section` (JBM 12/500), figures
+mono (Source Serif ONLY for a single dominant total à la Investments); forms use
+the `.sheet-task` TaskSurface pattern where a full-screen flow fits. Keep every
+handler/mutator; presentation-only. Verify each screen with `scratchpad/shots.cjs`
+(true 390 + 1600) and re-run all 25 runners + parsecheck. Bump BUILD_ID (3 sites)
+only at deploy time.
+
+**Traps (CLAUDE.md):** declaration-order TDZ; Portal every tab-rendered sheet;
+`input.bare`'s `font:inherit` beats `.mono` (tag `input.bare.mono` or inline
+fontFamily); date inputs need fontFamily+height+appearance:none; prefer Edit over
+`node -e` string-replace; grep-verify after edits.
+
 ## ▶ PROGRAMME — planned 2026-08-14, fifteen items in phases
 
 Planned in full on 2026-08-14. The plan file lives at

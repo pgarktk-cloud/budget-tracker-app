@@ -71,3 +71,6 @@ lastaictx.json
 # `node stage.cjs` rebuilds this from the seven served files on every deploy.
 # Build output, not source — the originals all live at the repo root.
 site/
+
+# Local UI-verification screenshots (scratch; not part of the app or deploy)
+artifacts/

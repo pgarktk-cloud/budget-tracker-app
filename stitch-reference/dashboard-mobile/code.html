@@ -1,0 +1,315 @@
+<!DOCTYPE html><html class="light" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Where'dItGo - Home Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary-fixed": "#131b2e",
+                      "primary": "#000000",
+                      "inverse-primary": "#bec6e0",
+                      "outline-variant": "#c6c6cd",
+                      "on-tertiary-fixed-variant": "#574425",
+                      "tertiary-fixed": "#fcdeb5",
+                      "inverse-surface": "#303032",
+                      "tertiary-container": "#271901",
+                      "on-error-container": "#93000a",
+                      "primary-container": "#131b2e",
+                      "on-primary-container": "#7c839b",
+                      "on-background": "#1b1b1d",
+                      "attention-coral": "#F87171",
+                      "investment-blue": "#3B82F6",
+                      "outline": "#76777d",
+                      "on-surface-variant": "#45464d",
+                      "on-secondary": "#ffffff",
+                      "surface-variant": "#e4e2e4",
+                      "secondary": "#006c49",
+                      "surface-container": "#f0edef",
+                      "on-secondary-fixed-variant": "#005236",
+                      "surface-cream": "#FDFCF9",
+                      "error": "#ba1a1a",
+                      "tertiary": "#000000",
+                      "surface-container-high": "#eae7e9",
+                      "on-primary-fixed-variant": "#3f465c",
+                      "surface-bright": "#fcf8fa",
+                      "on-surface": "#1b1b1d",
+                      "secondary-fixed": "#6ffbbe",
+                      "secondary-container": "#6cf8bb",
+                      "on-secondary-container": "#00714d",
+                      "on-tertiary": "#ffffff",
+                      "on-primary": "#ffffff",
+                      "text-muted": "#64748B",
+                      "surface-container-low": "#f6f3f5",
+                      "surface-dim": "#dcd9db",
+                      "error-container": "#ffdad6",
+                      "primary-fixed-dim": "#bec6e0",
+                      "on-tertiary-fixed": "#271901",
+                      "secondary-fixed-dim": "#4edea3",
+                      "surface": "#fcf8fa",
+                      "tertiary-fixed-dim": "#dec29a",
+                      "surface-container-lowest": "#ffffff",
+                      "on-secondary-fixed": "#002113",
+                      "primary-fixed": "#dae2fd",
+                      "inverse-on-surface": "#f3f0f2",
+                      "on-tertiary-container": "#98805d",
+                      "success-jade": "#059669",
+                      "surface-container-highest": "#e4e2e4",
+                      "surface-tint": "#565e74",
+                      "background": "#fcf8fa",
+                      "on-error": "#ffffff"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "container-margin": "1.25rem",
+                      "inner-card-padding": "1.25rem",
+                      "card-gap": "1rem",
+                      "touch-target-min": "44px",
+                      "section-padding": "1.5rem"
+              },
+              "fontFamily": {
+                      "financial-display-lg-mobile": [
+                              "\"Source Serif 4\""
+                      ],
+                      "financial-display-md": [
+                              "\"Source Serif 4\""
+                      ],
+                      "label-caps": [
+                              "Inter"
+                      ],
+                      "headline-sm": [
+                              "Inter"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "financial-display-lg": [
+                              "\"Source Serif 4\""
+                      ],
+                      "editorial": [
+                              "\"Source Serif 4\", serif"
+                      ],
+                      "mono": [
+                              "\"JetBrains Mono\", monospace"
+                      ]
+              },
+              "fontSize": {
+                      "financial-display-lg-mobile": [
+                              "28px",
+                              {
+                                      "lineHeight": "36px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "financial-display-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-caps": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "headline-sm": [
+                              "18px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-lg": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "financial-display-lg": [
+                              "36px",
+                              {
+                                      "lineHeight": "44px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "editorial-hero": [
+                              "48px",
+                              {
+                                      "lineHeight": "52px",
+                                      "letterSpacing": "-0.03em",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "editorial-title": [
+                              "32px",
+                              {
+                                      "lineHeight": "40px",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        /* Hide scrollbar for clean horizontal scrolls */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        .fluid-bg {
+            background: #FDFCF9;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-surface-cream text-on-surface antialiased min-h-screen pb-[120px] fluid-bg font-sans selection:bg-secondary-container">
+<!-- Minimalist Header -->
+<header class="flex justify-between items-center px-4 py-4 w-full z-50 border-b border-outline-variant/30">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-xl" data-icon="cloud">cloud</span>
+<span class="font-mono text-xs uppercase tracking-widest font-medium">Dashboard</span>
+</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-text-muted text-lg font-light" data-icon="sync" title="Sync Status">sync</span>
+<div class="w-8 h-8 rounded-sm overflow-hidden flex items-center justify-center border border-outline-variant">
+<!-- Avatar placeholder -->
+<img class="w-full h-full object-cover grayscale" data-alt="A small, professional profile picture of an individual against a neutral, warm cream background. The lighting is soft and flattering, suitable for a refined fintech application. The overall tone is approachable and modern, in light-mode aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuA0JtXXwYd12rZl_9ZTXy9dq0qcB7t9Xyd6KNY49u5imq1SCYRU5dJAomh3zZv_nuK55kCJXGS-VtVL1qS5DZiYNstETtDAE_QaQJh-TxsTY2mF4IHvE4tjmNzas9QeEPSrgiS7TUQf5mhmkBtOyI4nsouJ10U41Y3iGM3uO4Aasnj7ZJWc5hyEVoNbnFfwdzUoN-puV6nySTJ7BukiAB4WnEApZMYj5-fVBdZO0LJQre2pLr4f7MQh">
+</div>
+</div>
+</header>
+<!-- Main Content Area: Technical Grid Flow -->
+<main class="max-w-3xl mx-auto w-full flex flex-col gap-0 border-x border-outline-variant/30 min-h-screen">
+<!-- Section 1: Net Worth Summary -->
+<section class="p-6 border-b border-outline-variant/30 relative overflow-hidden bg-surface-container-lowest/50">
+<div class="flex justify-between items-start mb-6 relative z-10">
+<div class="flex flex-col">
+<span class="text-[10px] tracking-widest uppercase text-primary/60 font-mono mb-2">Net Worth</span>
+<span class="text-xs text-on-surface-variant mb-1">Your total standing,</span>
+<h2 class="text-3xl text-primary font-mono font-medium tracking-tight">PHP 1,378,475</h2>
+</div>
+<div class="flex border border-outline-variant/50 p-0.5 bg-surface-container-lowest">
+<button class="px-3 py-1 bg-primary text-on-primary text-[10px] font-mono tracking-wider uppercase transition-all">Me</button>
+<button class="px-3 py-1 text-primary text-[10px] font-mono tracking-wider uppercase hover:bg-surface-variant transition-all">Partner</button>
+<button class="px-3 py-1 text-primary text-[10px] font-mono tracking-wider uppercase hover:bg-surface-variant transition-all">Household</button>
+</div>
+</div>
+<!-- Abstract Fluid Line Graphic -->
+<div class="absolute -bottom-8 -left-4 -right-4 h-32 opacity-30 pointer-events-none z-0">
+<svg class="w-full h-full preserve-aspect-ratio-none stroke-success-jade fill-none" stroke-width="1.5" viewBox="0 0 100 30">
+<path d="M0,25 C15,28 25,12 40,15 C55,18 65,30 80,5 C90,-10 95,15 100,0"></path>
+<path class="fill-success-jade opacity-5 stroke-none" d="M0,25 C15,28 25,12 40,15 C55,18 65,30 80,5 C90,-10 95,15 100,0 L100,30 L0,30 Z"></path>
+</svg>
+</div>
+<div class="flex items-center justify-between text-xs text-on-surface-variant z-10 relative mt-8 border-t border-outline-variant/30 pt-4">
+<span>Compared to 3 months ago:</span>
+<span class="text-success-jade flex items-center font-mono font-medium"><span class="material-symbols-outlined text-[14px] mr-1" data-icon="trending_up">trending_up</span> up 12.4%</span>
+</div>
+</section>
+<!-- Section 2: Active Budget Progress -->
+<section class="p-6 border-b border-outline-variant/30 relative z-10 bg-surface-container-lowest/50">
+<div class="flex justify-between items-start mb-6">
+<div class="flex flex-col">
+<span class="text-[10px] tracking-widest uppercase text-primary/60 font-mono mb-2">Active Budget</span>
+<span class="text-xs text-on-surface-variant mb-1">Remaining to spend,</span>
+<h3 class="text-2xl text-primary font-mono font-medium">PHP 177,915</h3>
+</div>
+<div class="text-success-jade text-[10px] font-mono flex items-center gap-1 border border-success-jade/30 px-2 py-1 bg-success-jade/5">
+<span class="material-symbols-outlined text-[14px]" data-icon="check_circle">check_circle</span>
+                    On track
+                </div>
+</div>
+<!-- Minimalist Progress -->
+<div class="relative w-full h-1 bg-surface-variant mb-3 mt-4">
+<div class="absolute top-0 left-0 h-full bg-primary" style="width: 15%"></div>
+<div class="absolute -top-1.5 left-[15%] w-0.5 h-4 bg-primary transform -translate-x-1/2"></div>
+</div>
+<div class="flex justify-between text-[10px] text-on-surface-variant font-mono uppercase">
+<span>15% consumed</span>
+<span>of PHP 209,000</span>
+</div>
+</section>
+<!-- Section 3: Investment Overview -->
+<section class="p-6 border-b border-outline-variant/30 bg-surface-container-lowest/50">
+<div class="flex justify-between items-start mb-2">
+<div class="flex flex-col">
+<span class="text-[10px] tracking-widest uppercase text-primary/60 font-mono mb-2">Investments</span>
+<span class="text-xs text-on-surface-variant mb-1">Current valuation,</span>
+<h3 class="text-2xl text-primary font-mono font-medium">USD 0</h3>
+</div>
+<span class="material-symbols-outlined text-sm text-text-muted border border-outline-variant/30 p-1 bg-surface-variant/30" data-icon="trending_down">trending_down</span>
+</div>
+<div class="flex items-center text-attention-coral mt-6 text-xs font-mono font-medium border-t border-outline-variant/30 pt-4">
+<span class="material-symbols-outlined text-[14px] mr-1" data-icon="arrow_downward">arrow_downward</span>
+<span>0.0% return</span>
+</div>
+</section>
+<!-- Spacer -->
+<div class="h-20"></div>
+</main>
+<!-- Quick Add FAB (integrated into flow) -->
+<button aria-label="Add Transaction" class="fixed bottom-24 right-6 w-12 h-12 bg-primary shadow-lg flex items-center justify-center text-on-primary hover:scale-105 transition-transform z-40 active:scale-95 rounded-sm">
+<span class="material-symbols-outlined text-2xl font-light" data-icon="add">add</span>
+</button>
+<!-- Minimalist Overlay Navigation -->
+<nav class="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center gap-6 px-6 py-3 bg-surface-container-lowest border border-primary/20 md:hidden shadow-sm">
+<!-- Active Tab -->
+<button class="flex items-center justify-center text-primary transition-all duration-200">
+<span class="material-symbols-outlined text-xl" data-icon="home" style="font-variation-settings: 'FILL' 1;">home</span>
+</button>
+<!-- Inactive Tabs -->
+<button class="flex items-center justify-center text-on-surface-variant/50 hover:text-primary transition-all duration-200">
+<span class="material-symbols-outlined text-xl" data-icon="account_balance_wallet">account_balance_wallet</span>
+</button>
+<button class="flex items-center justify-center text-on-surface-variant/50 hover:text-primary transition-all duration-200">
+<span class="material-symbols-outlined text-xl" data-icon="receipt_long">receipt_long</span>
+</button>
+<button class="flex items-center justify-center text-on-surface-variant/50 hover:text-primary transition-all duration-200">
+<span class="material-symbols-outlined text-xl" data-icon="account_balance">account_balance</span>
+</button>
+<button class="flex items-center justify-center text-on-surface-variant/50 hover:text-primary transition-all duration-200">
+<span class="material-symbols-outlined text-xl" data-icon="menu">menu</span>
+</button>
+</nav>
+<!-- Desktop Navigation (hidden on mobile) -->
+<nav class="hidden md:flex fixed top-0 right-10 h-16 items-center gap-8 z-50">
+<button class="text-primary text-sm font-mono font-medium hover:opacity-70 transition-opacity">Home</button>
+<button class="text-on-surface-variant text-sm font-mono hover:text-primary transition-colors">Budget</button>
+<button class="text-on-surface-variant text-sm font-mono hover:text-primary transition-colors">Expenses</button>
+</nav>
+</body></html>

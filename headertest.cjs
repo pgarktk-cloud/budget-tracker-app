@@ -92,22 +92,23 @@ t("5 · every prop the sheet's body names is passed at the mount site",()=>{
     assert.ok(new RegExp(`\\b${p}\\b`).test(mount),`SyncSheet declares ${p} but the mount site never passes it`);
 });
 
-t("6 · the header's income is display-only",()=>{
+t("6 · income is not in the header at all — it is edited in Budget",()=>{
+  /* Stitch redesign: the approved compact mono page header carries only the
+     page title + sync + Settings. Income was removed entirely (it was a
+     display figure that tapped through to Budget; the approved header shows no
+     income line). The real invariant it protected still holds: income editing
+     lives in Budget, and nothing editable sits in the header. */
   const header=slice("        {/* header */}","        {/* Section title");
-  // The ELEMENT, not the word — the comment above the figure explains what it
-  // replaced, and matching prose would make this fail on its own rationale.
-  assert.ok(!/<NumField/.test(header),
-    "income is a figure now — an editable field in a header shown on every tab is one mis-tap from rewriting the plan");
+  assert.ok(!/<NumField/.test(header),"no editable field belongs in the header");
   assert.ok(!/<input/.test(header),"no editable field belongs in the header at all");
   assert.ok(!/patchPlan\(\{income/.test(header),"the header must not write income");
-  assert.ok(/setTab\("budget"\)/.test(header),"...it navigates to where editing belongs instead");
-  /* And the destination must actually be able to edit it. Removing the header
-     field is only safe because BudgetView has always had its own income
-     NumField, wired through `setIncome` → `editMonth`, i.e. through
-     editPlanForMonth like every other budget mutation. If that ever goes, this
-     tap-through becomes a dead end and income turns read-only for good. */
+  assert.ok(!/Income/.test(header),
+    "the approved header shows no income line — it is edited in Budget");
+  /* Budget must still own the income field, wired through `setIncome` →
+     `editMonth`, i.e. through editPlanForMonth like every other budget
+     mutation. If that ever goes, income turns read-only for good. */
   assert.ok(/onCommit=\{setIncome\}/.test(html),
-    "Budget must still have the income field this header now points at");
+    "Budget must still have the income field");
   assert.ok(/const setIncome=v=>editMonth\(/.test(html),
     "...and it must write through editMonth, not a by-plan-id setter");
 });

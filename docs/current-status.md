@@ -1,7 +1,60 @@
 # Current Status
 
-_Last updated: 2026-08-14 (Phase 9c deployed as v1.51.0 — durable Purchase
-Advisor trim + atomic undo)_
+_Last updated: 2026-08-26 — **Technical Ledger UI redesign in progress**
+(uncommitted, not deployed). Feature/logic baseline unchanged at v1.51.0._
+
+## Technical Ledger redesign — read this FIRST (2026-08-26, in progress)
+
+A large **visual-only** overhaul to the approved Stitch "Technical Ledger"
+language is underway in the working tree (NOT committed, NOT deployed; BUILD_ID
+still `.0010`). It is **presentation-only** — `git diff` confirms no
+mutator/logic/data lines changed. Full detail lives in the memory file
+`stitch-redesign-progress.md`; plan in `~/.claude/plans/implement-the-major-
+where-ditgo-fluffy-swing.md`; interpretation in `docs/design-system.md` +
+`docs/ui-audit.md`; per-screen status + computed-font evidence in
+`docs/ui-verification.md`. Approved refs: `stitch-reference/*/screen.png`
+(screenshots are the source of truth; `code.html` confirms exact fonts).
+
+**Done + browser-verified (true-390 PNGs via headless Chromium, all 25 runners +
+parse green):**
+- Self-hosted fonts (`fonts/*.woff2`): Inter 400/500/600/700, JetBrains Mono
+  400/500/600, Source Serif 4 600 — offline-safe, in `SERVED`+`APP_SHELL`.
+- Full token flip: cream/ink/hairline semantic palette; neumorphism/glass gone
+  (flattened the `neu*`/`glass*` helpers + CSS in one move); flat surfaces,
+  radius 0, 1px hairlines.
+- Responsive shell: 256px desktop sidebar (mono nav) + full-width workspace;
+  compact mono mobile header (page-title only — income/owner-line REMOVED,
+  headertest case 6 updated: income edited in Budget); bottom nav/FAB/seg
+  controls mono; ink active states.
+- **Typography = JetBrains-Mono-dominant** (nav/titles/labels/most figures);
+  Source Serif ONLY on the Investments portfolio total. `.t-section`=JBM 12/500,
+  `.t-label`=JBM 10/400.
+- 5 direct-reference screens recomposed: Home, Budget (metric strip + envelope
+  ledger), Expenses (burn/daily-avg grid), Investments (portfolio hero +
+  holdings ledger), and **Add Transaction rebuilt as a full-screen TaskSurface**
+  (`.sheet-task`).
+
+**NEXT SESSION — focused per-screen passes.** Open items (see
+`docs/ui-verification.md` "Known remaining items"):
+- Expenses + Investments **desktop right-column ledger split** (currently
+  full-width single column).
+- **Category B/C screens not yet recomposed** (Banks, Net Worth, Forecast-hidden,
+  Goals, Installments, Purchase Advisor, Bills, Household, Currency, More,
+  Settings, system overlays) — they inherit the flat/mono system but keep their
+  Inter-600 `h3`/card-title patterns; recompose from the proven primitives
+  (`GridSection`/`MetricStrip`/`ProgressMeter`/`Status`, all defined after the
+  icon registry ~L1000).
+- Polish: rounded/tinted status chips → flat status; hero mono weight 600↔500
+  consistency; Budget inline `bare tnum` amount inputs → mono.
+- **At deploy time:** bump BUILD_ID in all three sites (index.html/sw.js/
+  version.json) together — index.html/sw.js/fonts all changed. `node stage.cjs`
+  enforces the 3-way match. Do NOT deploy without an explicit ask.
+- Test tooling (kept in `scratchpad/`, not committed): local server
+  `serve.cjs` :8099; `shots.cjs` (headless Chromium true-390 + 1600 PNGs —
+  the ONLY way to a real 390px viewport; the in-browser tool clamps to ~500px);
+  `probe.cjs` (computed font-family/weight). Seed sample data via Settings →
+  Advanced → Load sample → "Tap again"; set localStorage
+  `allocation:preferredProfile`/`allocation:viewProfile` to skip the picker.
 
 ## State of play — read this first
 

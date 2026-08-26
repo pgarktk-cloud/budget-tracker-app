@@ -5,7 +5,7 @@
 // index.html and with version.json — all three should be bumped together
 // on every deploy so the displayed build and the cached app release always
 // correspond.
-const BUILD_ID = '2026.08.14.0010';
+const BUILD_ID = '2026.08.26.0011';
 const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
@@ -16,6 +16,17 @@ const APP_SHELL = [
   // no reason to pre-cache the redirecting form of a page we already have.
   './',
   './manifest.webmanifest',
+  // Self-hosted webfonts — precached so the Technical Ledger typography renders
+  // correctly offline on first load (same-origin, so they'd be cached lazily by
+  // the fetch handler too, but precaching avoids a fallback-font flash offline).
+  './fonts/inter-400.woff2',
+  './fonts/inter-500.woff2',
+  './fonts/inter-600.woff2',
+  './fonts/inter-700.woff2',
+  './fonts/source-serif-4-600.woff2',
+  './fonts/jetbrains-mono-400.woff2',
+  './fonts/jetbrains-mono-500.woff2',
+  './fonts/jetbrains-mono-600.woff2',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
   'https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js',
   'https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js',
