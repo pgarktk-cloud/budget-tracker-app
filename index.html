@@ -571,7 +571,9 @@ select{transition:background .22s;}
   /* above the bottom nav (30), below .sheet-bg/.modal-bg (40). It used to be
      70, which floated it over every open sheet's scrim — visually wrong and
      still tappable through the overlay. */
-  z-index:35;width:56px;height:56px;border-radius:2px;color:#fff;border:none;
+  /* icon colour set inline via P.onInk at each render site (theme-aware) — a
+     hardcoded #fff here went invisible on the near-white dark-mode ink FAB. */
+  z-index:35;width:56px;height:56px;border-radius:2px;border:none;
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 4px 14px rgba(27,27,27,.22);cursor:pointer;
 }
@@ -743,6 +745,23 @@ const{ResponsiveContainer,LineChart,Line,AreaChart,Area,XAxis,YAxis,CartesianGri
 /* ── Animation helpers ── */
 
 /* Flash a DOM node's class briefly when a value changes */
+/* True while the viewport is at the mobile breakpoint (<=768px), synced to the
+   same matchMedia the CSS uses. Only for the few spots where DOM must be
+   relocated on mobile (cross-column moves CSS can't express) — prefer a CSS
+   media query for pure style tweaks. */
+function useIsMobile(){
+  const q="(max-width:768px)";
+  const[m,setM]=useState(()=>(typeof window!=="undefined"&&window.matchMedia)?window.matchMedia(q).matches:false);
+  useEffect(()=>{
+    if(typeof window==="undefined"||!window.matchMedia)return;
+    const mq=window.matchMedia(q);
+    const on=()=>setM(mq.matches);
+    on();
+    if(mq.addEventListener)mq.addEventListener("change",on);else mq.addListener(on);
+    return()=>{if(mq.removeEventListener)mq.removeEventListener("change",on);else mq.removeListener(on);};
+  },[]);
+  return m;
+}
 function useFlash(val,ref){
   const prev=useRef(val);
   useEffect(()=>{
@@ -961,6 +980,13 @@ const PALETTE_LIGHT={
   /* semantic (preferred) */
   canvas:"#FDFCF9",surface:"#FFFFFF",surfaceSubtle:"#F3F3F3",surfaceMuted:"#E8E8E8",
   hairline:"#E4E2E4",muted:"#64748B",success:"#059669",attention:"#F87171",info:"#3B82F6",danger:"#BA1A1A",
+  /* foreground for content sitting ON an `ink` fill (FAB icon, filled buttons).
+     Pairs with P.ink so it flips when ink flips between themes. */
+  onInk:"#FFFFFF",
+  /* intentionally-inverted "hero" surfaces (undo toast, Net Worth / Banks hero
+     cards) that stay dark in BOTH themes, so their light child text stays legible
+     instead of vanishing when `deep` flips near-white in dark mode. */
+  heroBg:"#1B1B1B",heroFg:"#FFFFFF",
   /* legacy keys, repointed */
   bg:"#FDFCF9",ink:"#1B1B1B",sub:"#64748B",faint:"#94A3B8",line:"#E4E2E4",sf:"#F3F3F3",sfA:"#E8E8E8",
   gr:"#059669",grD:"#047857",grS:"#ECFDF5",br:"#3B82F6",brS:"#EFF6FF",red:"#F87171",redS:"#FEF2F2",
@@ -972,6 +998,10 @@ const PALETTE_LIGHT={
 const PALETTE_DARK={
   canvas:"#121212",surface:"#1C1C1C",surfaceSubtle:"#242424",surfaceMuted:"#2E2E2E",
   hairline:"#333333",muted:"#9AA0A6",success:"#34D399",attention:"#F87171",info:"#60A5FA",danger:"#F2555A",
+  /* ink is near-white in dark, so content on an ink fill must be dark. */
+  onInk:"#1B1B1B",
+  /* stays dark in dark mode too (slightly lifted from the #121212 canvas). */
+  heroBg:"#232323",heroFg:"#EDEDED",
   bg:"#121212",ink:"#EDEDED",sub:"#9AA0A6",faint:"#6B7076",line:"#333333",sf:"#242424",sfA:"#2E2E2E",
   gr:"#34D399",grD:"#6EE7B7",grS:"#12271F",br:"#60A5FA",brS:"#16233A",red:"#F87171",redS:"#33201F",
   deep:"#EDEDED",deepHi:"#9AA0A6",amber:"#FBBF24",amberS:"#332708",
@@ -1046,11 +1076,15 @@ function neuInset(){return{background:P.surfaceSubtle,borderRadius:0,border:`1px
 function neuBtnStyle(active){return{background:active?P.ink:P.surface,borderRadius:0,border:`1px solid ${active?P.ink:P.hairline}`,color:active?"#fff":P.ink};}
 function glassPanel(){return{background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:0};}
 function liquidFillBg(color){return color;}
-/* Technical Ledger category ramp: a restrained ink→slate scale, not the old
-   blues. Enough contrast between neighbours to read as distinct segments in an
-   allocation bar while staying monochrome/calm. */
-const SEG_LIGHT=["#1B1B1B","#3F4650","#5B6470","#7A828E","#64748B","#475569","#334155","#94A3B8","#2E3742","#565F6B","#8792A0","#414A56","#6B7480","#A0A8B4","#4A5361","#737C88"];
-const SEG_DARK=["#EDEDED","#C7CCD3","#A6AEB8","#8792A0","#94A3B8","#B0B8C2","#CBD2DA","#7A828E","#DADEE3","#9AA2AD","#6B7480","#BCC3CB","#8B94A0","#5B6470","#AEB6C0","#767F8B"];
+/* Technical Ledger category palette: desaturated-but-hue-separated tones so
+   adjacent allocation segments / legend dots read as distinct (the old scale
+   was 16 near-identical slates that blurred together). Still muted/calm to fit
+   the monochrome-leaning aesthetic — not a saturated rainbow. First ~10 are the
+   distinct hues (slate, teal, clay, plum, olive, steel, mauve, ochre, cyan,
+   taupe); 11-16 are lighter variants for long lists. Tuned per theme for
+   contrast on the cream/ink surfaces. */
+const SEG_LIGHT=["#3F4E63","#2F7168","#9C5A34","#6D5296","#5B7A2E","#386B9E","#9A4D63","#8A6D1F","#4B7E80","#6A5140","#56617A","#3E8A7E","#B0754E","#82659E","#6E8C48","#5286B0"];
+const SEG_DARK=["#8FA0BC","#5FB5A8","#D08A5E","#A98FD1","#93B85E","#6FA6D6","#D086A0","#C7A651","#74B4B6","#B39A82","#A6B4CC","#7FC7BB","#DBA07C","#BCA6E0","#A8C77C","#8DBAE0"];
 let SEG=[...SEG_LIGHT];
 function applySegTheme(mode){const src=mode==="dark"?SEG_DARK:SEG_LIGHT;SEG.length=0;SEG.push(...src);}
 
@@ -1217,13 +1251,16 @@ function MetricStrip({children,style}){
 /* Thin technical progress meter: neutral track, solid semantic fill, a square
    end marker at the fill edge. `pct` 0..100 (may exceed 100 → clamped bar, but
    colour should already be `attention`). No gradient, no inset trough. */
-function ProgressMeter({pct,color,height=6,track,style}){
+function ProgressMeter({pct,color,height=6,track,style,tick=true}){
   const p=Math.max(0,Math.min(100,Number(pct)||0));
   const c=color||P.success;
+  /* Reference tick: a bold ~16px vertical marker straddling the thin track at
+     the fill edge (Stitch mobile). Shown even at 100%/over (clamped to 100%);
+     `tick={false}` opts a caller out. */
   return(
     <div style={{position:"relative",height,background:track||P.surfaceMuted,borderRadius:0,...style}}>
       <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${p}%`,background:c,transition:"width .6s cubic-bezier(.22,1,.36,1)"}}/>
-      {p>0&&p<100&&<div style={{position:"absolute",top:-1,bottom:-1,left:`calc(${p}% - 1px)`,width:2,background:c}}/>}
+      {tick&&p>0&&<div style={{position:"absolute",top:-5,bottom:-5,left:`calc(${p}% - 1px)`,width:2,background:c,transition:"left .6s cubic-bezier(.22,1,.36,1)"}}/>}
     </div>
   );
 }
@@ -3666,8 +3703,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.52.0";
-const BUILD_ID="2026.08.26.0011";
+const APP_VERSION="1.53.0";
+const BUILD_ID="2026.08.27.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -5989,7 +6026,7 @@ function MoreSheet({tab,moreTabs,onPick,onClose}){
               return(
                 <button key={id} className="more-item" onClick={()=>onPick(id)}
                   aria-current={on?"page":undefined}
-                  style={on?{background:P.ink,color:"#fff",border:`1px solid ${P.ink}`}:{...neu(14),color:P.ink}}>
+                  style={on?{background:P.ink,color:P.onInk,border:`1px solid ${P.ink}`}:{...neu(14),color:P.ink}}>
                   <Icon size={17}/><span>{meta.label}</span>
                 </button>
               );
@@ -8855,7 +8892,7 @@ function App(){
         <div style={{position:"fixed",left:16,right:16,maxWidth:420,margin:"0 auto",
           bottom:"calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 24px)",zIndex:80,
           display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,
-          background:P.deep,color:"#fff",borderRadius:12,padding:"12px 14px",
+          background:P.heroBg,color:P.heroFg,borderRadius:12,padding:"12px 14px",
           boxShadow:"0 8px 24px rgba(12,22,40,.32)"}}>
           <span style={{fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{undoAction.label}</span>
           <button onClick={performUndo} style={{flexShrink:0,background:"transparent",border:"none",color:P.grD,fontWeight:700,fontSize:13,letterSpacing:.3}}>
@@ -8871,7 +8908,7 @@ function App(){
           a different thing from adding a transaction. */}
       {tab!=="expenses"&&tab!=="home"&&tab!=="installments"&&
         <button aria-label="Quick add transaction" className="fab-btn" onClick={()=>{setTab("expenses");setGlobalAddTrigger(n=>n+1);}}
-          style={{background:P.ink}}>
+          style={{background:P.ink,color:P.onInk}}>
           <I.Plus size={24}/>
         </button>}
       <BottomNav tab={tab} tabs={barList} setTab={setTab} onMore={()=>setShowMore(true)}/>
@@ -8969,7 +9006,7 @@ function ProgressRing({pct,size=60,stroke=7,color,track}){
    (used by Portfolio/Hero for a slightly richer look) — same Recharts import,
    no new dependency. `height` lets Hero use a taller trend than Portfolio's
    compact one. */
-function Sparkline({data,color,area,height=40,fill}){
+function Sparkline({data,color,area,height=40,fill,fillOpacity=0.28}){
   if(!data||data.length<2)return null;
   const c=color||P.gr;
   const gid=`spark-${c.replace(/[^a-zA-Z0-9]/g,"")}`;
@@ -8993,7 +9030,7 @@ function Sparkline({data,color,area,height=40,fill}){
           <AreaChart data={data} margin={{top:2,right:0,bottom:0,left:0}}>
             <defs>
               <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={c} stopOpacity={0.28}/>
+                <stop offset="0%" stopColor={c} stopOpacity={fillOpacity}/>
                 <stop offset="100%" stopColor={c} stopOpacity={0}/>
               </linearGradient>
             </defs>
@@ -9048,7 +9085,7 @@ function HistoryRangeChart({snapshots,profile,field,money,color,height=200,empty
         <div role="group" aria-label="Time range" style={{display:"flex",gap:4}}>
           {RANGES.map(r=>(
             <button key={r} onClick={()=>setRange(r)} aria-pressed={range===r}
-              className="mono" style={{borderRadius:0,padding:"4px 10px",fontSize:11,letterSpacing:".06em",border:`1px solid ${range===r?P.ink:P.hairline}`,...(range===r?{background:P.ink,color:"#fff"}:{background:P.surface,color:P.muted})}}>{r}</button>
+              className="mono" style={{borderRadius:0,padding:"4px 10px",fontSize:11,letterSpacing:".06em",border:`1px solid ${range===r?P.ink:P.hairline}`,...(range===r?{background:P.ink,color:P.onInk}:{background:P.surface,color:P.muted})}}>{r}</button>
           ))}
         </div>
         {pctChange!=null&&(
@@ -9130,7 +9167,7 @@ function CompositionRangeChart({snapshots,profile,series,money,height=200,emptyT
       <div role="group" aria-label="Time range" style={{display:"flex",gap:4,marginBottom:8}}>
         {RANGES.map(r=>(
           <button key={r} onClick={()=>setRange(r)} aria-pressed={range===r}
-            className="mono" style={{borderRadius:0,padding:"4px 10px",fontSize:11,letterSpacing:".06em",border:`1px solid ${range===r?P.ink:P.hairline}`,...(range===r?{background:P.ink,color:"#fff"}:{background:P.surface,color:P.muted})}}>{r}</button>
+            className="mono" style={{borderRadius:0,padding:"4px 10px",fontSize:11,letterSpacing:".06em",border:`1px solid ${range===r?P.ink:P.hairline}`,...(range===r?{background:P.ink,color:P.onInk}:{background:P.surface,color:P.muted})}}>{r}</button>
         ))}
       </div>
       {pts.length>=2&&live.length>0?(
@@ -9180,7 +9217,7 @@ function HomeProfileToggle({profile,setProfile,owners}){
       <div className="seg-indicator" style={{transform:`translateX(${idx*100}%)`,background:P.ink}}/>
       {opts.map(([key,label])=>(
         <button key={key} onClick={()=>setProfile(key)} aria-pressed={profile===key} className="seg-btn"
-          style={{color:profile===key?"#fff":P.muted}}>
+          style={{color:profile===key?P.onInk:P.muted}}>
           {label}
         </button>
       ))}
@@ -9200,6 +9237,7 @@ function HomeProfileToggle({profile,setProfile,owners}){
    itself. In that case we still show the raw amount change but hide the %
    rather than print something misleading. */
 function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDisplay,convert,ratesErr,onOpen}){
+  const isMobile=useIsMobile();
   const ref=useRef(null);
   const val=netWorthByProfile(profile);
   useFlash(Math.round(val),ref);
@@ -9252,9 +9290,15 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
           })}
         </div>}
       {ratesErr&&<div style={{fontSize:11,color:P.faint,marginTop:8}}>Using last available exchange rates.</div>}
-      <div className="home-fill home-nw-chart" style={{display:"flex",flexDirection:"column",justifyContent:"flex-end",marginTop:16}}>
+      {/* On mobile the wave is the graphic — taller, bolder, and bled to the
+          card's bottom/side edges so it reads as the Stitch dashboard's
+          full-bleed curve rather than a small contained sparkline. Desktop keeps
+          the contained chart region. */}
+      <div className="home-fill home-nw-chart" style={{display:"flex",flexDirection:"column",justifyContent:"flex-end",
+        marginTop:isMobile?12:16,...(isMobile?{marginBottom:-22,marginLeft:-2,marginRight:-2}:null)}}>
         {sorted.length>=2
-          ?<Sparkline data={trendPts} color={momAmt!=null&&momAmt<0?P.attention:P.success} area height={150}/>
+          ?<Sparkline data={trendPts} color={momAmt!=null&&momAmt<0?P.attention:P.success} area
+             height={isMobile?190:150} fillOpacity={isMobile?0.5:0.28}/>
           :<div style={{fontSize:11,color:P.faint,paddingBottom:4}}>Trend appears after 2+ months of history</div>}
       </div>
     </div>
@@ -9473,6 +9517,7 @@ function SavingsInvestingCard({profile,payPeriods,planForMonth,expenses,savingsC
    current bucket — Expenses re-anchors its own viewMonth off budgetOwner,
    so setting the owner and switching tab is all that's needed. */
 function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,homeDisplay,convert,cur,onOpen}){
+  const isMobile=useIsMobile();
   const profileLabel=profile==="household"?"Household":((owners||{})[profile]||profile);
   const primary=(homeDisplay&&homeDisplay.budget&&homeDisplay.budget.primary)||cur;
 
@@ -9569,7 +9614,10 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
             </div>}
 
           {/* Selected category rows — each with its own thin ruler. Subordinate
-              to the headline, only the three closest to their limit. */}
+              to the headline, only the three closest to their limit. Dropped on
+              mobile, where this card matches the minimal Stitch "Active Budget"
+              (hero + bar + consumed + status, plus the two footers below). */}
+          {!isMobile&&
           <div className="home-fill" style={{marginTop:16,display:"flex",flexDirection:"column",
             justifyContent:"flex-start",gap:14,minHeight:0}}>
             {topCats.map(c=>{
@@ -9587,7 +9635,7 @@ function TrackedSpendingCard({profile,owners,payPeriods,planForMonth,expenses,ho
                 </div>
               );
             })}
-          </div>
+          </div>}
 
           <div className="mono" style={{fontSize:10,letterSpacing:".06em",textTransform:"uppercase",color:P.faint,marginTop:14}}>
             {daysLeft} day{daysLeft===1?"":"s"} left this period
@@ -10140,7 +10188,7 @@ function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth
           escapes transformed/clipped ancestors. */}
       <Portal>
         <button aria-label="Quick add" className="fab-btn home-fab" onClick={()=>setQaSheet(true)}
-          style={{background:P.ink}}>
+          style={{background:P.ink,color:P.onInk}}>
           <I.Plus size={24}/>
         </button>
       </Portal>
@@ -10436,6 +10484,72 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
      fresh next time (backdrop click, the X button, and Escape all use this). */
   const closePlanSheet=()=>{setShowPlanSheet(false);setShowCopyPicker(false);setCopySourceMonth("");};
 
+  const isMobile=useIsMobile();
+  /* Invest & Grow block, extracted so it can render in the top metric strip on
+     mobile (as the secondary figure under the income hero, replacing the
+     duplicated Total Allocated / Remaining) or in the desktop rail. variant
+     only changes the wrapper; the figures are identical. */
+  const renderInvestGrow=(variant)=>{
+    const investGroupNames=investTarget?.groupNames||[];
+    const investAmt=(monthPlan.categories||[]).filter(c=>{
+      const g=(monthPlan.groups||[]).find(gr=>gr.id===c.groupId);
+      return g&&investGroupNames.includes(g.name);
+    }).reduce((s,c)=>s+effectiveAmt(c),0);
+    const investPct=pct(investAmt);
+    const thresholdPct=Number(investTarget?.thresholdPct)||0;
+    const meetsTarget=thresholdPct>0&&investPct>=thresholdPct;
+    const gapSar=Math.max(0,(thresholdPct/100)*income-investAmt);
+    const barPct=thresholdPct>0?Math.min(100,(investPct/thresholdPct)*100):Math.min(100,investPct);
+    const fillColor=thresholdPct===0?P.muted:meetsTarget?P.success:P.info;
+    const inner=(
+      <>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:8}}>
+          <span className="t-label" style={{color:P.muted}}>Invest &amp; Grow</span>
+          <button onClick={()=>setShowInvestSettings(v=>!v)} title="Edit target" aria-label="Edit invest target"
+            style={{background:"transparent",border:"none",color:P.muted,padding:2,display:"flex",minWidth:32,minHeight:32,alignItems:"center",justifyContent:"center"}}>
+            <I.Settings size={14}/>
+          </button>
+        </div>
+        <div className="mono tnum" style={{fontSize:variant==="strip"?20:18,fontWeight:500,color:P.ink,marginBottom:8}}>
+          {investPct.toFixed(1)}% <span style={{fontSize:12,color:P.muted,fontWeight:400}}>of income</span>
+        </div>
+        <ProgressMeter pct={barPct} color={fillColor} height={6}/>
+        <div style={{fontSize:11,marginTop:8,color:thresholdPct===0?P.faint:meetsTarget?P.success:P.info}}>
+          {thresholdPct>0?(meetsTarget?`Meeting your ${thresholdPct}% target`:`${fmt(gapSar)} short of ${thresholdPct}% target`):"Set a target to track this"}
+        </div>
+        {showInvestSettings&&(
+          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${P.hairline}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+              <span style={{fontSize:12,color:P.muted}}>Target</span>
+              <NumField value={thresholdPct} min={0} max={100}
+                onCommit={v=>setInvestTarget({thresholdPct:v})}
+                className="bare tnum mono" style={{width:52,fontSize:13,fontWeight:600,textAlign:"right",padding:"3px 6px",color:P.ink,
+                  background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:2}}/>
+              <span style={{fontSize:12,color:P.muted}}>% of income</span>
+            </div>
+            <div style={{fontSize:11,color:P.muted,marginBottom:8}}>Groups counted toward this target:</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
+              {(monthPlan.groups||[]).map(g=>{
+                const checked=investGroupNames.includes(g.name);
+                return(
+                  <label key={g.id} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:P.muted,cursor:"pointer"}}>
+                    <input type="checkbox" checked={checked} onChange={()=>{
+                      const next=checked?investGroupNames.filter(n=>n!==g.name):[...investGroupNames,g.name];
+                      setInvestTarget({groupNames:next});
+                    }}/>
+                    {g.name}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </>
+    );
+    if(variant==="strip")return <div style={{padding:"18px 20px"}}>{inner}</div>;
+    return <div style={{borderTop:`1px solid ${P.hairline}`,paddingTop:16}}>{inner}</div>;
+  };
+
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
       {/* Desktop 8/4 analytical workspace (Stitch Budget): envelope ledger LEFT,
@@ -10478,9 +10592,13 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
                 <NumField value={income} min={0}
                   onCommit={setIncome}
                   onBlur={()=>syncNow&&syncNow()}
-                  className="bare tnum mono" style={{fontFamily:"'JetBrains Mono',ui-monospace,monospace",fontVariantNumeric:"tabular-nums",fontSize:30,fontWeight:500,width:"100%",maxWidth:200,color:P.ink,padding:0}}/>
+                  className="bare tnum mono" style={{fontFamily:"'JetBrains Mono',ui-monospace,monospace",fontVariantNumeric:"tabular-nums",fontSize:isMobile?40:30,fontWeight:500,width:"100%",maxWidth:isMobile?240:200,color:P.ink,padding:0}}/>
               </div>
             </div>
+            {/* Mobile: promote Invest & Grow here (secondary to the income hero)
+                and drop the duplicated Total Allocated / Remaining — those live
+                once at the rail footer below. Desktop keeps the 3-up strip. */}
+            {isMobile?renderInvestGrow("strip"):(
             <div className="bm-bc">
               <div className="bm-b" style={{padding:"18px 20px"}}>
                 <div className="t-label" style={{color:P.muted,marginBottom:8}}>Total Allocated</div>
@@ -10490,7 +10608,7 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
                 <div className="t-label" style={{color:P.muted,marginBottom:8}}>{over?"Over Budget":"Remaining"}</div>
                 <div key={remaining} className="num-flash mono tnum" style={{fontSize:24,fontWeight:500,color:over?P.attention:P.success}}>{fmt(Math.abs(remaining))}</div>
               </div>
-            </div>
+            </div>)}
           </div>
           <div style={{padding:"14px 20px",borderTop:`1px solid ${P.hairline}`}}>
             <ProgressMeter pct={util} color={over?P.attention:P.success} height={6}/>
@@ -10860,65 +10978,9 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
             <div className="mono tnum" style={{fontSize:20,fontWeight:500,color:remaining<0?P.attention:P.success}}>{fmt(Math.abs(remaining))}</div>
           </div>
         </div>
-        {/* Invest & Grow target (flat). */}
-        {(()=>{
-          const investGroupNames=investTarget?.groupNames||[];
-          const investAmt=(monthPlan.categories||[]).filter(c=>{
-            const g=(monthPlan.groups||[]).find(gr=>gr.id===c.groupId);
-            return g&&investGroupNames.includes(g.name);
-          }).reduce((s,c)=>s+effectiveAmt(c),0);
-          const investPct=pct(investAmt);
-          const thresholdPct=Number(investTarget?.thresholdPct)||0;
-          const meetsTarget=thresholdPct>0&&investPct>=thresholdPct;
-          const gapSar=Math.max(0,(thresholdPct/100)*income-investAmt);
-          const barPct=thresholdPct>0?Math.min(100,(investPct/thresholdPct)*100):Math.min(100,investPct);
-          const fillColor=thresholdPct===0?P.muted:meetsTarget?P.success:P.info;
-          return(
-            <div style={{borderTop:`1px solid ${P.hairline}`,paddingTop:16}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:8}}>
-                <span className="t-label" style={{color:P.muted}}>Invest &amp; Grow</span>
-                <button onClick={()=>setShowInvestSettings(v=>!v)} title="Edit target" aria-label="Edit invest target"
-                  style={{background:"transparent",border:"none",color:P.muted,padding:2,display:"flex",minWidth:32,minHeight:32,alignItems:"center",justifyContent:"center"}}>
-                  <I.Settings size={14}/>
-                </button>
-              </div>
-              <div className="mono tnum" style={{fontSize:18,fontWeight:500,color:P.ink,marginBottom:8}}>
-                {investPct.toFixed(1)}% <span style={{fontSize:12,color:P.muted,fontWeight:400}}>of income</span>
-              </div>
-              <ProgressMeter pct={barPct} color={fillColor} height={6}/>
-              <div style={{fontSize:11,marginTop:8,color:thresholdPct===0?P.faint:meetsTarget?P.success:P.info}}>
-                {thresholdPct>0?(meetsTarget?`Meeting your ${thresholdPct}% target`:`${fmt(gapSar)} short of ${thresholdPct}% target`):"Set a target to track this"}
-              </div>
-              {showInvestSettings&&(
-                <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${P.hairline}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
-                    <span style={{fontSize:12,color:P.muted}}>Target</span>
-                    <NumField value={thresholdPct} min={0} max={100}
-                      onCommit={v=>setInvestTarget({thresholdPct:v})}
-                      className="bare tnum mono" style={{width:52,fontSize:13,fontWeight:600,textAlign:"right",padding:"3px 6px",color:P.ink,
-                        background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:2}}/>
-                    <span style={{fontSize:12,color:P.muted}}>% of income</span>
-                  </div>
-                  <div style={{fontSize:11,color:P.muted,marginBottom:8}}>Groups counted toward this target:</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
-                    {(monthPlan.groups||[]).map(g=>{
-                      const checked=investGroupNames.includes(g.name);
-                      return(
-                        <label key={g.id} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:P.muted,cursor:"pointer"}}>
-                          <input type="checkbox" checked={checked} onChange={()=>{
-                            const next=checked?investGroupNames.filter(n=>n!==g.name):[...investGroupNames,g.name];
-                            setInvestTarget({groupNames:next});
-                          }}/>
-                          {g.name}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {/* Invest & Grow target (flat). Desktop only — on mobile it is promoted
+            into the top metric strip (see renderInvestGrow above). */}
+        {!isMobile&&renderInvestGrow("rail")}
       </div>{/* end RIGHT (allocation summary rail) */}
       </div>{/* end split-8-4 */}
       {/* ── move sub-items: destination picker ──
@@ -11097,7 +11159,7 @@ function OwnerToggle({owner,setOwner,owners}){
             textTransform:"uppercase",letterSpacing:".1em",
             borderLeft:i>0?`1px solid ${P.hairline}`:"none",
             background:owner===ok?P.ink:P.surface,
-            color:owner===ok?"#fff":P.muted,
+            color:owner===ok?P.onInk:P.muted,
             transition:"background .15s,color .15s"}}>
           {owners[ok]}
         </button>
@@ -11322,6 +11384,7 @@ function UnaccountedSheet({monthLabel,recon,total,fmt,onClose}){
 
 /* ── EXPENSE TRACKER VIEW ── */
 function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates}){
+  const isMobile=useIsMobile();
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
   const[viewMonth,setViewMonth]=useState(nowMonth);
@@ -11942,11 +12005,16 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                 </div>
               </div>
             </div>
-            {/* Daily average (meaningful for the current/past period, not future plans) */}
+            {/* Daily average (meaningful for the current/past period, not future plans).
+                On mobile it is a compact secondary row (label + small value inline),
+                subordinate to the Net Monthly Burn hero per the Stitch reference;
+                desktop keeps the equal-weight side-by-side split. */}
             {!isFuture&&
-              <div style={{padding:"4px 0 18px",display:"flex",flexDirection:"column",justifyContent:"flex-start"}} className="split-pad-l-cell">
-                <span className="t-label" style={{color:P.muted,marginBottom:8}}>Daily Avg</span>
-                <span className="mono tnum" style={{fontSize:34,lineHeight:"40px",fontWeight:500,color:P.ink}}>{fmt(dailyAvg)}</span>
+              <div style={{padding:"4px 0 18px",display:"flex",
+                flexDirection:isMobile?"row":"column",alignItems:isMobile?"baseline":"stretch",
+                justifyContent:"space-between",gap:isMobile?12:0}} className="split-pad-l-cell">
+                <span className="t-label" style={{color:P.muted,marginBottom:isMobile?0:8}}>Daily Avg</span>
+                <span className="mono tnum" style={{fontSize:isMobile?16:34,lineHeight:isMobile?"22px":"40px",fontWeight:500,color:P.ink}}>{fmt(dailyAvg)}</span>
               </div>}
           </div>
           {totalUnallocatedOrUntransferred!==0&&
@@ -12289,7 +12357,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                     style={{flex:1,borderRadius:0,padding:"10px 0",minHeight:44,fontSize:10,fontWeight:500,border:"none",
                       textTransform:"uppercase",letterSpacing:".1em",
                       borderLeft:i>0?`1px solid ${P.hairline}`:"none",
-                      background:addMode===mv?P.ink:P.surface,color:addMode===mv?"#fff":P.muted}}>
+                      background:addMode===mv?P.ink:P.surface,color:addMode===mv?P.onInk:P.muted}}>
                     {label}
                   </button>
                 ))}
@@ -13581,7 +13649,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
       {/* ── top summary — total liquid assets, split by owner ── */}
-      <div style={{background:P.deep,color:"#fff",borderRadius:18,padding:16,marginBottom:16,
+      <div style={{background:P.heroBg,color:P.heroFg,borderRadius:18,padding:16,marginBottom:16,
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`,
         display:"flex",flexWrap:"wrap",gap:16,alignItems:"center"}}>
         <div style={{flex:"1 1 200px"}}>
@@ -13680,6 +13748,7 @@ function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,add
      holdings) and a person's view means strictly their own. Status only
      meaningfully applies to Time Deposit (stocks/MP2 don't have a status
      field), so it's a no-op filter for the other two types. */
+  const isMobile=useIsMobile();
   const[typeFilter,setTypeFilter]=useState("all");
   const[statusFilter,setStatusFilter]=useState("all"); // all | active | matured
   const passFilters=hld=>{
@@ -13858,19 +13927,23 @@ function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,add
             )}
           </div>
 
-          {/* Asset allocation — flat rows, monochrome technical rulers. */}
+          {/* Asset allocation — flat rows. Mobile applies the Stitch shade ramp
+              (ink → muted → faint → coral) so each class reads as a distinct
+              bar; desktop stays monochrome ink. */}
           <div style={{paddingTop:18}}>
             <div className="t-label" style={{color:P.muted}}>Asset allocation</div>
             {allocParts.length>0?
-              allocParts.map(p=>{
+              allocParts.map((p,i)=>{
                 const pctv=allocTotal>0?(p.value/allocTotal)*100:0;
+                const allocRamp=[P.ink,P.muted,P.faint,P.attention];
+                const barColor=isMobile?allocRamp[i%allocRamp.length]:P.ink;
                 return(
                   <div key={p.label} style={{padding:"16px 0",borderTop:`1px solid ${P.hairline}`}}>
                     <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,marginBottom:8}}>
                       <span style={{fontSize:14,fontWeight:500,color:P.ink}}>{p.label}</span>
                       <span className="mono tnum" style={{fontSize:13,color:P.ink,whiteSpace:"nowrap"}}>{usd(p.value)} <span style={{color:P.muted}}>{pctv.toFixed(0)}%</span></span>
                     </div>
-                    <ProgressMeter pct={pctv} color={P.ink} height={4}/>
+                    <ProgressMeter pct={pctv} color={barColor} height={4}/>
                   </div>
                 );
               })
@@ -13888,21 +13961,25 @@ function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,add
               <I.Refresh size={13} style={loading?{animation:"spin .9s linear infinite"}:null}/>{loading?"Fetching":"Refresh"}
             </button>
           </div>
-          {/* type / status filters + MP2 declared rates (owner scope is the switch above). */}
-          <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",padding:"12px 0"}}>
+          {/* type / status filters + MP2 declared rates (owner scope is the switch above).
+              On mobile the two selects and the MP2 button each take a full-width
+              row (stacked) — the old marginLeft:auto crammed or awkwardly wrapped
+              them on a narrow screen. Desktop keeps the inline row. */}
+          <div style={{display:"flex",flexDirection:isMobile?"column":"row",flexWrap:"wrap",gap:8,
+            alignItems:isMobile?"stretch":"center",padding:"12px 0"}}>
             <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}
-              className="mono" style={{border:`1px solid ${P.hairline}`,background:P.surface,borderRadius:2,padding:"8px 8px",minHeight:40,fontSize:12,color:P.ink}}>
+              className="mono" style={{border:`1px solid ${P.hairline}`,background:P.surface,borderRadius:2,padding:"8px 8px",minHeight:40,fontSize:12,color:P.ink,width:isMobile?"100%":undefined}}>
               <option value="all">All types</option>
               {INVESTMENT_TYPES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
             </select>
             <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
-              className="mono" style={{border:`1px solid ${P.hairline}`,background:P.surface,borderRadius:2,padding:"8px 8px",minHeight:40,fontSize:12,color:P.ink}}>
+              className="mono" style={{border:`1px solid ${P.hairline}`,background:P.surface,borderRadius:2,padding:"8px 8px",minHeight:40,fontSize:12,color:P.ink,width:isMobile?"100%":undefined}}>
               <option value="all">Active + matured</option>
               <option value="active">Active only</option>
               <option value="matured">Matured/closed only</option>
             </select>
             <button onClick={()=>setShowRates(true)}
-              style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:5,border:`1px solid ${P.hairline}`,background:P.surface,borderRadius:2,padding:"8px 10px",minHeight:40,fontSize:12,fontWeight:500,color:P.muted,cursor:"pointer"}}>
+              style={{marginLeft:isMobile?0:"auto",justifyContent:isMobile?"center":"flex-start",width:isMobile?"100%":undefined,display:"flex",alignItems:"center",gap:5,border:`1px solid ${P.hairline}`,background:P.surface,borderRadius:2,padding:"8px 10px",minHeight:40,fontSize:12,fontWeight:500,color:P.muted,cursor:"pointer"}}>
               <I.Settings size={12}/>MP2 rates
             </button>
           </div>
@@ -14882,7 +14959,7 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
 
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.deep,color:"#fff",
+      <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.heroBg,color:P.heroFg,
         boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
         <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
           Net worth{isCombined?" · Combined":` · ${owners[profile]||""}`}
@@ -16181,7 +16258,7 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
           .fab-btn parks itself inside the tab pane instead of the viewport. */}
       <Portal>
         <button aria-label="Add installment" className="fab-btn"
-          onClick={()=>setSheet({mode:"add"})} style={{background:P.gr}}>
+          onClick={()=>setSheet({mode:"add"})} style={{background:P.gr,color:P.onInk}}>
           <I.Plus size={24}/>
         </button>
       </Portal>
