@@ -2350,6 +2350,24 @@ function goalReached(g){
   return t>0&&goalSavedTotal(g)>=t;
 }
 
+/* Net-worth milestone ladder — round rungs in the DISPLAY currency (the user
+   chose display-currency-anchored milestones for round, motivating targets; the
+   FX trade-off is an accepted diff). Shared by the "Next milestone" module, the
+   crossing-detection effect, and milestonetest.cjs, so all three agree.
+   `next` = the target above `n`; `highest` = the greatest rung already reached. */
+const NW_MILESTONE_STEPS=[10000,25000,50000,100000,250000,500000,1000000,2000000,5000000,10000000,25000000];
+function nextNwMilestone(n){
+  if(!(n>0))return null;
+  for(const s of NW_MILESTONE_STEPS)if(s>n)return s;
+  return Math.ceil((n+1)/1e7)*1e7;
+}
+function highestNwMilestone(n){
+  if(!(n>0))return null;
+  let h=null;
+  for(const s of NW_MILESTONE_STEPS){if(s<=n)h=s;else break;}
+  return h;
+}
+
 function purchaseAvailableStack({banks,goals,owner,protectedGoalIds,
                                  includedBankIds,releasedBankIds,todayStr,toBase}){
   const conv=typeof toBase==="function"?toBase:v=>v;
@@ -3712,8 +3730,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.54.0";
-const BUILD_ID="2026.08.27.0005";
+const APP_VERSION="1.55.0";
+const BUILD_ID="2026.08.27.0006";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -4786,6 +4804,9 @@ function validateBackup(obj){
   // navTabs — same stamped map as trimPolicy, same reasoning (Phase 7).
   if(obj.navTabs!==undefined&&(obj.navTabs===null||typeof obj.navTabs!=="object"||Array.isArray(obj.navTabs)))
     errors.push(`"navTabs" should be an object, but it isn't.`);
+  // netWorthMilestones — stamped per-profile achievement map, same shape rule.
+  if(obj.netWorthMilestones!==undefined&&(obj.netWorthMilestones===null||typeof obj.netWorthMilestones!=="object"||Array.isArray(obj.netWorthMilestones)))
+    errors.push(`"netWorthMilestones" should be an object, but it isn't.`);
   if(obj.household!==undefined&&(obj.household===null||typeof obj.household!=="object"||Array.isArray(obj.household)))
     errors.push(`"household" should be an object, but it isn't.`);
   else if(obj.household&&obj.household.expenses!==undefined&&!Array.isArray(obj.household.expenses))
@@ -5335,6 +5356,7 @@ const fingerprint=(d,{ignoreAuto=false}={})=>{
       txTemplates:(rest.txTemplates||[]).length?sortedById(rest.txTemplates):undefined,
       /* Same undefined-when-empty rule: a map, so measured by key count. */
       trimPolicy:Object.keys(rest.trimPolicy||{}).length?rest.trimPolicy:undefined,
+      netWorthMilestones:Object.keys(rest.netWorthMilestones||{}).length?rest.netWorthMilestones:undefined,
       navTabs:Object.keys(rest.navTabs||{}).length?rest.navTabs:undefined,
       monthlyPlans:sortedByKey(rest.monthlyPlans,m=>`${m.month||""}|${m.owner||""}`),
       portHistory:sortedByKey(rest.portHistory,h=>h.month||""),
@@ -5644,6 +5666,31 @@ function mergeTrimPolicy(local,remote){
   return out;
 }
 
+/* Net-worth milestone memory (`data.netWorthMilestones`) — same stamped
+   per-profile map shape as trimPolicy, but a DIFFERENT merge: achievements are
+   sticky/monotonic, so the HIGHEST `v` wins, not the newest stamp. Ties break by
+   lexicographic (at,updatedAt) so merge(a,b) deep-equals merge(b,a) — the max is
+   inherently commutative/convergent, unlike newest-wins. Lives HERE beside
+   mergeTrimPolicy, inside the mergeArrayById → `Full cross-field auto-merge`
+   span the sync/merge tests slice by text. */
+function mergeMilestones(local,remote){
+  const l=local||{},r=remote||{};
+  const keys=[...new Set([...Object.keys(l),...Object.keys(r)])];
+  if(!keys.length)return undefined;
+  const out={};
+  keys.sort().forEach(k=>{
+    const a=l[k],b=r[k];
+    if(!a){out[k]=b;return;}
+    if(!b){out[k]=a;return;}
+    const av=Number(a.v)||0,bv=Number(b.v)||0;
+    if(av!==bv){out[k]=av>bv?a:b;return;}
+    const ak=String(a.at||"")+"|"+String(a.updatedAt||"");
+    const bk=String(b.at||"")+"|"+String(b.updatedAt||"");
+    out[k]=ak<=bk?a:b;
+  });
+  return out;
+}
+
 /* Per-key newest-wins for one owner's corrected period starts (v1.44.0).
    Deliberately lives HERE, beside mergeTrimPolicy and inside the
    `mergeArrayById` → `Full cross-field auto-merge` span, because synctest,
@@ -5848,6 +5895,7 @@ function tryAutoMergeAll(local,remote){
       /* navTabs is the same {v,updatedAt} stamped map, so per-key newest-wins
          from mergeTrimPolicy applies unchanged (Phase 7). */
       navTabs:mergeTrimPolicy(local.navTabs,remote.navTabs),
+      netWorthMilestones:mergeMilestones(local.netWorthMilestones,remote.netWorthMilestones),
       monthlyPlans:mergeKeyedByTs(local.monthlyPlans,remote.monthlyPlans,m=>`${m.month}|${m.owner}`,preferLocal),
       portHistory:mergeKeyed(local.portHistory,remote.portHistory,h=>h.month,preferLocal),
       history:mergeKeyed(local.history,remote.history,h=>h.month,preferLocal),
@@ -8448,6 +8496,41 @@ function App(){
     // household total, so the derived numbers alone wouldn't re-fire this.
   },[netWorth,banksSar,invSar,assetSar,liabSar,assets,banks,invs,netWorthReady]);
 
+  /* ── Net-worth milestone memory (sticky, per profile) ──────────────────────
+     Records the highest DISPLAY-currency milestone rung each profile has ever
+     crossed, so the "Next milestone" card can celebrate it and KEEP celebrating
+     it through an FX dip. Unlike the daily snapshot above, a new all-time-high is
+     a real, person-worthy event, so it writes through `setData` (dirties +
+     syncs) — NOT `setDataRaw`. Monotonic + no-op-guarded, so it fires once per
+     genuine crossing, not on every open; the first-run backfill is silent (the
+     badge is a calm persistent line, never a toast). Merged max-per-key by
+     `mergeMilestones`. */
+  useEffect(()=>{
+    if(!netWorthReady)return;
+    const primary=(data.homeDisplay&&data.homeDisplay.netWorth&&data.homeDisplay.netWorth.primary)||"SAR";
+    const t=setTimeout(()=>{
+      const today=new Date().toISOString().slice(0,10);
+      setData(d=>{
+        const map={...(d.netWorthMilestones||{})};
+        let changed=false;
+        ["me","wife","household"].forEach(pf=>{
+          const sarNet=netWorthParts(pf).net;
+          const dispNet=convert?convert(sarNet,"SAR",primary):sarNet;
+          const rung=highestNwMilestone(dispNet);
+          if(rung==null)return;
+          const cur=map[pf];
+          if(!cur||rung>(Number(cur.v)||0)){
+            map[pf]={v:rung,ccy:primary,at:today,updatedAt:new Date().toISOString()};
+            changed=true;
+          }
+        });
+        if(!changed)return d;
+        return{...d,netWorthMilestones:map};
+      });
+    },1500);
+    return()=>clearTimeout(t);
+  },[netWorth,banksSar,invSar,assetSar,liabSar,assets,banks,invs,netWorthReady]);
+
   /* ── automatic market-data refresh ────────────────────────────────────────
      Keeps stock quotes and FX rates from silently going stale for people who
      never open Investments/Currency and just live on Home. Piggybacks on the
@@ -8856,7 +8939,7 @@ function App(){
             addMp2Contribution,updateMp2Contribution,removeMp2Contribution,recordMp2Payout,
             confirmTdMaturity,transferTdProceeds,banks,
             includeMp2Estimate}}/>}
-          {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}}/>}
+          {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap,homeDisplay:data.homeDisplay||{},netWorthMilestones:data.netWorthMilestones||{}}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners}}/>}
           {tab==="installments"&&<InstallmentsView {...{installments,installmentPayments,
@@ -13496,63 +13579,77 @@ function UpdateBalanceSheet({account,onClose,onConfirm}){
   const submit=()=>{if(canSave)onConfirm(next);};
   return(
     <Portal>
-    <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
-          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Update balance</h3>
-          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
-        </div>
-        <div style={{fontSize:12,color:P.faint,marginBottom:val.active?8:14}}>
-          {account.name||"Account"}{account.bank?` · ${account.bank}`:""}
-        </div>
-        {/* Says out loud that the starting figure is an estimate, not the
-            number last typed — otherwise "Add 500" to an accrued balance looks
-            like the app quietly changed the balance on its own. */}
-        {val.active&&
-          <div style={{fontSize:11,color:P.neuSub,marginBottom:14,lineHeight:1.5}}>
-            Starting from the estimated balance — {num(val.balance)} confirmed on{" "}
-            {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
-            {" "}plus {num(val.accrued)} accrued. Saving re-anchors it to today.
-          </div>}
-
-        <div role="group" aria-label="Update mode" className="seg-control" style={{width:"100%",marginBottom:14}}>
-          <div className="seg-indicator" style={{transform:`translateX(${idx*100}%)`,background:MODES[idx][2]}}/>
-          {MODES.map(([key,label,color])=>(
-            <button key={key} onClick={()=>setMode(key)} aria-pressed={mode===key} className="seg-btn"
-              style={{color:mode===key?"#fff":color,fontSize:12,padding:"6px 4px"}}>
-              {label}
-            </button>
-          ))}
+    <div className="sheet-bg task-bg" onClick={onClose}>
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" aria-label="Update balance" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+        <div className="sheet-task-head">
+          <button onClick={onClose} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+          <span className="t-section" style={{color:P.ink,fontSize:12}}>Update Balance</span>
+          <span style={{width:40}}/>
         </div>
 
-        <div style={{marginBottom:12}}>
-          <div style={{fontSize:12,color:P.sub,marginBottom:4}}>
-            {mode==="set"?"New balance":"Amount"} ({account.currency})
+        <div className="sheet-task-body">
+          <div style={{padding:"14px 20px 4px"}}>
+            <div style={{fontSize:12,color:P.faint,marginBottom:val.active?8:0}}>
+              {account.name||"Account"}{account.bank?` · ${account.bank}`:""}
+            </div>
+            {/* Says out loud that the starting figure is an estimate, not the
+                number last typed — otherwise "Add 500" to an accrued balance
+                looks like the app quietly changed the balance on its own. */}
+            {val.active&&
+              <div style={{fontSize:11,color:P.muted,marginBottom:14,lineHeight:1.5}}>
+                Starting from the estimated balance — {num(val.balance)} confirmed on{" "}
+                {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                {" "}plus {num(val.accrued)} accrued. Saving re-anchors it to today.
+              </div>}
+
+            <div role="group" aria-label="Update mode" className="seg-control" style={{width:"100%",marginTop:val.active?0:14}}>
+              <div className="seg-indicator" style={{transform:`translateX(${idx*100}%)`,background:MODES[idx][2]}}/>
+              {MODES.map(([key,label,color])=>(
+                <button key={key} onClick={()=>setMode(key)} aria-pressed={mode===key} className="seg-btn"
+                  style={{color:mode===key?"#fff":color,fontSize:12,padding:"6px 4px"}}>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-          <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus
-            onKeyDown={e=>{if(e.key==="Enter")submit();}} placeholder="0"
-            style={{width:"100%",borderRadius:10,padding:"12px",fontSize:22,fontWeight:600,textAlign:"right",
-              background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}} className="tnum"/>
+
+          {/* prominent amount row — same shape as Add-Transaction's AMOUNT */}
+          <div className="tx-field">
+            <div className="tx-field-label"><span className="t-label" style={{color:P.muted}}>{mode==="set"?"New bal":"Amount"}</span></div>
+            <div className="tx-field-val">
+              <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                <span className="mono" style={{fontSize:20,color:P.muted,flexShrink:0}}>{account.currency}</span>
+                <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus
+                  onKeyDown={e=>{if(e.key==="Enter")submit();}} placeholder="0" aria-label={`${mode==="set"?"New balance":"Amount"} (${account.currency})`}
+                  className="mono tnum" style={{flex:1,minWidth:0,border:"none",background:"transparent",outline:"none",
+                    fontSize:32,fontWeight:500,color:P.ink,padding:0}}/>
+              </div>
+            </div>
+          </div>
+
+          <div style={{padding:"14px 20px 20px"}}>
+            <div className="tnum" style={{background:P.surfaceSubtle,border:`1px solid ${P.hairline}`,padding:"10px 12px",marginBottom:6,fontSize:13,color:P.muted,
+              display:"flex",alignItems:"center",justifyContent:"center",gap:6,flexWrap:"wrap"}}>
+              <span>{num(cur)}</span>
+              {mode!=="set"&&<span style={{fontWeight:700,color:MODES[idx][2]}}>{mode==="add"?"+":"−"}</span>}
+              {mode!=="set"&&<span>{hasAmount?num(Math.abs(parsed)):"0"}</span>}
+              <span style={{color:P.faint}}>=</span>
+              <strong style={{fontSize:16,color:goesNegative?P.danger:P.ink}}>{num(next)}</strong>
+            </div>
+            <div style={{fontSize:11,color:goesNegative?P.danger:P.faint,textAlign:"center",minHeight:15}}>
+              {goesNegative?"This would take the account below zero.":"Supports simple math, e.g. 250+80"}
+            </div>
+          </div>
         </div>
 
-        <div className="tnum" style={{...neuInset(12),padding:"10px 12px",marginBottom:4,fontSize:13,color:P.neuSub,
-          display:"flex",alignItems:"center",justifyContent:"center",gap:6,flexWrap:"wrap"}}>
-          <span>{num(cur)}</span>
-          {mode!=="set"&&<span style={{fontWeight:700,color:MODES[idx][2]}}>{mode==="add"?"+":"−"}</span>}
-          {mode!=="set"&&<span>{hasAmount?num(Math.abs(parsed)):"0"}</span>}
-          <span style={{color:P.faint}}>=</span>
-          <strong style={{fontSize:16,color:goesNegative?P.wine:P.neuInk}}>{num(next)}</strong>
+        <div className="sheet-task-foot">
+          <button onClick={submit} disabled={!canSave} className="mono"
+            style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:0,
+              padding:"12px 0",minHeight:48,fontSize:12,fontWeight:500,textTransform:"uppercase",letterSpacing:".12em",border:"none",
+              background:canSave?P.ink:P.surfaceMuted,color:canSave?P.onInk:P.faint,cursor:canSave?"pointer":"default"}}>
+            <I.Check size={14}/>Save balance
+          </button>
         </div>
-        <div style={{fontSize:11,color:goesNegative?P.wine:P.faint,marginBottom:16,textAlign:"center",minHeight:15}}>
-          {goesNegative?"This would take the account below zero.":"Supports simple math, e.g. 250+80"}
-        </div>
-
-        <button onClick={submit} disabled={!canSave}
-          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,
-            padding:"12px 0",fontSize:14,fontWeight:600,border:"none",
-            background:canSave?P.jade:P.sfA,color:canSave?"#fff":P.faint,cursor:canSave?"pointer":"default"}}>
-          <I.Check size={14}/>Save balance
-        </button>
       </div>
     </div>
     </Portal>
@@ -13579,14 +13676,14 @@ function InterestSettings({b,updateBank,todayStr,accent}){
     else if(it.enabled===false)updateBank(b.id,{interest:{...it,enabled:true},balanceAsOf:todayStr});
     else patch({enabled:false});  // keep the tiers, just stop accruing
   };
-  const field={...neuInset(8),flex:1,minWidth:0,textAlign:"right",fontSize:13,padding:"5px 8px",color:P.neuInk};
+  const field={flex:1,minWidth:0,textAlign:"right",fontSize:13,padding:"5px 8px",color:P.ink,background:P.surface,border:`1px solid ${P.hairline}`};
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:8,paddingTop:8,borderTop:`1px solid ${P.line}`}}>
+    <div style={{display:"flex",flexDirection:"column",gap:8,paddingTop:8,borderTop:`1px solid ${P.hairline}`}}>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <span style={{fontSize:12,color:P.neuSub}}>Earns interest</span>
+        <span style={{fontSize:12,color:P.muted}}>Earns interest</span>
         <button onClick={toggle} aria-pressed={on} className="status-pill status-pill-fixed"
-          style={{marginLeft:"auto",cursor:"pointer",border:`1px solid ${on?P.grS:P.line}`,
-            background:on?P.grS:"transparent",color:on?P.grD:P.neuSub}}>
+          style={{marginLeft:"auto",cursor:"pointer",border:`1px solid ${on?P.success:P.hairline}`,
+            background:on?P.grS:"transparent",color:on?P.grD:P.muted}}>
           {on?<I.Check size={13}/>:<I.X size={13}/>}{on?"On":"Off"}
         </button>
       </div>
@@ -13601,33 +13698,33 @@ function InterestSettings({b,updateBank,todayStr,accent}){
         </div>
         {tiers.map((t,i)=>(
           <div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>{i===0?"From":"From"}</span>
+            <span style={{fontSize:11,color:P.muted,flexShrink:0}}>{i===0?"From":"From"}</span>
             <NumField value={t.from} onCommit={v=>setTier(i,{from:v})} min={0}
               className="bare tnum" style={field}/>
-            <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>at</span>
+            <span style={{fontSize:11,color:P.muted,flexShrink:0}}>at</span>
             <NumField value={t.rate} onCommit={v=>setTier(i,{rate:v})} min={0}
               className="bare tnum" style={{...field,maxWidth:70}}/>
-            <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>%</span>
+            <span style={{fontSize:11,color:P.muted,flexShrink:0}}>%</span>
             {tiers.length>1&&
               <IconButton icon={I.Trash} label={`Remove tier ${i+1}`} size={13}
                 onClick={()=>patch({tiers:tiers.filter((_,j)=>j!==i)})}
-                style={{color:P.wine,opacity:.5,flexShrink:0}}/>}
+                style={{color:P.danger,opacity:.5,flexShrink:0}}/>}
           </div>
         ))}
         <button onClick={()=>patch({tiers:[...tiers,{from:0,rate:0}]})} className="neu-btn"
-          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,padding:"5px 0",
-            fontSize:11,fontWeight:600,color:accent}}>
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,padding:"5px 0",borderRadius:0,
+            fontSize:11,fontWeight:500,color:P.ink}}>
           <I.Plus size={11}/>Add tier
         </button>
 
         <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>Withholding tax</span>
+          <span style={{fontSize:11,color:P.muted,flexShrink:0}}>Withholding tax</span>
           <NumField value={(it&&it.taxPct)!=null?it.taxPct:20} onCommit={v=>patch({taxPct:v})} min={0} max={100}
             className="bare tnum" style={{...field,maxWidth:70}}/>
-          <span style={{fontSize:11,color:P.neuSub,flexShrink:0}}>%</span>
+          <span style={{fontSize:11,color:P.muted,flexShrink:0}}>%</span>
           <select value={(it&&it.crediting)||"daily"} onChange={e=>patch({crediting:e.target.value})}
             aria-label="Interest crediting frequency"
-            style={{...neu(8),padding:"5px 8px",fontSize:12,border:"none",color:P.neuSub,flexShrink:0}}>
+            style={{padding:"5px 8px",fontSize:12,background:P.surface,border:`1px solid ${P.hairline}`,color:P.muted,flexShrink:0}}>
             {BANK_CREDITING.map(([k,l])=><option key={k} value={k}>{l}</option>)}
           </select>
         </div>
@@ -13670,7 +13767,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
 
   const Card=b=>{
     const isOpen=openId===b.id;
-    const{c:accent,s:accentS}=bankOwnerAccent(b.owner);
+    const{c:accent}=bankOwnerAccent(b.owner);
     const val=bankValuation(b,todayStr);
     // Whole units on the headline: accrual always produces cents, and at 26px
     // serif "PHP 150,203.14" wraps to two lines and collides with the Update
@@ -13680,98 +13777,75 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
     const money=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
     const money2=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:2});
     return(
-      <div key={b.id} style={{...neu(16),overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
-        {/* accent strip — reads as the "card network" band of a wallet pass */}
-        <div style={{height:5,background:accent}}/>
-        <div style={{padding:16,flex:1,display:"flex",flexDirection:"column",gap:10}}>
-          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:11,fontWeight:600,color:accent,textTransform:"uppercase",letterSpacing:".05em"}}>{b.bank||"Bank"}</div>
-              <div style={{fontSize:16,fontWeight:700,color:P.neuInk,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{b.name||"Account"}</div>
+      <div key={b.id} style={{borderTop:`1px solid ${P.hairline}`}}>
+        {/* open-ledger row — no card box; hairline separates rows */}
+        <div style={{display:"flex",alignItems:"flex-start",gap:8,padding:"12px 4px"}}>
+          <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:4}}>
+            {/* identity line — account name primary, bank quieter, one line */}
+            <div style={{display:"flex",alignItems:"baseline",gap:6,minWidth:0}}>
+              <span style={{fontSize:14,fontWeight:500,color:P.ink,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.name||"Account"}</span>
+              {b.bank&&<span className="mono" style={{fontSize:10,color:P.muted,textTransform:"uppercase",letterSpacing:".06em",whiteSpace:"nowrap",flexShrink:0}}>· {b.bank}</span>}
             </div>
-            <button onClick={()=>setOpenId(isOpen?null:b.id)}
-              title="Account settings" aria-label={`${b.name||"Account"} settings`} aria-expanded={isOpen} className="neu-btn"
-              style={{flexShrink:0,borderRadius:10,padding:6,color:isOpen?accent:P.neuSub}}>
-              <I.Settings size={14}/>
-            </button>
-          </div>
-
-          <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:8}}>
-            <div style={{minWidth:0}}>
-              <div className="mono tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk,whiteSpace:"nowrap"}}>
-                {b.currency} {money(val.value)}
-              </div>
-              {/* Accrual is always labelled an estimate and always says what
-                  it's an estimate *since*, because the app can never separate
-                  interest from a deposit after the fact — the honest claim is
-                  only ever "since you last confirmed this". */}
-              {val.active&&
-                <div className="tnum" style={{fontSize:11,color:accent,marginTop:2}}>
-                  ≈ {money2(val.accrued)} accrued since{" "}
-                  {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
-                  <span style={{color:P.faint}}> · est.</span>
-                </div>}
-              {b.currency!=="SAR"&&<div className="tnum" style={{fontSize:12,color:P.neuSub,marginTop:2}}>≈ {sar(sarOf(b))}</div>}
+            {/* meta line — currency · country · status · conversion · accrual, all
+                one size/weight; a reserved/unreachable account keeps only a
+                COLOURED SQUARE, its label matching the surrounding metadata. */}
+            <div className="mono" style={{display:"flex",alignItems:"center",gap:8,rowGap:3,flexWrap:"wrap",fontSize:10,color:P.muted,lineHeight:1.4}}>
+              <span>{b.currency}</span>
+              <span>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
+              {bankIsReserved(b)&&<span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:7,height:7,background:P.attention,flexShrink:0}}/>Emergency fund</span>}
+              {!bankIsAccessible(b)&&<span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:7,height:7,background:P.muted,flexShrink:0}}/>Can't reach</span>}
+              {b.currency!=="SAR"&&<span style={{color:P.faint}}>≈ {sar(sarOf(b))}</span>}
+              {val.active&&<span style={{color:P.faint}}>≈ {money2(val.accrued)} since {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · est.</span>}
             </div>
-            {/* Primary action on this card — updating a balance is by far the
-                most frequent thing anyone does here, so it gets a real button
-                rather than living behind the settings gear. */}
-            <button onClick={()=>setBalanceEditId(b.id)} className="neu-btn"
-              aria-label={`Update ${b.name||"account"} balance`}
-              style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,padding:"7px 12px",
-                fontSize:12,fontWeight:600,color:accent}}>
-              <I.Plus size={12}/>Update
-            </button>
           </div>
-
-          <div style={{marginTop:"auto",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",background:accentS,color:accent}}>{b.currency}</span>
-            <span style={{fontSize:10,color:P.neuSub}}>{COUNTRIES.find(([c])=>c===b.country)?.[1]||b.country}</span>
-            {/* On the card face, not just behind the settings gear: an account
-                the Purchase Advisor won't spend has to say so where the balance
-                is, or the advisor's total looks wrong rather than careful. */}
-            {bankIsReserved(b)&&
-              <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",
-                background:P.amberS,color:"#E07B2A"}}>Emergency fund</span>}
-            {!bankIsAccessible(b)&&
-              <span style={{fontSize:10,fontWeight:600,borderRadius:999,padding:"2px 8px",
-                background:P.sfA,color:P.faint}}>Can't reach</span>}
-            <span style={{marginLeft:"auto",fontSize:10,fontWeight:600,color:accent}}>{bankOwnerLabel(b.owner,owners)}</span>
+          <div style={{flexShrink:0,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+            <span className="mono tnum" style={{fontSize:16,fontWeight:500,color:P.ink,whiteSpace:"nowrap"}}>{b.currency} {money(val.value)}</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <button onClick={()=>setBalanceEditId(b.id)} className="neu-btn" aria-label={`Update ${b.name||"account"} balance`}
+                style={{borderRadius:0,display:"flex",alignItems:"center",gap:4,padding:"4px 8px",fontSize:11,fontWeight:500,color:P.ink}}>
+                <I.Plus size={11}/>Update
+              </button>
+              <button onClick={()=>setOpenId(isOpen?null:b.id)}
+                title="Account settings" aria-label={`${b.name||"Account"} settings`} aria-expanded={isOpen}
+                style={{background:"transparent",border:"none",cursor:"pointer",padding:2,color:isOpen?P.ink:P.muted,display:"flex",alignItems:"center"}}>
+                <I.Settings size={14}/>
+              </button>
+            </div>
           </div>
         </div>
 
         {/* ── settings panel — edit fields, collapsed by default ── */}
         {isOpen&&(
-          <div style={{...neuInset(0),borderRadius:0,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{background:P.surfaceSubtle,borderTop:`1px solid ${P.hairline}`,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
             <div style={{display:"flex",gap:8}}>
               <input value={b.name} placeholder="Account name" onChange={e=>updateBank(b.id,{name:e.target.value})}
-                className="bare" style={{...neu(8),flex:1,fontSize:13,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
+                className="bare" style={{flex:1,fontSize:13,fontWeight:500,padding:"6px 8px",color:P.ink,background:P.surface,border:`1px solid ${P.hairline}`}}/>
               <input value={b.bank} placeholder="Bank name" onChange={e=>updateBank(b.id,{bank:e.target.value})}
-                className="bare" style={{...neu(8),flex:1,fontSize:13,padding:"6px 8px",color:P.neuInk}}/>
+                className="bare" style={{flex:1,fontSize:13,padding:"6px 8px",color:P.ink,background:P.surface,border:`1px solid ${P.hairline}`}}/>
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <select value={b.country} onChange={e=>updateBank(b.id,{country:e.target.value})}
-                style={{...neu(8),flex:1,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                style={{flex:1,padding:"6px 8px",fontSize:12,background:P.surface,border:`1px solid ${P.hairline}`,color:P.muted}}>
                 {COUNTRIES.map(([c,l])=><option key={c} value={c}>{l}</option>)}
               </select>
               <select value={b.currency} onChange={e=>updateBank(b.id,{currency:e.target.value})}
-                style={{...neu(8),padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                style={{padding:"6px 8px",fontSize:12,background:P.surface,border:`1px solid ${P.hairline}`,color:P.muted}}>
                 {BANK_CCY.map(c=><option key={c}>{c}</option>)}
               </select>
               {/* Owner is editable here as well as via which section you added
                   from — without this, "household" (joint) would be unreachable. */}
               <select value={b.owner} onChange={e=>updateBank(b.id,{owner:e.target.value})}
                 aria-label="Account owner"
-                style={{...neu(8),padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                style={{padding:"6px 8px",fontSize:12,background:P.surface,border:`1px solid ${P.hairline}`,color:P.muted}}>
                 {BANK_OWNERS.map(k=><option key={k} value={k}>{bankOwnerLabel(k,owners)}</option>)}
               </select>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:12,color:P.neuSub}}>Balance ({b.currency})</span>
+              <span style={{fontSize:12,color:P.muted}}>Balance ({b.currency})</span>
               {/* Typing here is a confirmation too, so it re-anchors the
                   accrual date exactly like the Update sheet's Set mode. */}
               <NumField value={b.balance} onCommit={v=>{updateBank(b.id,{balance:v,balanceAsOf:todayStr});syncNow&&syncNow();}}
-                className="bare tnum" style={{...neuInset(8),flex:1,textAlign:"right",fontSize:14,fontWeight:600,padding:"6px 8px",color:P.neuInk}}/>
+                className="bare tnum" style={{flex:1,textAlign:"right",fontSize:14,fontWeight:500,padding:"6px 8px",color:P.ink,background:P.surface,border:`1px solid ${P.hairline}`}}/>
             </div>
 
             {/* ── What this account is for ──
@@ -13782,14 +13856,14 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
               <select value={b.purpose||""} aria-label="What this account is for"
                 onChange={e=>updateBank(b.id,{purpose:e.target.value||null})}
-                style={{...neu(8),flex:"1 1 150px",minWidth:0,padding:"6px 8px",fontSize:12,border:"none",color:P.neuSub}}>
+                style={{flex:"1 1 150px",minWidth:0,padding:"6px 8px",fontSize:12,background:P.surface,border:`1px solid ${P.hairline}`,color:P.muted}}>
                 {BANK_PURPOSES.map(([v,l])=><option key={v||"none"} value={v}>{l}</option>)}
               </select>
               <label style={{display:"flex",alignItems:"center",gap:8,minHeight:40,
-                fontSize:12,color:P.neuSub,flex:"1 1 150px",minWidth:0}}>
+                fontSize:12,color:P.muted,flex:"1 1 150px",minWidth:0}}>
                 <input type="checkbox" checked={bankIsAccessible(b)}
                   onChange={e=>updateBank(b.id,{accessible:e.target.checked?null:false})}
-                  style={{width:16,height:16,accentColor:P.jade,flexShrink:0}}/>
+                  style={{width:16,height:16,accentColor:P.success,flexShrink:0}}/>
                 <span>I can reach this money</span>
               </label>
             </div>
@@ -13804,8 +13878,8 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
             <InterestSettings b={b} updateBank={updateBank} todayStr={todayStr} accent={accent}/>
 
             <button onClick={()=>{removeBank(b.id);setOpenId(null);}} className="neu-btn"
-              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"7px 0",
-                fontSize:12,fontWeight:600,color:P.wine}}>
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"7px 0",borderRadius:0,
+                fontSize:12,fontWeight:500,color:P.danger}}>
               <I.Trash size={12}/>Delete account
             </button>
           </div>
@@ -13816,38 +13890,61 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
 
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      {/* ── top summary — total liquid assets, split by owner ── */}
-      <div style={{background:P.heroBg,color:P.heroFg,borderRadius:18,padding:16,marginBottom:16,
-        boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`,
-        display:"flex",flexWrap:"wrap",gap:16,alignItems:"center"}}>
-        <div style={{flex:"1 1 200px"}}>
-          <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
-            Total liquid assets{profile!=="household"?` · ${owners[profile]||""}`:""}
-          </div>
-          <span className="mono tnum" style={{fontSize:30,fontWeight:600}}>{sar(total)}</span>
-          <div className="tnum" style={{marginTop:6,display:"flex",gap:16,color:P.deepHi,fontSize:14}}>
-            <span>{usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"USD —"}</span>
-            <span>{phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"PHP —"}</span>
-          </div>
-        </div>
-        {profile==="household"&&(
-          <div style={{display:"flex",gap:10,flex:"1 1 220px"}}>
-            {BANK_OWNERS.filter(k=>k!=="household"||hasJoint).map(k=>(
-              <div key={k} style={{flex:1,background:"rgba(0,0,0,.2)",boxShadow:"inset 2px 2px 5px rgba(0,0,0,.3),inset -1px -1px 2px rgba(255,255,255,.05)",borderRadius:12,padding:"10px 12px"}}>
-                <div style={{fontSize:11,color:P.deepHi}}>{bankOwnerLabel(k,owners)}</div>
-                <div className="tnum" style={{fontSize:16,fontWeight:700}}>{sar(ownerTotals[k])}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+      <div className="split-8-4">
+      {/* LEFT — profile toggle, summary, owner-grouped account ledger */}
+      <div className="split-pad-r">
+      {/* scope selector sits ABOVE its totals */}
+      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:16}}>
         <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
       </div>
+      {/* ── top summary — total liquid assets, split by owner ── */}
+      {(()=>{
+        const money0=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+        const ownerKeys=BANK_OWNERS.filter(k=>k!=="household"||hasJoint);
+        return(
+          <GridSection title={`Liquid assets${profile!=="household"?` · ${owners[profile]||""}`:""}`} flush style={{marginBottom:16}}>
+            {/* Dominant total on its own row (the one big figure); the two
+                approximate conversions ride an 18px 2-up beneath it so a
+                7-figure peso value never clips at 390/320. */}
+            <div style={{padding:"20px 24px",borderBottom:`1px solid ${P.hairline}`}}>
+              <MetricBlock hero label="Total" cur="SAR" value={money0(total)}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))"}}>
+              {[["USD",usdTotal!=null?`≈ $${usdTotal.toLocaleString("en-US")}`:"—"],
+                ["PHP",phpTotal!=null?`≈ ₱${Math.round(phpTotal).toLocaleString("en-US")}`:"—"]].map(([lb,v],i)=>(
+                <div key={lb} style={{padding:"14px 24px",borderLeft:i>0?`1px solid ${P.hairline}`:"none",display:"flex",flexDirection:"column",gap:6}}>
+                  <span className="t-label" style={{color:P.muted}}>{lb}</span>
+                  <span className="mono tnum" style={{fontSize:18,fontWeight:500,color:P.ink,whiteSpace:"nowrap"}}>{v}</span>
+                </div>
+              ))}
+            </div>
+            {profile==="household"&&(
+              <div style={{display:"grid",gridTemplateColumns:`repeat(${ownerKeys.length},minmax(0,1fr))`,borderTop:`1px solid ${P.hairline}`}}>
+                {ownerKeys.map((k,i)=>{
+                  const{c:oa}=bankOwnerAccent(k);
+                  return(
+                    <div key={k} style={{padding:"14px 12px",borderLeft:i>0?`1px solid ${P.hairline}`:"none",display:"flex",flexDirection:"column",gap:6,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                        <span style={{width:8,height:8,background:oa,flexShrink:0}}/>
+                        <span className="t-label" style={{color:P.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bankOwnerLabel(k,owners)}</span>
+                      </div>
+                      {/* small SAR code + number on ONE line (never wraps in a narrow 3-up tile) */}
+                      <div style={{display:"flex",alignItems:"baseline",gap:4,minWidth:0}}>
+                        <span className="mono" style={{fontSize:11,color:P.muted,flexShrink:0}}>SAR</span>
+                        <span className="mono tnum" style={{fontSize:16,fontWeight:500,color:P.ink,whiteSpace:"nowrap"}}>{money0(ownerTotals[k])}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </GridSection>
+        );
+      })()}
 
-      {/* ── card grid, per owner. Combined lists all three buckets; a person's
-             view lists only theirs, so joint money never lands in one name. ── */}
+      {/* ── owner-grouped account ledger (open hairline rows). Combined lists all
+             three buckets; a person's view lists only theirs, so joint money
+             never lands in one name. ── */}
       {(profile==="household"?BANK_OWNERS:[profile]).map(ok=>{
         const items=banks.filter(b=>b.owner===ok);
         // don't advertise a Joint section to someone who has no joint accounts
@@ -13855,22 +13952,119 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
         const{c:accent}=bankOwnerAccent(ok);
         const who=bankOwnerLabel(ok,owners);
         return(
-          <section key={ok} style={{marginBottom:22}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:accent}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:accent,margin:0}}>{ok==="household"?"Joint accounts":`${who}'s accounts`}</h2>
+          <section key={ok} style={{marginBottom:24}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+              <span style={{width:8,height:8,background:accent}}/>
+              <span className="t-section" style={{color:P.muted}}>{ok==="household"?"Joint accounts":`${who}'s accounts`}</span>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(280px,100%),1fr))",gap:12}}>
-              {items.map(Card)}
-              <button onClick={()=>addBank(ok)} className="neu-btn"
-                style={{borderRadius:16,minHeight:150,color:P.jade,
-                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
-                <I.Plus size={20}/>Add {ok==="household"?"joint":`${who}'s`} account
-              </button>
-            </div>
+            {items.map(Card)}
+            {/* + Add account row (replaces the dashed tile) */}
+            <button onClick={()=>addBank(ok)}
+              style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"12px 4px",
+                background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,cursor:"pointer",
+                fontSize:13,fontWeight:500,color:P.muted,textAlign:"left"}}>
+              <I.Plus size={14}/>Add {ok==="household"?"joint":`${who}'s`} account
+            </button>
           </section>
         );
       })}
+      </div>{/* end LEFT (split-pad-r) */}
+
+      {/* RIGHT rail — Cash Availability + Account Checkup + currency footer.
+          All read-only derivations from visibleBanks (profile-scoped); stacks
+          below the ledger on mobile via .split-8-4 (single column <1024px). */}
+      <div className="split-pad-l" style={{paddingTop:8}}>
+        {(()=>{
+          const plus30=new Date(Date.now()+30*864e5).toISOString().slice(0,10);
+          // Cash availability — partitions visibleBanks; can't-reach dominates.
+          let spendable=0,emergency=0,cantReach=0;
+          visibleBanks.forEach(b=>{const v=sarOf(b);
+            if(!bankIsAccessible(b))cantReach+=v; else if(bankIsReserved(b))emergency+=v; else spendable+=v;});
+          const cashTotal=spendable+emergency+cantReach;
+          // integer %s that always total 100 (largest-remainder apportionment)
+          const pctInts=vals=>{const t=vals.reduce((a,b)=>a+b,0);if(t<=0)return vals.map(()=>0);
+            const raw=vals.map(v=>v/t*100),fl=raw.map(Math.floor);const rem=100-fl.reduce((a,b)=>a+b,0);
+            const ord=raw.map((v,i)=>[i,v-fl[i]]).sort((a,b)=>b[1]-a[1]);const out=fl.slice();
+            for(let k=0;k<rem;k++)out[ord[k%ord.length][0]]++;return out;};
+          const cashPcts=pctInts([spendable,emergency,cantReach]);
+          // Account checkup
+          const todayNum=dayNumber(todayStr);
+          let needsConfirm=0,oldestStr=null,oldestNum=null;
+          visibleBanks.forEach(b=>{const dn=dayNumber(b.balanceAsOf);
+            if(dn==null||(todayNum-dn)>30)needsConfirm++;
+            if(dn!=null&&(oldestNum==null||dn<oldestNum)){oldestNum=dn;oldestStr=b.balanceAsOf;}});
+          const earning=visibleBanks.filter(b=>b.interest&&b.interest.enabled!==false&&(bankTierRate(b.interest,Number(b.balance)||0)||0)>0&&(Number(b.balance)||0)>0);
+          // Next-30-day interest: reuse bankValuation on a today-anchored copy.
+          const est30=earning.reduce((s,b)=>s+(bankValuation({...b,balance:bankValue(b,todayStr),balanceAsOf:todayStr},plus30).accrued||0),0);
+          const ageDays=oldestNum!=null?todayNum-oldestNum:null;
+          // Currency exposure (compact footer)
+          const byCcy={};visibleBanks.forEach(b=>{byCcy[b.currency]=(byCcy[b.currency]||0)+sarOf(b);});
+          const ccyRows=Object.entries(byCcy).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+          const ccyTotal=ccyRows.reduce((s,[,v])=>s+v,0);
+          const ccyTone=[P.ink,P.info,P.success,P.attention,P.muted];
+          const ccyPcts=pctInts(ccyRows.map(([,v])=>v));
+          const cashSegs=[["Spendable now",spendable,P.success],["Emergency funds",emergency,P.attention],["Can't reach",cantReach,P.muted]];
+          const checkup=[
+            ["Needs confirmation",`${needsConfirm} of ${visibleBanks.length}`,needsConfirm>0?P.attention:P.ink,"Not confirmed in 30+ days"],
+            ["Oldest confirmed",oldestStr?new Date(oldestStr+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—",P.ink,oldestStr&&ageDays!=null?`${ageDays} day${ageDays===1?"":"s"} ago`:null],
+            ["Earning interest",`${earning.length} of ${visibleBanks.length}`,P.ink,null],
+            ["Est. 30-day interest",`≈ ${sar(est30)}`,est30>0?P.success:P.ink,"Projected, current balances"],
+          ];
+          return(<>
+            <div className="t-section" style={{color:P.muted,marginBottom:16}}>Cash availability</div>
+            {cashTotal>0?(
+              <div style={{marginBottom:28}}>
+                <div style={{display:"flex",height:8,width:"100%",overflow:"hidden",marginBottom:16,background:P.surfaceMuted}}>
+                  {cashSegs.filter(([,v])=>v>0).map(([lb,v,c])=><div key={lb} title={`${lb} · ${sar(v)}`} style={{width:`${(v/cashTotal)*100}%`,height:"100%",background:c}}/>)}
+                </div>
+                {cashSegs.map(([lb,v,c],i)=>(
+                  <div key={lb} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderTop:`1px solid ${P.hairline}`}}>
+                    <span style={{width:8,height:8,background:c,flexShrink:0}}/>
+                    <span style={{flex:1,color:P.ink,fontSize:13,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{lb}</span>
+                    <span className="mono tnum" style={{color:P.muted,fontSize:12}}>{cashPcts[i]}%</span>
+                    <span className="mono tnum" style={{color:P.ink,fontSize:13,minWidth:70,textAlign:"right"}}>{sar(v)}</span>
+                  </div>
+                ))}
+              </div>
+            ):(
+              <div style={{fontSize:13,color:P.faint,padding:"8px 0",marginBottom:28}}>No accounts in this view yet.</div>
+            )}
+
+            <div className="t-section" style={{color:P.muted,marginBottom:16}}>Account checkup</div>
+            <div style={{marginBottom:ccyRows.length?24:0}}>
+              {checkup.map(([lb,v,c,sub])=>(
+                <div key={lb} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div className="t-label" style={{color:P.muted}}>{lb}</div>
+                    {sub&&<div style={{fontSize:11,color:P.faint,marginTop:3}}>{sub}</div>}
+                  </div>
+                  <span className="mono tnum" style={{color:c,fontSize:14,textAlign:"right",whiteSpace:"nowrap"}}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            {ccyRows.length>0&&(
+              <div style={{borderTop:`1px solid ${P.hairline}`,paddingTop:16}}>
+                <div className="t-label" style={{color:P.muted,marginBottom:10}}>Currency exposure</div>
+                <div style={{display:"flex",height:6,width:"100%",overflow:"hidden",marginBottom:10,background:P.surfaceMuted}}>
+                  {ccyRows.map(([c,v],i)=><div key={c} title={`${c} · ${sar(v)}`} style={{width:`${(v/ccyTotal)*100}%`,height:"100%",background:ccyTone[i%ccyTone.length]}}/>)}
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px"}}>
+                  {ccyRows.map(([c,v],i)=>(
+                    <span key={c} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11}}>
+                      <span style={{width:7,height:7,background:ccyTone[i%ccyTone.length],flexShrink:0}}/>
+                      <span className="mono" style={{color:P.muted}}>{c}</span>
+                      <span className="mono tnum" style={{color:P.ink}}>{ccyPcts[i]}%</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>);
+        })()}
+      </div>{/* end RIGHT rail (split-pad-l) */}
+      </div>{/* end .split-8-4 */}
+
       {/* Looked up fresh from `banks` rather than captured at open time, so the
           sheet can't act on a stale balance if a sync lands while it's open.
           If the account disappears out from under it (deleted on another
@@ -15018,84 +15212,104 @@ function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
 }
 
 /* ── Asset / liability row (top-level so it doesn't remount on each keystroke) ── */
+/* Open-ledger asset/liability row: a collapsed hairline line (name · owner +
+   signed value) that expands on tap to reveal the edit fields below it (Budget
+   category precedent). Presentation-only — every updateAsset/removeAsset call
+   is preserved verbatim from the old always-inline form. */
 function AssetRow({a,updateAsset,removeAsset,owners}){
+  const[open,setOpen]=useState(false);
+  const isLiab=a.kind==="liability";
+  const n0=v=>Number(v||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  const dispVal=isLiab?(a.installment?liabilityBalance(a):(Number(a.value)||0)):(Number(a.value)||0);
+  const fld={width:"100%",background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:0,padding:"8px 10px",fontSize:14,color:P.ink,fontFamily:"inherit"};
+  const seg=active=>({flex:1,padding:"7px 0",fontSize:12,fontWeight:600,border:`1px solid ${P.hairline}`,borderRadius:0,fontFamily:"inherit",cursor:"pointer",...(active?{background:P.ink,color:P.onInk}:{background:P.surface,color:P.muted})});
+  const toggle=()=>setOpen(o=>!o);
   return(
-    <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(0,0,0,.06)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-        <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} className="bare" style={{fontSize:14,fontWeight:600,flex:1,minWidth:0,color:P.neuInk}}/>
-        {/* Whose is it? Everything predating this defaulted to Joint, so it
-            shows only in the Combined view until reassigned here. */}
-        <select value={a.owner||"household"} onChange={e=>updateAsset(a.id,{owner:e.target.value})}
-          aria-label={`Owner of ${a.name||"item"}`}
-          style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
-          {BANK_OWNERS.map(k=><option key={k} value={k}>{bankOwnerLabel(k,owners)}</option>)}
-        </select>
-        <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{...neu(8),padding:"2px 6px",fontSize:12,border:"none",color:P.neuSub}}>
-          {BANK_CCY.map(c=><option key={c}>{c}</option>)}
-        </select>
-        <IconButton icon={I.X} label={`Delete ${a.name||"item"}`} onClick={()=>removeAsset(a.id)} size={15} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
-      </div>
-      {a.kind==="asset"?(
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontSize:12,color:P.neuSub}}>{a.currency}</span>
-          <NumField value={a.value} onCommit={v=>updateAsset(a.id,{value:v})}
-            className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
+    <div className="ledger-row" style={{flexDirection:"column",alignItems:"stretch",gap:0,padding:0}}>
+      <div onClick={toggle} role="button" tabIndex={0}
+        onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}}}
+        style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",cursor:"pointer",minWidth:0}}>
+        <I.Chevron size={13} style={{color:P.muted,flexShrink:0,transform:open?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+        <div style={{flex:1,minWidth:0,display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:14,fontWeight:500,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name||"Untitled"}</span>
+          <span className="t-label" style={{color:P.muted}}>{bankOwnerLabel(a.owner||"household",owners)}</span>
         </div>
-      ):(
-        /* Liability installment mode */
-        <div>
-          <div style={{display:"flex",gap:8,marginBottom:8}}>
-            <button onClick={()=>updateAsset(a.id,{installment:true})} className={a.installment?"":"neu-btn"}
-              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,border:"none",
-                ...(a.installment?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>
-              Installment
-            </button>
-            <button onClick={()=>updateAsset(a.id,{installment:false})} className={!a.installment?"":"neu-btn"}
-              style={{flex:1,borderRadius:8,padding:"5px 0",fontSize:12,fontWeight:600,border:"none",
-                ...(!a.installment?{background:P.jade,color:"#fff"}:{color:P.neuSub})}}>
-              Fixed amount
-            </button>
+        <span className="ledger-amt" style={{fontSize:15,fontWeight:500,color:isLiab?P.attention:P.ink}}>{isLiab?"− ":""}{a.currency} {n0(dispVal)}</span>
+      </div>
+      {open&&(
+        <div style={{padding:"2px 0 16px 23px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <label style={{flex:"1 1 160px",minWidth:0,display:"flex",flexDirection:"column",gap:4}}>
+              <span className="t-label" style={{color:P.muted}}>Name</span>
+              <input value={a.name} onChange={e=>updateAsset(a.id,{name:e.target.value})} style={fld}/>
+            </label>
+            <label style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:4}}>
+              {/* Whose is it? Everything predating this defaulted to Joint, so it
+                  shows only in the Combined view until reassigned here. */}
+              <span className="t-label" style={{color:P.muted}}>Owner</span>
+              <select value={a.owner||"household"} onChange={e=>updateAsset(a.id,{owner:e.target.value})} aria-label={`Owner of ${a.name||"item"}`} style={{...fld,width:"auto"}}>
+                {BANK_OWNERS.map(k=><option key={k} value={k}>{bankOwnerLabel(k,owners)}</option>)}
+              </select>
+            </label>
+            <label style={{flex:"0 0 auto",display:"flex",flexDirection:"column",gap:4}}>
+              <span className="t-label" style={{color:P.muted}}>Currency</span>
+              <select value={a.currency} onChange={e=>updateAsset(a.id,{currency:e.target.value})} style={{...fld,width:"auto"}}>
+                {BANK_CCY.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </label>
           </div>
-          {a.installment?(
-            <div style={{display:"flex",flexWrap:"wrap",gap:10,fontSize:13}}>
-              <label style={{color:P.neuSub,display:"flex",flexDirection:"column",gap:3}}>
-                <span style={{fontSize:11}}>Monthly payment ({a.currency})</span>
-                <NumField value={a.monthly||""} onCommit={v=>updateAsset(a.id,{monthly:v})} allowEmpty min={0}
-                  className="bare tnum" style={{...neuInset(6),width:110,fontSize:14,fontWeight:600,padding:"4px 6px",color:P.neuInk}}/>
-              </label>
-              <label style={{color:P.neuSub,display:"flex",flexDirection:"column",gap:3}}>
-                <span style={{fontSize:11}}>Months remaining (as of)</span>
-                <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  <NumField value={a.monthsRemaining||""} onCommit={v=>updateAsset(a.id,{monthsRemaining:v})} allowEmpty integer min={0} inputMode="numeric"
-                    className="bare tnum" style={{...neuInset(6),width:56,fontSize:14,fontWeight:600,padding:"4px 6px",color:P.neuInk}}/>
-                  <input type="month" value={(a.asOfDate||"").slice(0,7)} onChange={e=>updateAsset(a.id,{asOfDate:e.target.value+"-01"})}
-                    style={{...neuInset(6),fontSize:12,padding:"4px 6px",border:"none",color:P.neuInk}}/>
-                </div>
-              </label>
-              {(a.monthly&&a.monthsRemaining&&a.asOfDate)&&(()=>{
-                const bal=liabilityBalance(a);
-                const now=new Date();const ref=new Date(a.asOfDate);
-                const elapsed=Math.max(0,(now.getFullYear()-ref.getFullYear())*12+(now.getMonth()-ref.getMonth()));
-                const remaining=Math.max(0,a.monthsRemaining-elapsed);
-                const donePct=Math.min(100,(elapsed/a.monthsRemaining)*100);
-                return(
-                  <div style={{width:"100%",...neu(10),padding:10,marginTop:4}}>
-                    <div style={{fontSize:12,color:P.neuSub}}>Balance today: <strong className="tnum" style={{color:P.neuInk}}>{a.currency} {Math.round(bal).toLocaleString("en-US")}</strong></div>
-                    <div style={{fontSize:11,color:P.neuSub,marginTop:2,opacity:.85}}>{remaining} months remaining · {elapsed} months paid</div>
-                    <div style={{...neuInset(999),marginTop:6,height:8,overflow:"hidden"}}>
-                      <div className="liquid-fill" style={{width:`${donePct}%`,height:"100%",background:liquidFillBg(P.jade)}}/>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
+          {!isLiab?(
+            <label style={{display:"flex",flexDirection:"column",gap:4,maxWidth:220}}>
+              <span className="t-label" style={{color:P.muted}}>Value ({a.currency})</span>
+              <NumField value={a.value} onCommit={v=>updateAsset(a.id,{value:v})} className="tnum" style={{...fld,textAlign:"right"}}/>
+            </label>
           ):(
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:12,color:P.neuSub}}>{a.currency}</span>
-              <NumField value={a.value||""} onCommit={v=>updateAsset(a.id,{value:v})} allowEmpty min={0}
-                className="bare tnum" style={{width:120,textAlign:"right",fontSize:14,fontWeight:600,color:P.neuInk}}/>
-            </div>
+            <>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>updateAsset(a.id,{installment:true})} style={seg(!!a.installment)}>Installment</button>
+                <button onClick={()=>updateAsset(a.id,{installment:false})} style={seg(!a.installment)}>Fixed amount</button>
+              </div>
+              {a.installment?(
+                <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                  <label style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <span className="t-label" style={{color:P.muted}}>Monthly payment ({a.currency})</span>
+                    <NumField value={a.monthly||""} onCommit={v=>updateAsset(a.id,{monthly:v})} allowEmpty min={0} className="tnum" style={{...fld,width:140}}/>
+                  </label>
+                  <label style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <span className="t-label" style={{color:P.muted}}>Months remaining (as of)</span>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <NumField value={a.monthsRemaining||""} onCommit={v=>updateAsset(a.id,{monthsRemaining:v})} allowEmpty integer min={0} inputMode="numeric" className="tnum" style={{...fld,width:70}}/>
+                      <input type="month" value={(a.asOfDate||"").slice(0,7)} onChange={e=>updateAsset(a.id,{asOfDate:e.target.value+"-01"})} style={{...fld,width:"auto",height:36,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"}}/>
+                    </div>
+                  </label>
+                  {(a.monthly&&a.monthsRemaining&&a.asOfDate)&&(()=>{
+                    const bal=liabilityBalance(a);
+                    const now=new Date();const ref=new Date(a.asOfDate);
+                    const elapsed=Math.max(0,(now.getFullYear()-ref.getFullYear())*12+(now.getMonth()-ref.getMonth()));
+                    const remaining=Math.max(0,a.monthsRemaining-elapsed);
+                    const donePct=Math.min(100,(elapsed/a.monthsRemaining)*100);
+                    return(
+                      <div style={{width:"100%",display:"flex",flexDirection:"column",gap:6}}>
+                        <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12,color:P.muted,flexWrap:"wrap"}}>
+                          <span>Balance today: <span className="mono tnum" style={{color:P.ink}}>{a.currency} {n0(bal)}</span></span>
+                          <span>{remaining} left · {elapsed} paid</span>
+                        </div>
+                        <ProgressMeter pct={donePct} color={P.success}/>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ):(
+                <label style={{display:"flex",flexDirection:"column",gap:4,maxWidth:220}}>
+                  <span className="t-label" style={{color:P.muted}}>Amount ({a.currency})</span>
+                  <NumField value={a.value||""} onCommit={v=>updateAsset(a.id,{value:v})} allowEmpty min={0} className="tnum" style={{...fld,textAlign:"right"}}/>
+                </label>
+              )}
+            </>
           )}
+          <button onClick={()=>removeAsset(a.id)} style={{display:"inline-flex",alignItems:"center",gap:6,alignSelf:"flex-start",background:"transparent",border:"none",padding:"4px 0",fontSize:12,fontWeight:500,color:P.attention,cursor:"pointer",fontFamily:"inherit",opacity:.8}}>
+            <I.Trash size={13}/>Delete {isLiab?"liability":"asset"}
+          </button>
         </div>
       )}
     </div>
@@ -15103,7 +15317,7 @@ function AssetRow({a,updateAsset,removeAsset,owners}){
 }
 
 /* ── NET WORTH VIEW — installment liabilities ── */
-function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap}){
+function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap,homeDisplay,netWorthMilestones}){
   const[pm,setPm]=useState(new Date().toISOString().slice(0,7));
   const[pv,setPv]=useState("");
   const sar=n=>formatMoney(n,{code:"SAR"});
@@ -15112,8 +15326,6 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
   const isCombined=profile==="household";
   const _p=netWorthParts(profile);
   const netWorth=_p.net,banksSar=_p.banks,invSar=_p.investments,assetSar=_p.assets,liabSar=_p.liabilities;
-  const usd=sarRate?Math.round(netWorth/sarRate):null;
-  const php=convert?convert(netWorth,"SAR","PHP"):null;
   const parts=[{label:"Bank accounts",value:banksSar,color:SEG[0]},{label:"Investments",value:invSar,color:SEG[3]},{label:"Other assets",value:assetSar,color:SEG[5]},{label:"Liabilities",value:-liabSar,color:P.red}];
   const gross=banksSar+invSar+assetSar;
   const fmtMo=m=>{const[y,mo]=m.split("-");return new Date(Number(y),Number(mo)-1,1).toLocaleDateString("en-US",{month:"short",year:"2-digit"});};
@@ -15124,60 +15336,115 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
   const delta=(isCombined&&last)?netWorth-last.net:null;
   const assetItems=assets.filter(a=>a.kind==="asset"&&ownerMatch(a,profile));
   const liabItems=assets.filter(a=>a.kind==="liability"&&ownerMatch(a,profile));
+  const money0=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  /* Display currency — follows Home's net-worth setting (homeDisplay.netWorth).
+     Every derived figure is stored/computed in SAR; `pconv` converts to the
+     chosen primary and `dmoney` formats it "CODE 1,234" (Home's style). Falls
+     back to SAR when rates aren't loaded. Per-item asset/liability rows keep
+     their OWN currency (handled in AssetRow) — only these totals convert. */
+  const nwCfg=(homeDisplay&&homeDisplay.netWorth)||{primary:"SAR",secondary:["SAR","USD","PHP"]};
+  const primary=nwCfg.primary||"SAR";
+  const secondaryCcy=(nwCfg.secondary||["SAR","USD","PHP"]).filter(c=>c!==primary);
+  const pconv=v=>convert?convert(v,"SAR",primary):null;
+  const dmoney=v=>{const c=pconv(v);return c==null?sar(v):`${primary} ${Math.round(c).toLocaleString("en-US")}`;};
+  /* integer %s that always total 100 (largest-remainder), same helper Banks uses */
+  const pctInts=vals=>{const t=vals.reduce((a,b)=>a+b,0);if(t<=0)return vals.map(()=>0);
+    const raw=vals.map(v=>v/t*100),fl=raw.map(Math.floor);const rem=100-fl.reduce((a,b)=>a+b,0);
+    const ord=raw.map((v,i)=>[i,v-fl[i]]).sort((a,b)=>b[1]-a[1]);const out=fl.slice();
+    for(let k=0;k<rem;k++)out[ord[k%ord.length][0]]++;return out;};
+  const compPcts=pctInts([banksSar,invSar,assetSar]);
+  /* Growth (rail) — read-only over per-profile daily snapshots, the same filter
+     HistoryRangeChart uses (s.profile===profile, sorted by date). No new stored
+     field; Date.now() here is display-only, never persisted. */
+  const psnaps=[...snapshots].filter(s=>s.profile===profile).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const firstSnap=psnaps[0],prevSnap=psnaps[psnaps.length-2];
+  const hasGrowth=psnaps.length>=2;
+  const sinceFirst=firstSnap?netWorth-firstSnap.net:null;
+  const sinceFirstPct=firstSnap&&firstSnap.net?sinceFirst/Math.abs(firstSnap.net)*100:null;
+  const sinceLast=prevSnap?netWorth-prevSnap.net:null;
+  const spanDays=firstSnap?Math.max(1,(Date.now()-new Date(firstSnap.date+"T00:00:00").getTime())/864e5):0;
+  const avgMo=firstSnap?sinceFirst/Math.max(1,spanDays/30.44):null;
+  const signed=v=>`${v>=0?"+":"−"} ${dmoney(Math.abs(v))}`;
+  /* Next round-number milestone, expressed in the display currency (falls back
+     to the SAR figure when rates aren't loaded). */
+  const mNet=pconv(netWorth);
+  const milestoneBase=mNet!=null?mNet:netWorth;
+  const mCode=mNet!=null?primary:"SAR";
+  const milestone=nextNwMilestone(milestoneBase);
+  /* Sticky achievement for this profile (highest rung ever crossed), stored in
+     the display currency at the time it was reached. */
+  const reached=(netWorthMilestones&&netWorthMilestones[profile])||null;
 
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      <div className="fade-up" style={{borderRadius:18,padding:20,marginBottom:16,background:P.heroBg,color:P.heroFg,
-        boxShadow:`7px 7px 15px ${P.neuLo},-7px -7px 15px ${P.neuHi}`}}>
-        <div style={{fontSize:12,fontWeight:500,color:P.deepHi,marginBottom:4}}>
-          Net worth{isCombined?" · Combined":` · ${owners[profile]||""}`}
-        </div>
-        <span key={Math.round(netWorth)} className="mono tnum num-flash" style={{fontSize:38,fontWeight:600}}>{sar(netWorth)}</span>
-        <div className="tnum" style={{display:"flex",flexWrap:"wrap",gap:16,marginTop:6,color:P.deepHi,fontSize:14}}>
-          <span>{usd!=null?`≈ $${usd.toLocaleString("en-US")}`:"USD —"}</span>
-          <span>{php!=null?`≈ ₱${Math.round(php).toLocaleString("en-US")}`:"PHP —"}</span>
-        </div>
-        {(usd==null||php==null)&&<div style={{fontSize:11,marginTop:6,color:"#E89B8C"}}>{ratesErr?"Couldn't load live rates — tap refresh in Currency tab.":"Loading live rates…"}</div>}
-        {delta!=null&&<div className="tnum" style={{fontSize:14,marginTop:6,color:delta>=0?"#6FC6DA":"#E89B8C"}}>{delta>=0?"▲":"▼"} {sar(Math.abs(delta))} since last snapshot</div>}
-      </div>
+      <div className="split-8-4">
 
-      <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+      {/* LEFT — scope, summary, composition, trend, driving */}
+      <div className="split-pad-r">
+      {/* scope selector sits ABOVE its totals */}
+      <div style={{display:"flex",justifyContent:"flex-start",marginBottom:isCombined?16:6}}>
         <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
       </div>
       {!isCombined&&
-        <div style={{fontSize:11,color:P.faint,textAlign:"center",marginTop:-8,marginBottom:16}}>
+        <div style={{fontSize:11,color:P.faint,marginBottom:16}}>
           Jointly-owned accounts, assets and liabilities appear only under Household.
         </div>}
 
-      <div className="fade-up-1" style={{...neu(16),padding:16,marginBottom:16}}>
-        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Composition</h3>
-        <div style={{...neuInset(999),height:12,width:"100%",overflow:"hidden",marginBottom:12,position:"relative"}}>
-          <div style={{display:"flex",height:"100%",width:"100%"}}>
-            {parts.slice(0,3).map(p=>gross>0&&p.value>0&&<div key={p.label} className="bar-animated liquid-fill" style={{width:`${(p.value/gross)*100}%`,height:"100%",background:liquidFillBg(p.color)}}/>)}
-          </div>
+      {/* ── summary — dominant total in the display currency + secondary
+             conversions 2-up (flat card; the ONE bordered surface on this tab) ── */}
+      <GridSection flush title={`Net worth${isCombined?" · Combined":` · ${owners[profile]||""}`}`} style={{marginBottom:16}}>
+        <div style={{padding:"20px 24px",borderBottom:`1px solid ${P.hairline}`}}>
+          <MetricBlock hero label="Total" cur={pconv(netWorth)!=null?primary:"SAR"} value={pconv(netWorth)!=null?money0(pconv(netWorth)):money0(netWorth)} valueColor={netWorth<0?P.attention:P.ink}/>
+          {delta!=null&&
+            <div style={{marginTop:10}}>
+              <Status tone={delta>=0?"success":"attention"} icon={<span className="mono" style={{fontSize:10}}>{delta>=0?"▲":"▼"}</span>}>{dmoney(Math.abs(delta))} since last snapshot</Status>
+            </div>}
         </div>
-        {parts.map(p=>(
-          <div key={p.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0",fontSize:14}}>
-            <span style={{display:"flex",alignItems:"center",gap:8,color:P.neuInk}}><span style={{width:10,height:10,borderRadius:999,background:p.color}}/>{p.label}</span>
-            <span className="tnum" style={{color:p.value<0?P.wine:P.neuSub}}>{p.value<0?`− ${sar(-p.value)}`:sar(p.value)}</span>
-          </div>
-        ))}
+        {secondaryCcy.length>0&&
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${secondaryCcy.length},minmax(0,1fr))`}}>
+            {secondaryCcy.map((c,i)=>{const v=convert?convert(netWorth,"SAR",c):null;
+              return(
+                <div key={c} style={{padding:"14px 24px",borderLeft:i>0?`1px solid ${P.hairline}`:"none",display:"flex",flexDirection:"column",gap:6,minWidth:0}}>
+                  <span className="t-label" style={{color:P.muted}}>{c}</span>
+                  <span className="mono tnum" style={{fontSize:18,fontWeight:500,color:P.ink,whiteSpace:"nowrap"}}>{v!=null?`≈ ${Math.round(v).toLocaleString("en-US")}`:"—"}</span>
+                </div>
+              );})}
+          </div>}
+        {pconv(netWorth)==null&&
+          <div style={{padding:"10px 24px",borderTop:`1px solid ${P.hairline}`,fontSize:11,color:P.muted}}>{ratesErr?"Couldn't load live rates — tap refresh in Currency tab.":"Loading live rates…"}</div>}
+      </GridSection>
+
+      {/* ── Composition — open section (label + hairline legend, no card) ── */}
+      <div style={{marginTop:32}}>
+        <div className="t-section" style={{color:P.muted,marginBottom:16}}>Composition</div>
+        <div style={{display:"flex",height:8,width:"100%",overflow:"hidden",marginBottom:16,background:P.surfaceMuted}}>
+          {parts.slice(0,3).map(p=>gross>0&&p.value>0&&<div key={p.label} title={`${p.label} · ${dmoney(p.value)}`} style={{width:`${(p.value/gross)*100}%`,height:"100%",background:p.color}}/>)}
+        </div>
+        {parts.map((p,i)=>{
+          const neg=p.value<0;const pct=i<3?compPcts[i]:null;
+          return(
+            <div key={p.label} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderTop:i===0?"none":`1px solid ${P.hairline}`}}>
+              <span style={{width:8,height:8,background:neg?P.attention:p.color,flexShrink:0}}/>
+              <span style={{flex:1,color:P.ink,fontSize:13,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.label}</span>
+              {pct!=null&&<span className="mono tnum" style={{color:P.muted,fontSize:12}}>{pct}%</span>}
+              <span className="mono tnum" style={{color:neg?P.attention:P.ink,fontSize:13,minWidth:80,textAlign:"right"}}>{neg?`− ${dmoney(-p.value)}`:dmoney(p.value)}</span>
+            </div>
+          );
+        })}
       </div>
 
-      {/* was className="fade-up-1b" — no such class exists, so this card was
-          silently the only one on the tab with no entrance animation. */}
-      <div className="fade-up-2" style={{...neu(16),padding:16,marginBottom:16}}>
-        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 12px",color:P.neuSub}}>Net worth trend</h3>
+      {/* ── Net worth trend — open section (chart already new-system) ── */}
+      <div style={{marginTop:32}}>
+        <div className="t-section" style={{color:P.muted,marginBottom:16}}>Net worth trend</div>
         <HistoryRangeChart snapshots={snapshots} profile={profile} field="net"
           money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
           emptyText="Trend appears once 2+ days of history have been captured (captured automatically once a day)."/>
       </div>
 
-      {/* Replaces the second net-worth line that used to sit in the snapshot
-          log below — same history, different question. */}
-      <div className="fade-up-3" style={{...neu(16),padding:16,marginBottom:16}}>
-        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 4px",color:P.neuSub}}>What's driving it</h3>
-        <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
+      {/* ── What's driving it — open section (stacked composition over time) ── */}
+      <div style={{marginTop:32}}>
+        <div className="t-section" style={{color:P.muted,marginBottom:8}}>What's driving it</div>
+        <p style={{fontSize:11,color:P.muted,margin:"0 0 12px"}}>
           Assets stack above the line, debt below it. Net worth is what's left after the two cancel out.
         </p>
         <CompositionRangeChart snapshots={snapshots} profile={profile}
@@ -15185,57 +15452,119 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
             {key:"banks",label:"Bank accounts",color:SEG[0]},
             {key:"investments",label:"Investments",color:SEG[3]},
             {key:"assets",label:"Other assets",color:SEG[5]},
-            {key:"liabilities",label:"Liabilities",color:P.red,negate:true},
+            {key:"liabilities",label:"Liabilities",color:P.attention,negate:true},
           ]}
           money={(v,short)=>short?`${Math.round(v/1000)}k`:sar(v)}
           emptyText={profile==="household"?"Appears once 2+ days of history have been captured (captured automatically once a day).":`Appears once 2+ days of history have been captured for ${owners[profile]||"this profile"} (captured automatically once a day).`}/>
       </div>
+      </div>{/* end LEFT (split-pad-r) */}
 
-      <div className="fade-up-2" style={{...neu(16),overflow:"hidden",marginBottom:16}}>
-        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub}}>Assets</div>
+      {/* RIGHT rail — Growth · Next milestone · Assets & Liabilities · Snapshot
+          log. All read-only derivations; stacks below the charts on mobile via
+          .split-8-4 (single column <1024px). */}
+      <div className="split-pad-l" style={{paddingTop:8}}>
+
+        {/* Growth / momentum — per-profile daily snapshots */}
+        <div className="t-section" style={{color:P.muted,marginBottom:16}}>Growth</div>
+        {hasGrowth?(
+          <div style={{marginBottom:28}}>
+            {[["Since last snapshot",sinceLast,null],
+              ["Since first snapshot",sinceFirst,sinceFirstPct!=null?`${sinceFirstPct>=0?"+":"−"}${Math.abs(sinceFirstPct).toFixed(1)}%`:null],
+              ["Avg / month",avgMo,null]].map(([lb,v,sub])=>(
+              <div key={lb} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div className="t-label" style={{color:P.muted}}>{lb}</div>
+                  {sub&&<div style={{fontSize:11,color:P.faint,marginTop:3}}>{sub}</div>}
+                </div>
+                <span className="mono tnum" style={{color:v>=0?P.success:P.attention,fontSize:14,textAlign:"right",whiteSpace:"nowrap"}}>{signed(v)}</span>
+              </div>
+            ))}
+          </div>
+        ):(
+          <div style={{fontSize:13,color:P.faint,padding:"8px 0",marginBottom:28}}>Appears once 2+ days of history have been captured.</div>
+        )}
+
+        {/* Next milestone — in the display currency, with a sticky achievement
+            trophy and (only when close) an encouraging nudge. */}
+        {milestone!=null&&(()=>{
+          const pct=Math.min(100,milestoneBase/milestone*100);
+          const toGo=Math.max(0,milestone-milestoneBase);
+          const close=pct>=85;
+          const veryClose=pct>=95;
+          // recency: a trophy earned within ~14 days reads as "just did it"
+          const daysSince=reached&&reached.at?Math.floor((Date.now()-new Date(reached.at+"T00:00:00").getTime())/864e5):null;
+          const fresh=daysSince!=null&&daysSince<=14;
+          return(
+            <div style={{marginBottom:28}}>
+              <div className="t-section" style={{color:P.muted,marginBottom:16}}>Next milestone</div>
+              <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:10}}>
+                <span className="mono tnum" style={{fontSize:22,fontWeight:600,color:P.ink}}>{mCode} {money0(milestone)}</span>
+                <span className="mono tnum" style={{fontSize:12,color:P.muted}}>{Math.round(pct)}%</span>
+              </div>
+              <ProgressMeter pct={pct} color={close?P.success:P.info}/>
+              <div style={{marginTop:10}}>
+                {close
+                  ?<span className="mono tnum" style={{fontSize:12,fontWeight:500,color:P.success}}>{veryClose?"So close":"Almost there"} — {mCode} {money0(toGo)} to go</span>
+                  :<span className="mono tnum" style={{fontSize:12,color:P.muted}}>{mCode} {money0(toGo)} to go</span>}
+              </div>
+              {reached&&Number(reached.v)>0&&
+                <div style={{marginTop:14,paddingTop:14,borderTop:`1px solid ${P.hairline}`,display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,fontWeight:fresh?600:500,color:fresh?P.success:P.ink}}>
+                    🎉 {fresh?"Just reached":"Reached"} {reached.ccy||mCode} {money0(reached.v)}{fresh?"!":""}
+                  </span>
+                  {!fresh&&reached.at&&<span className="mono" style={{fontSize:11,color:P.muted}}>· {fmtMo(reached.at.slice(0,7))}</span>}
+                </div>}
+            </div>
+          );
+        })()}
+
+        {/* Assets & Liabilities ledger */}
+        <div className="ledger-group t-label" style={{color:P.muted}}>Assets</div>
+        {assetItems.length===0&&<div style={{fontSize:13,color:P.faint,padding:"8px 0"}}>None yet.</div>}
         {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
-        <button onClick={()=>addAsset("asset")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.jade,background:"transparent",border:"none"}}><I.Plus size={14}/>Add asset</button>
-        <div style={{padding:"10px 16px",fontSize:14,fontWeight:600,color:P.neuSub,borderTop:"1px solid rgba(0,0,0,.06)"}}>Liabilities</div>
-        {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
-        <button onClick={()=>addAsset("liability")} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"10px 16px",fontSize:14,fontWeight:500,color:P.wine,background:"transparent",border:"none"}}><I.Plus size={14}/>Add liability</button>
-      </div>
+        <button onClick={()=>addAsset("asset")} className="ledger-row" style={{gap:8,color:P.muted,fontSize:13,fontWeight:500,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,width:"100%",cursor:"pointer",fontFamily:"inherit",textAlign:"left",padding:"14px 0"}}><I.Plus size={14}/>Add asset</button>
 
-      {/* A log, not a chart. Its monthly net-worth LineChart was removed: it
-          plotted the same figure as "Net worth trend" above, from the older
-          monthly `history` rows instead of daily snapshots. The month/year
-          granularity toggle went with it — it only ever switched that chart's
-          x-axis. The per-month values it conveyed are all still here as chips. */}
-      <div className="fade-up-4" style={{...neu(16),padding:16}}>
-        <h3 style={{fontSize:14,fontWeight:600,margin:"0 0 4px",color:P.neuSub}}>Monthly snapshot log</h3>
-        {/* This log has only ever been household-wide; say so rather than
-            letting it read as the selected person's history. */}
+        <div className="ledger-group t-label" style={{color:P.muted}}>Liabilities</div>
+        {liabItems.length===0&&<div style={{fontSize:13,color:P.faint,padding:"8px 0"}}>None yet.</div>}
+        {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
+        <button onClick={()=>addAsset("liability")} className="ledger-row" style={{gap:8,color:P.muted,fontSize:13,fontWeight:500,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,width:"100%",cursor:"pointer",fontFamily:"inherit",textAlign:"left",padding:"14px 0"}}><I.Plus size={14}/>Add liability</button>
+
+        {/* Monthly snapshot log — household-wide (a log, not a chart; its old
+            monthly LineChart plotted the same figure as "Net worth trend"). */}
+        <div className="t-section" style={{color:P.muted,margin:"28px 0 8px"}}>Monthly snapshot log</div>
         <p style={{fontSize:11,color:P.faint,margin:"0 0 12px"}}>
           {isCombined?"Whole-household totals, one row per month.":"Whole-household totals — this log is not split by person."}
         </p>
         {sorted.length===0&&
-          <p style={{fontSize:13,color:P.neuSub}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
-        <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:10,marginTop:12}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.jade,fontWeight:500}}>
-            <I.Check size={13}/>This month syncs automatically
-          </div>
-          <button onClick={captureSnapshot} className="neu-btn" style={{padding:"6px 12px",fontSize:12,fontWeight:500,color:P.neuSub}}>Force refresh now</button>
+          <p style={{fontSize:13,color:P.muted,margin:"0 0 12px"}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
+        <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:12,marginBottom:12}}>
+          <Status tone="success" icon={<I.Check size={12}/>}>This month syncs automatically</Status>
+          <button onClick={captureSnapshot} style={{padding:"6px 12px",fontSize:12,fontWeight:500,color:P.ink,background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:0,cursor:"pointer",fontFamily:"inherit"}}>Force refresh now</button>
         </div>
-        <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid rgba(0,0,0,.06)"}}>
-          <div><div style={{color:P.neuSub,fontSize:10}}>Month</div><input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk}}/></div>
-          <div><div style={{color:P.neuSub,fontSize:10}}>Net worth (SAR)</div><NumField value={pv} placeholder="0" onCommit={setPv} allowEmpty live min={0} className="tnum" style={{...neuInset(8),padding:"4px 8px",fontSize:14,border:"none",color:P.neuInk,width:120}}/></div>
-          <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} className="neu-btn" style={{padding:"6px 12px",fontSize:14,fontWeight:500,color:P.jade}}>Add entry</button>
+        <div style={{display:"flex",flexWrap:"wrap",alignItems:"flex-end",gap:10,paddingTop:12,borderTop:`1px solid ${P.hairline}`}}>
+          <label style={{display:"flex",flexDirection:"column",gap:4}}>
+            <span className="t-label" style={{color:P.muted}}>Month</span>
+            <input type="month" value={pm} onChange={e=>setPm(e.target.value)} style={{background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:0,padding:"7px 9px",fontSize:14,color:P.ink,fontFamily:"inherit",height:36,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"}}/>
+          </label>
+          <label style={{display:"flex",flexDirection:"column",gap:4}}>
+            <span className="t-label" style={{color:P.muted}}>Net worth (SAR)</span>
+            <NumField value={pv} placeholder="0" onCommit={setPv} allowEmpty live min={0} className="tnum" style={{background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:0,padding:"7px 9px",fontSize:14,color:P.ink,fontFamily:"inherit",width:130,height:36}}/>
+          </label>
+          <button onClick={()=>{if(pm&&Number(pv)){addPastSnap(pm,Number(pv));setPv("");}}} style={{padding:"8px 14px",fontSize:14,fontWeight:500,color:P.onInk,background:P.ink,border:"none",borderRadius:0,cursor:"pointer",fontFamily:"inherit",height:36}}>Add entry</button>
         </div>
         {sorted.length>0&&(
-          <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:6}}>
+          <div style={{marginTop:12}}>
             {sorted.map(s=>(
-              <span key={s.id} className="tnum neu-btn" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",fontSize:12,color:P.neuSub,borderRadius:999}}>
-                {fmtMo(s.month)} · {sar(s.net)}
-                <IconButton icon={I.X} label={`Delete ${fmtMo(s.month)} snapshot`} onClick={()=>removeSnap(s.id)} size={11} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
-              </span>
+              <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+                <span className="t-label" style={{color:P.muted,flex:"0 0 auto"}}>{fmtMo(s.month)}</span>
+                <span className="mono tnum" style={{flex:1,color:P.ink,fontSize:14,textAlign:"right"}}>{sar(s.net)}</span>
+                <IconButton icon={I.X} label={`Delete ${fmtMo(s.month)} snapshot`} onClick={()=>removeSnap(s.id)} size={13} style={{color:P.attention,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
+              </div>
             ))}
           </div>
         )}
-      </div>
+      </div>{/* end RIGHT rail (split-pad-l) */}
+      </div>{/* end .split-8-4 */}
     </div>
   );
 }

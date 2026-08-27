@@ -66,6 +66,71 @@ codebases), see `docs/stitch-ui-overhaul-playbook.md`.
 8. **Hit the done gate** (below), mark the checkpoint, then move to the next
    screen.
 
+## Redesign principles (established in the Banks review, 2026-08-27)
+
+These came out of a three-round user review of Banks and govern **every**
+Category B/C screen from here (Net Worth next). They are as load-bearing as the
+order of operations above.
+
+- **Do NOT mirror the current live app 1:1 — re-layout freely.** The live screen
+  is the source of *information and behaviour*, not of *layout*. A screen with no
+  direct Stitch mockup (Category B/C) should be **re-composed** in the open-ledger
+  language, not merely reskinned in place. Rearranging sections, changing what is
+  primary vs secondary, and dropping decorations (boxed cards, dashed tiles,
+  wallet-pass strips) are all in scope. Preserve every figure, calculation,
+  navigation path and workflow; change the arrangement to fit the language.
+- **Desktop gets a genuine second column, and it may carry NEW content.** Wide
+  screens use the `.split-8-4` (main ledger LEFT + rail RIGHT) — never a
+  mobile layout stretched to full width. The rail is allowed to introduce
+  **new, read-only, derived modules that don't exist on mobile or in the current
+  app** — e.g. Banks gained "Cash availability", "Account checkup", and a
+  "Currency exposure" footer, all pure reads over existing data via existing
+  helpers. Proposing such a rail (and asking the user what it should hold) is the
+  expected move, not scope creep. The rail stacks below the ledger on mobile
+  (the `.split-8-4` grid only turns on ≥1024px), consistent with Budget/Expenses.
+  **Generating a short menu of candidate rail modules and letting the user pick
+  is a valued step** (Net Worth's rail was chosen this way — Growth + Milestone,
+  from a slate that also offered Owner-contribution and Net-worth-health). Be
+  **exploratory**: propose modules that genuinely fit the screen and the app, not
+  just the safe two; the user would rather choose from ideas than be handed one.
+- **Only ONE bordered card per screen — the hero/summary. Everything else is an
+  OPEN section.** This is the most-missed rule (Net Worth first shipped with
+  Composition/trend/driving each wrapped in a `GridSection` card; Banks uses
+  `GridSection` exactly **once**, for its summary). An open section is a
+  `.t-section` mono label + hairline-separated content with **no border box** —
+  the same treatment the rail modules already use. Reach for `GridSection` (which
+  draws a border) only for the summary MetricStrip; compose composition,
+  charts, ledgers, and logs as open sections. When in doubt, count your
+  `GridSection`s: more than one is almost always the bug.
+- **Open-ledger conversion checklist** (apply per screen): flatten boxed cards →
+  **hairline-separated rows** (per-row `borderTop:1px hairline`, no card border);
+  combine identity onto one line with a **primary name + quieter secondary**
+  (e.g. "Name · BANK"); **normalize the metadata row** — every chip/tag at the
+  same 10px/mono/`P.muted` weight, a *coloured square* the only status accent
+  (never a bold `Status` chip inline); replace big "add" tiles with a flat
+  **"+ Add …" row**; move any inline-edit/settings behind a **row expand**
+  (Budget's precedent — panel renders below the row); remove **redundant labels**
+  that the group header already states (e.g. per-row owner tags).
+- **Font hierarchy is fixed: 500 is the ceiling for names and figures.** Names,
+  balances, primary figures = **500**; de-emphasized labels = **400**; **600/700
+  are reserved for tiny (≤11px) uppercase mono tags only** — never a name or a
+  large number. Ledger row amounts are ~14–16px (not 26px). Note that **JetBrains
+  Mono figures read chunkier than Inter at the same weight** — that's the intended
+  "instrument" look, not bold; don't lighten mono numbers to compensate. Do not
+  edit shared primitives (`MetricBlock`'s one 600 hero figure) to change a single
+  screen — give that screen its own element instead.
+- **Scope selector before its totals.** The profile/scope switch reads **above**
+  the summary it scopes (left-aligned, as Budget/Expenses do), not centred and
+  not below.
+- **Percentages that are shown together must total 100.** Round with a
+  largest-remainder apportionment (`pctInts` — floor all, hand leftover points to
+  the largest fractional remainders), never three independent `Math.round`s
+  (which produce 101%).
+- **Verify at the Pro Max width too.** 390 is the *standard* iPhone width; the
+  Pro Max is ~430–440pt (wider). The shots harness now captures **430** as well
+  as 390/320/1600. A narrow-tile figure must not wrap mid-number at ≤390 — give
+  it a small currency prefix + `nowrap` (see the Banks owner-split tiles).
+
 ## The gap-list verify loop
 
 Do **not** eyeball fidelity. The loop that actually closed the gaps:

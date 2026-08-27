@@ -53,7 +53,31 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
-**Live: v1.52.0 / build `2026.08.26.0011`**, deployed 2026-08-26 (`db85a07a`,
+**Deploying now: v1.55.0 / build `2026.08.27.0006`** — the **Banks + Net Worth
+Category-B recomposition** plus the **Net Worth milestone celebration** (a sticky
+per-profile achievement memory — the ONE non-presentation-only piece: new synced
+`data.netWorthMilestones` map, `mergeMilestones` max-per-key, a detection effect,
+`milestonetest.cjs`). All 26 runners + parse green; browser + sandbox-sync
+verified. Banks + Net Worth were user-approved 2026-08-27.
+
+### Technical Ledger redesign — screen checklist
+Category A (direct Stitch reference) — **shipped v1.52.0**:
+Home ✅ · Budget ✅ · Expenses ✅ · Add/Edit Transaction ✅ · Investments ✅
+Category B/C (derived, no direct mockup):
+Banks ✅ · **Net Worth ✅** (this release) · Goals ⬜ **(NEXT)** · Installments ⬜ ·
+Purchase Advisor ⬜ · Bills ⬜ · Household ⬜ · Currency ⬜ · More sheet ⬜ ·
+Settings ⬜ · Forecast (hidden) ⬜ · system overlays (Conflict / PendingChanges /
+RecentlyDeleted / ProfilePicker / FirstConnect) ⬜
+
+**Next session — Goals.** Two carried-forward preferences from the Net Worth
+review (see `redesign-relayout-principles` memory + `stitch-workflow.md`):
+(1) **only the hero/summary is a bordered card; everything else is an open
+section** — count `GridSection`s, >1 is the bug; (2) **offer a MENU of candidate
+desktop-rail modules and let the user pick — be exploratory**, propose ideas
+beyond the safe two as long as they fit the screen and the app (Net Worth's rail
+was chosen this way).
+
+**Previously live: v1.52.0 / build `2026.08.26.0011`**, deployed 2026-08-26 (`db85a07a`,
 commit `a5baf71`) — the **Technical Ledger UI redesign** (Home + Budget/Expenses/
 Investments/Add-Transaction, shared shell). Presentation-only; feature/logic
 baseline unchanged from v1.51.0. Worker untouched. Confirmed on the production

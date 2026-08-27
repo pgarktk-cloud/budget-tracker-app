@@ -953,7 +953,7 @@ and an error naming a collection the user has never heard of.
   unit-tested without a browser: slice the function text out of `index.html`
   by name and `vm.runInContext` it with a small harness — much better than
   reimplementing the logic in the test, which only tests the copy. Committed
-  runners — **there are twenty-five, run all of them**: `trendtest.cjs` (Home trend
+  runners — **there are twenty-six, run all of them**: `trendtest.cjs` (Home trend
   maths), `billstest.cjs` (bills reconciler), `budgettest.cjs` (carry-forward
   chain + copy-on-write + plan clone + category moves), `banktest.cjs` (bank
   interest accrual), `periodtest.cjs` (pay-period boundaries), `txordertest.cjs`
@@ -1018,6 +1018,15 @@ and an error naming a collection the user has never heard of.
   wiring — merged in `tryAutoMergeAll`, normalised in `fingerprint`, checked in
   `validateBackup`, NOT defaulted in `migrate`/`defaultData`, NOT in
   `BACKUP_ARRAY_KEYS`, and `BottomNav` rendering its `tabs` prop).
+  and `milestonetest.cjs` (net-worth milestone memory: `nextNwMilestone`/
+  `highestNwMilestone` rung boundaries, `mergeMilestones` **max-per-key** merge
+  — highest-ever wins, commutative incl. key order, never downgrades,
+  undefined-when-empty — and source assertions pinning the sync wiring: merged in
+  `tryAutoMergeAll`, emitted-when-non-empty in `fingerprint`, object-checked in
+  `validateBackup`, NOT defaulted in `migrate`/defaults, NOT in
+  `BACKUP_ARRAY_KEYS`, NOT stripped as `auto`, and the detection effect writing
+  through `setData` — not `setDataRaw` — with an `if(!changed)return d;`
+  no-op guard).
   **Commit new ones** — `baltest.cjs`
   was written in-session, never committed, and is gone.
 - **A green suite does not mean a sync change works.** The 2026-08-07 session
@@ -1033,7 +1042,7 @@ and an error naming a collection the user has never heard of.
   watching for POSTs across a full autosave window (wait 15–25s, not 3).**
 - **`headroomcheck.cjs`** is tooling, not a runner — it needs a backup file
   nobody may commit, so it takes the path as an argument and a "run all
-  twenty-five" sweep must not include it. It cross-checks the Purchase Advisor's
+  twenty-six" sweep must not include it. It cross-checks the Purchase Advisor's
   `purchaseHeadroomForBucket` against the **sliced** `BudgetView` "Left"
   expression over every owner × the full 24-bucket horizon of a REAL document.
   `purchasetest.cjs` case 2 asserts the same equality, but over a three-category
@@ -1048,7 +1057,7 @@ and an error naming a collection the user has never heard of.
   against the app's own Budget tab before trusting a clean run.
 - **`dotest.cjs`** is tooling, not a runner — it launches `npx wrangler dev`
   four times, needs four free ports and takes ~25s, so it stays out of the
-  "run all twenty-five" sweep. It is the **only** coverage `SyncRoom` has: every
+  "run all twenty-six" sweep. It is the **only** coverage `SyncRoom` has: every
   other runner slices pure functions out of `index.html`, and the thing under
   test here is the storage runtime's serialisation guarantee, not an
   expression. Run it by hand after touching `worker.js` or `wrangler.jsonc`.

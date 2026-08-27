@@ -352,6 +352,130 @@ rapid save) have no Stitch equivalent and are kept as flat subordinate elements.
 only additions were Transaction-scoped `.tx-*` CSS + the `.sheet-task:focus`
 suppression; no shared primitive changed).
 
+## Banks — recomposition (2026-08-27, Category B, Rounds 1–3)
+
+**Status: Pass.** Banks was ported to the open-ledger language over three review
+rounds; verified at **390 + 320 + 430 (Pro Max) + 1600, both themes**, plus the
+Update sheet at mobile and the settings panel expanded from a row. Shots in
+`artifacts/ui-verification/banks/` (`{430,390,320,1600}-{light,dark}`,
+`settings-*`, `updatesheet-*`). All 25 runners + parse green; presentation-only
+(no mutator/data/sync diff).
+
+- **Round 1** — flat MetricStrip summary (dominant SAR Total + USD/PHP 2-up +
+  per-owner split with square owner markers), owner-grouped flat surfaces, square
+  `Status` chips, flattened `UpdateBalanceSheet` + `InterestSettings`.
+- **Round 2** — desktop `.split-8-4`: LEFT = summary + toggle + accounts, RIGHT =
+  a read-only rail (**Cash availability** spendable/emergency/can't-reach ·
+  **Account checkup** needs-confirmation / oldest-confirmed / earning-interest /
+  est. 30-day interest · **Currency exposure** footer). Rail values reuse
+  `bankValuation`/`bankTierRate`/`dayNumber` (no parallel math; the 30-day
+  projection runs `bankValuation` on a today-anchored synthetic copy). Update
+  sheet → `sheet-task` (full-screen mobile / bounded desktop). Weights reduced to
+  the approved hierarchy (500 names/figures, 600 only tiny mono tags). Toggle
+  left-aligned.
+- **Round 3 (open-ledger)** — account cards **flattened to hairline rows** (no
+  boxes, grouped by owner); **combined identity line** "Account Name · BANK"
+  (name primary, bank quieter mono); metadata row **normalized** (currency ·
+  country · status · conversion · accrual all one 10px/mono weight; reserved /
+  unreachable keep only a coloured square); balance **26 → 16px**; dashed Add
+  tiles → **"+ Add account" rows**; **profile selector moved above** Liquid
+  Assets; availability + currency **percentages apportioned to total 100**
+  (largest-remainder); per-row owner labels removed. Owner-split tiles use a
+  small `SAR` prefix + number so they never wrap at ≤390px.
+
+**Intentional differences:** no direct Stitch mockup (Category B) — composed from
+the proven primitives. Banks keeps the 3-way `HomeProfileToggle` (needs the
+Household/joint view) rather than Budget's 2-way `OwnerToggle`. The Update sheet
+keeps the ADD/SUBTRACT/SET colour cue on its segmented control. `heroBg` dark
+hero was dropped in favour of the flat MetricStrip.
+
+## Net Worth — recomposition (2026-08-27, Category B)
+
+**Status: Pass.** Net Worth was ported to the open-ledger language following the
+Banks precedent; verified at **390 + 320 + 430 (Pro Max) + 1600, both themes**,
+across the **Me / My wife / Household** scope views plus the expanded
+asset-editing panel. Shots in `artifacts/ui-verification/networth/`
+(`{430,390,320,1600}-{light,dark}`, `{1600,390}-light-me`,
+`{1600,390}-light-expanded`). All 25 runners + parse green; presentation-only
+(no calc/data/mutator/sync diff — `NetWorthView` + `AssetRow` markup only).
+
+- **One card only.** Per the open-ledger rule (only the hero is a bordered
+  surface), the summary is the tab's **single** `GridSection`; Composition, Net
+  worth trend, and What's driving it are **open sections** (mono `.t-section`
+  label + hairline content, no box), matching the rail modules.
+- **Summary** — the filled neumorphic hero was replaced by a flat `GridSection`
+  MetricStrip: dominant **Total** in the display currency + secondary
+  conversions 2-up, with the Combined-only "since last snapshot" delta as a
+  `Status` line. Scope toggle (`HomeProfileToggle`) moved **above** the summary,
+  left-aligned; the joint-records caption sits under it in a person view.
+- **Display currency follows Home** (`homeDisplay.netWorth.primary` +
+  `.secondary`, the same config `HeroCard` reads — PHP primary in sample data).
+  All derived figures — total, delta, composition, growth, milestone — are
+  computed in SAR then converted via `convert()` and formatted "CODE 1,234"
+  (Home's style); secondary tiles show the remaining configured currencies.
+  **Per-item asset/liability rows keep their OWN stored currency** (a PHP loan
+  reads PHP), like Banks account rows — only the derived totals convert. The
+  **monthly snapshot log stays SAR** (its `history` rows are stored SAR and its
+  "Add entry" input writes SAR — converting it would risk writing in the wrong
+  unit; the input is labelled `(SAR)`).
+- **Composition** — flat segmented bar (no `liquid-fill` gradient) + hairline
+  legend; the three asset **percentages total 100** (largest-remainder
+  `pctInts`); liabilities render as a signed coral line (not a % of gross).
+- **Trend + What's driving it** — the two existing range charts
+  (`HistoryRangeChart` / `CompositionRangeChart`) are reused unchanged inside
+  open sections.
+- **Assets & Liabilities** — `AssetRow` rebuilt as **row-expand** open-ledger
+  rows: collapsed line = name · owner + signed value; tapping reveals the edit
+  fields (name / owner / currency / value or the liability installment sub-form,
+  its progress bar → `ProgressMeter`) below the row. Big "Add" tiles →
+  **"+ Add asset/liability" rows**.
+- **Desktop `.split-8-4`** — LEFT = summary + composition + trend + driving;
+  RIGHT rail carries two **new read-only derived modules** — **Growth**
+  (since-last / since-first + % / avg-per-month, over per-profile daily
+  snapshots) and **Next milestone** (next round-number target + `ProgressMeter`
+  + "CODE X to go") — plus the assets/liabilities ledger and the monthly snapshot
+  log. Rail stacks below the charts on mobile. Milestone is computed in the
+  display currency and rescales per profile (next PHP 2,000,000 for the combined
+  view in sample data).
+
+**Milestone celebration (sticky achievement memory, added on review).** The
+"Next milestone" module gained a restrained celebration: a **close nudge**
+("Almost there — CODE X to go", ≥95% "So close", meter goes success-green) only
+when `pct >= 85`, and a persistent **reached trophy** — `🎉 Reached CODE V ·
+Mon YYYY`, warming to `🎉 Just reached CODE V!` within ~14 days — mirroring the
+app's only celebratory precedent (the lone `🎉` on "All goals completed"). It
+reads a NEW synced per-profile map **`data.netWorthMilestones`** (`{me,wife,
+household}` → `{v,ccy,at,updatedAt}`), stamped like `trimPolicy`/`navTabs` but
+**merged max-per-key** (`mergeMilestones`, sticky/highest-ever, commutative). A
+debounced `App()` effect detects a new all-time-high off `netWorthParts(pf)` in
+the display currency and writes it through **`setData`** (a real, sync-worthy
+edit — not the snapshot effect's `setDataRaw`), monotonic + no-op-guarded so a
+mere re-open never dirties. Backfill is silent (calm badge, not a toast).
+Verified in-browser: household → "Just reached PHP 1,000,000", Me → "Just
+reached PHP 250,000" (per-profile), light + dark. Covered by **`milestonetest.cjs`**
+(new committed runner, 19 cases). This is the one part of the Net Worth work
+that is **NOT presentation-only** — a synced field + merge + effect + test.
+**Sandbox sync check passed** (the mandatory `sandboxworker.cjs` POST-watch for
+any sync change): a real asset crossing a rung wrote the milestone, the autosave
+**POSTed it** (payload carried `netWorthMilestones`), and it **survived the
+conflict merge** the sandbox returns — bounded to 2 POSTs (conflict-retry
+artifact), no write-storm.
+
+**Intentional differences:** no direct Stitch mockup (Category B) — derived from
+the Dashboard net-worth hero/trend + Investments allocation/ledger. Keeps the
+3-way `HomeProfileToggle` (needs the Household/joint view). **Milestones are
+anchored in the display currency (PHP), not SAR** (user chose round, motivating
+targets): SAR is USD-pegged and PHP floats, so a pure FX swing can nudge you
+across a milestone without new saving and — being sticky — it stays earned.
+Accepted diff, chosen deliberately over FX-purity; do not "fix" it to SAR. No
+filled `heroBg`
+hero (flat MetricStrip, per the Banks decision). Snapshot log stays
+**household-wide AND in SAR** (its `history` rows are stored SAR and its input
+writes SAR). **Growth**, the **trend/driving charts**, and the composition
+**Investments** row show empty / `0` states with sample data offline — no
+multi-day snapshots or live quotes exist there (data-limited, verified by code +
+parse, consistent with Home).
+
 ## Verification table
 
 | Screen | Mobile (390) | Desktop (1600) | Stitch reference | Status | Remaining differences |
@@ -360,6 +484,8 @@ suppression; no shared primitive changed).
 | Budget | ✓ | ✓ | Budget (A) | **Pass** (recomposed 2026-08-26) | Rebuilt to the Stitch composition: desktop **8/4 split** (envelope ledger LEFT · ALLOCATION SUMMARY rail RIGHT, one vertical rule); flat "Budget overview" header + period control; responsive **3-column metric strip** (income · allocated · remaining) with vertical hairlines + utilization ruler; **open-ledger groups** (mono uppercase group labels, hairline rows, per-row relative-size ruler); mono amounts throughout. See "Budget — recomposition" below. |
 | Expenses | ✓ | ✓ | Expenses (A) | **Pass** (recomposed 2026-08-26) | Rebuilt to the Stitch composition: desktop **8/4 split** (overview + envelope utilization LEFT · "Recent activity" transaction ledger RIGHT, one vertical rule — the previously-missing split now built); flat "Technical overview" header + period control; **burn \| daily-avg metric strip** with vertical rule; **open-ledger envelope rows** (`.env-item`, flat `ProgressMeter` ruler + even-pace tick, mono spent/left, flat tags); untracked transfers + transaction log flattened. See "Expenses — recomposition" below. |
 | Add/Edit Transaction | ✓ | ✓ | Transaction (A) | **Pass** | Full-screen TaskSurface reflowed to **connected left-label field rows** (`.tx-field`, mono label left / borderless value right / hairline-divided) in Stitch order AMOUNT · TITLE · CATEGORY · DATE · NOTE; mono header (Close / ADD TRANSACTION / Clear), REMAINING-BUDGET context row, TRACKED/UNTRACKED/GOALS segmented, prominent mono amount, pinned green RECORD. Required-empty validation = red field label + dimmed RECORD. Desktop = bounded centered canvas (≤600px), not Stitch's full-bleed console. All flows preserved. See "Add/Edit Transaction — recomposition" above. |
+| Banks | ✓ (390 · 320 · 430) | ✓ | Derived (B) | **Pass** (recomposed 2026-08-27, Rounds 1–3) | Open-ledger: owner-grouped **hairline account rows** (no boxes), identity line "Name · BANK", normalized 10px/mono metadata with coloured status squares, 16px balances, "+ Add account" rows, inline row-expand for edit/interest/delete. Toggle **above** the flat MetricStrip summary (Total + USD/PHP + owner split). Desktop **8/4 split** with a read-only **Cash availability + Account checkup + Currency exposure** rail (reuses `bankValuation`/`bankTierRate`; %s total 100). `UpdateBalanceSheet` → `sheet-task` (full-screen mobile / bounded desktop). See "Banks — recomposition" above. |
+| Net Worth | ✓ (390 · 320 · 430) | ✓ | Derived (B) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (the summary MetricStrip — Total in the display currency + secondary conversions + Combined delta as `Status`); Composition / trend / driving are **open sections**. Scope toggle **above**; flat composition bar + legend (%s total 100, liabilities signed coral); two existing range charts reused unchanged; `AssetRow` → **row-expand** hairline rows (name · owner + signed value → tap reveals edit fields, item keeps its own currency); "+ Add asset/liability" rows. **Display currency follows Home** (`homeDisplay.netWorth`, PHP in sample) for all derived totals; snapshot log stays SAR. Desktop **8/4 split** with a read-only rail: **Growth** · **Next milestone** (display-currency) · assets/liabilities ledger · monthly snapshot log. Growth/trend/composition-investments show empty/`0` offline (data-limited). See "Net Worth — recomposition" above. |
 | Investments | ✓ | ✓ | Investments (A) | **Pass** (recomposed 2026-08-26) | Rebuilt to the Stitch composition: desktop **6/6 split** (portfolio overview + asset allocation LEFT · **holdings ledger** RIGHT, one vertical rule — the previously-missing split now built); analysis charts (Portfolio trend · What's driving it · Growth projection) moved to a full-width strip below. Portfolio total in **Source Serif 4** (the one serif figure); labels/returns/market-cost/allocation/holdings all mono. Holdings groups (Stocks/ETF · MP2 · Time Deposits · Gold) are open-ledger rows under mono group labels; residual `neu()`/`glass` chrome flattened; filters/selects/buttons flat hairline. Values read $0 in sample (no live quotes offline). See "Investments — recomposition" below. |
 
 ## Per-screen typography detail (against the approved screenshots)
@@ -380,14 +506,15 @@ suppression; no shared primitive changed).
 - **Investments → Investments.** Source Serif on the portfolio total only;
   everything else mono. ✔ matches; desktop split is the open item.
 
-## Category B / C (not this pass)
+## Category B / C (remaining)
 
-Banks, Net Worth, Forecast (hidden), Goals, Installments, Purchase Advisor,
-Bills, Household, Currency, More, Settings, and system overlays inherit the flat
-token + mono type system through the shared classes/primitives, but have not
-been individually recomposed. Their broadly-shared Inter-600 card-title /
-`h3` patterns were intentionally left untouched so half-finished screens don't
-get a partial mono conversion mid-pass.
+**Banks and Net Worth are now recomposed** (2026-08-27, see above). Still not
+individually recomposed: Forecast (hidden), Goals, Installments, Purchase
+Advisor, Bills, Household, Currency, More, Settings, and system overlays. They
+inherit the flat token + mono type system through the shared classes/primitives,
+but their broadly-shared Inter-600 card-title / `h3` patterns were intentionally
+left untouched so half-finished screens don't get a partial mono conversion
+mid-pass. **Goals is next** (shares the `ProgressMeter` + rail patterns).
 
 ## Known remaining items
 
