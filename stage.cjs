@@ -50,10 +50,10 @@ const SERVED=[
   "fonts/inter-500.woff2",
   "fonts/inter-600.woff2",
   "fonts/inter-700.woff2",
-  "fonts/source-serif-4-600.woff2",
   "fonts/jetbrains-mono-400.woff2",
   "fonts/jetbrains-mono-500.woff2",
   "fonts/jetbrains-mono-600.woff2",
+  "fonts/jetbrains-mono-700.woff2",
 ];
 
 const die=msg=>{console.error("\n  STAGE FAILED — "+msg+"\n");process.exit(1);};

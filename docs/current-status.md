@@ -1,7 +1,8 @@
 # Current Status
 
-_Last updated: 2026-08-26 — **Technical Ledger UI redesign SHIPPED**
-(v1.52.0, committed `a5baf71`, deployed). Feature/logic baseline unchanged._
+_Last updated: 2026-08-27 — **v1.56.0 shipping**: Goals recompose + mono-primary
+typography flip + Expenses row declutter (all presentation-only). See "State of
+play" below. Feature/logic baseline unchanged._
 
 ## Technical Ledger redesign — read this FIRST (2026-08-26, DEPLOYED)
 
@@ -53,29 +54,51 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
-**Deploying now: v1.55.0 / build `2026.08.27.0006`** — the **Banks + Net Worth
-Category-B recomposition** plus the **Net Worth milestone celebration** (a sticky
-per-profile achievement memory — the ONE non-presentation-only piece: new synced
-`data.netWorthMilestones` map, `mergeMilestones` max-per-key, a detection effect,
-`milestonetest.cjs`). All 26 runners + parse green; browser + sandbox-sync
-verified. Banks + Net Worth were user-approved 2026-08-27.
+**Deploying now: v1.56.0 / build `2026.08.27.0007`** — three presentation-only
+changes, all user-approved and browser-verified (390/1600, light+dark), 26 runners
++ parse green, `stage.cjs` guard green:
+1. **Goals recompose** (Category C) — open-ledger: one bordered hero (funded-%
+   Verdict + saved/remaining/counts), flat two-line `GoalRow`s replacing the
+   neumorphic tiles/SVG rings, Me/Wife/Household scope (shared synced `profile`),
+   desktop `.split-8-4` rail (Portfolio progress · Monthly commitment · On-track
+   vs at-risk; undated goals excluded+footnoted), Add/Details flattened to
+   `.sheet-task`, type picker folded into Details. `goaltest` 43/43.
+2. **Typography flip — mono is now PRIMARY.** `body` default Inter→JetBrains Mono;
+   Inter kept only via `.sans` for prose (verdicts/empty-states/helpers/paragraphs,
+   ~64 sites). Source Serif 4 REMOVED (Investments total folded into mono 700).
+   Loaded `jetbrains-mono-700.woff2` (full 400/500/600/700 ramp; in `@font-face` +
+   `SERVED` + `APP_SHELL`). Casing unchanged (labels uppercase, names/controls
+   mixed). Browser probe confirmed body=mono + JBM700 loaded (no faux-bold).
+3. **Expenses envelope-row declutter** — the 3 always-visible per-row actions
+   folded into the row's existing chevron expand; collapsed row = name·group·
+   meter·spent/left only. Labels shortened (`+ Add`/`Top up`/`Carry over {amt}`);
+   Carry over shows only when real prior-bucket leftover exists.
+
+All three are **presentation-only** (no mutator/data/sync/fingerprint change), so
+no sandbox-sync gate was needed. Detail: `stitch-redesign-progress` memory;
+per-screen `docs/ui-verification.md`; type system `docs/design-system.md`.
+
+**KNOWN MINOR (carried forward):** Budget's dense single-line category rows clip
+long names slightly more at 390 (mono ~10% wider than Inter) — pre-existing row
+density, editable inputs; NOT fixed (a Budget-row-layout question, not typography).
 
 ### Technical Ledger redesign — screen checklist
 Category A (direct Stitch reference) — **shipped v1.52.0**:
 Home ✅ · Budget ✅ · Expenses ✅ · Add/Edit Transaction ✅ · Investments ✅
 Category B/C (derived, no direct mockup):
-Banks ✅ · **Net Worth ✅** (this release) · Goals ⬜ **(NEXT)** · Installments ⬜ ·
+Banks ✅ · Net Worth ✅ · **Goals ✅** (this release) · Installments ⬜ **(NEXT)** ·
 Purchase Advisor ⬜ · Bills ⬜ · Household ⬜ · Currency ⬜ · More sheet ⬜ ·
 Settings ⬜ · Forecast (hidden) ⬜ · system overlays (Conflict / PendingChanges /
 RecentlyDeleted / ProfilePicker / FirstConnect) ⬜
 
-**Next session — Goals.** Two carried-forward preferences from the Net Worth
-review (see `redesign-relayout-principles` memory + `stitch-workflow.md`):
-(1) **only the hero/summary is a bordered card; everything else is an open
-section** — count `GridSection`s, >1 is the bug; (2) **offer a MENU of candidate
-desktop-rail modules and let the user pick — be exploratory**, propose ideas
-beyond the safe two as long as they fit the screen and the app (Net Worth's rail
-was chosen this way).
+**Next session — Installments** (natural next: a "cousin of Goals", shares the
+`ProgressMeter`/ledger patterns). Carry-forward redesign preferences (see
+`redesign-relayout-principles` memory + `stitch-workflow.md`): (1) **only the
+hero/summary is a bordered card; everything else is an open section** — count
+`GridSection`s, >1 is the bug; (2) **offer a MENU of candidate desktop-rail
+modules and let the user pick — be exploratory**. And now: (3) **mono is the
+default** — reach for `.sans` only on sentence-style prose (see
+`docs/design-system.md` Typography).
 
 **Previously live: v1.52.0 / build `2026.08.26.0011`**, deployed 2026-08-26 (`db85a07a`,
 commit `a5baf71`) — the **Technical Ledger UI redesign** (Home + Budget/Expenses/

@@ -72,18 +72,22 @@
   --glassBg:#FFFFFF;--glassBgStrong:#FFFFFF;--glassBorder:#E4E2E4;--glassShadow:rgba(27,27,27,.10);--glassHi:rgba(255,255,255,0);
 }
 /* ── Self-hosted webfonts (Technical Ledger redesign) ──
-   Inter = UI/body/labels, Source Serif 4 = hero money, JetBrains Mono =
-   instrument values/figures/dates. Latin-subset woff2 files live in ./fonts/
-   (precached by sw.js). font-display:swap so text paints in the fallback stack
-   immediately and re-flows when the face loads — no invisible-text flash. */
+   JetBrains Mono is the PRIMARY typeface — it is the app-wide default (see the
+   `body` rule below), used for headings, nav, values, labels, categories,
+   metadata, and short item names. Inter (`.sans`) is the escape hatch for longer
+   prose only: explanatory/helper/empty-state/sentence text. (Source Serif 4 was
+   dropped 2026-08-27 — the one serif figure folded into mono.) Full mono weight
+   ramp 400/500/600/700 so hierarchy comes from weight, not extra families.
+   Latin-subset woff2 in ./fonts/ (precached by sw.js). font-display:swap so text
+   paints in the fallback stack immediately and re-flows when the face loads. */
 @font-face{font-family:"Inter";font-style:normal;font-weight:400;font-display:swap;src:url("./fonts/inter-400.woff2") format("woff2");}
 @font-face{font-family:"Inter";font-style:normal;font-weight:500;font-display:swap;src:url("./fonts/inter-500.woff2") format("woff2");}
 @font-face{font-family:"Inter";font-style:normal;font-weight:600;font-display:swap;src:url("./fonts/inter-600.woff2") format("woff2");}
 @font-face{font-family:"Inter";font-style:normal;font-weight:700;font-display:swap;src:url("./fonts/inter-700.woff2") format("woff2");}
-@font-face{font-family:"Source Serif 4";font-style:normal;font-weight:600;font-display:swap;src:url("./fonts/source-serif-4-600.woff2") format("woff2");}
 @font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:400;font-display:swap;src:url("./fonts/jetbrains-mono-400.woff2") format("woff2");}
 @font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:500;font-display:swap;src:url("./fonts/jetbrains-mono-500.woff2") format("woff2");}
 @font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:600;font-display:swap;src:url("./fonts/jetbrains-mono-600.woff2") format("woff2");}
+@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:700;font-display:swap;src:url("./fonts/jetbrains-mono-700.woff2") format("woff2");}
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;background:var(--bg);transition:background .25s ease;width:100%;}
 /* overflow-x:hidden belongs on <html> ONLY. On <body> it made body a scroll
@@ -104,14 +108,19 @@ html{overflow-x:hidden;}
    was removed because it applied overflow:hidden/height:100vh instantly
    at paint time, snapping the background to the top before the JS fix
    could take over, causing a visible jump on iOS. */
-body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink);-webkit-text-size-adjust:100%;overscroll-behavior-x:none;}
-/* .serif = the ONE primary financial display (Source Serif 4). Per the approved
-   Stitch screens this is used ONLY where a screenshot visibly uses it — chiefly
-   the Investments portfolio total. Home/Budget/Expenses heroes use mono. */
-.serif{font-family:"Source Serif 4","Iowan Old Style",Georgia,serif;font-feature-settings:"tnum" 1;}
-/* .mono = JetBrains Mono: the dominant technical face across the approved
-   design — nav, page titles, instrument labels, most financial figures,
-   percentages, dates, units, table figures. Tabular for column alignment. */
+/* JetBrains Mono is the app-wide DEFAULT — mono is the primary visual identity.
+   Everything inherits it (headings, nav, values, labels, names, buttons, form
+   controls) unless it opts into `.sans`. */
+body{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);-webkit-text-size-adjust:100%;overscroll-behavior-x:none;}
+/* .sans = Inter, the escape hatch for READABLE PROSE only: verdict sentences,
+   helper/empty-state/freshness lines, paragraph bodies, error/confirm text.
+   Reserve it for sentence-style content — short labels, names and values stay
+   mono (the default). This is the ONLY place sans-serif should appear. */
+.sans{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+/* .mono = an explicit opt-in to JetBrains Mono. Still used on elements whose
+   inherited font could be overridden (e.g. inside a `.sans` subtree, or to add
+   tabular-nums). Same face as the default; carries `font-variant-numeric` for
+   column alignment. */
 .mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;}
 /* ── Technical Ledger type roles (JetBrains Mono, per approved code.html) ──
    .t-section = section header / page title: mono 12px, weight 500, uppercase,
@@ -1126,7 +1135,7 @@ function ConfirmDialog({open,title,message,confirmLabel="Delete",danger=true,onC
     <div className="sheet-bg" onClick={onCancel}>
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:340,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600,fontSize:16,color:P.ink}}>{title}</h3>
-        {message&&<p style={{fontSize:13,color:P.sub,margin:"0 0 18px",lineHeight:1.5}}>{message}</p>}
+        {message&&<p className="sans" style={{fontSize:13,color:P.sub,margin:"0 0 18px",lineHeight:1.5}}>{message}</p>}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onConfirm}
             style={{width:"100%",borderRadius:12,padding:"12px 0",fontSize:14,fontWeight:600,border:"none",
@@ -1214,8 +1223,8 @@ function GridSection({title,action,children,pad=20,flush=false,style,titleStyle,
 }
 
 /* One instrument: uppercase label, one dominant figure, optional sub/status.
-   `hero` renders the value in Source Serif (the ONE dominant amount per module);
-   otherwise JetBrains Mono. `cur` is a small leading currency code. */
+   `hero` just enlarges the figure (34 vs 24) — always JetBrains Mono, like every
+   value in the app. `cur` is a small leading currency code. */
 function MetricBlock({label,value,cur,hero=false,sub,status,align="left",valueColor,style}){
   return(
     <div style={{display:"flex",flexDirection:"column",gap:6,minWidth:0,textAlign:align,...style}}>
@@ -3730,8 +3739,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.55.0";
-const BUILD_ID="2026.08.27.0006";
+const APP_VERSION="1.56.0";
+const BUILD_ID="2026.08.27.0007";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -8768,7 +8777,7 @@ function App(){
           <div style={{fontSize:15,fontWeight:600,color:P.ink}}>
             {cloudWaitReason?"Can't read the cloud copy":"Waiting to reach the cloud…"}
           </div>
-          <div style={{fontSize:13,color:P.neuSub,maxWidth:280,lineHeight:1.5}}>
+          <div className="sans" style={{fontSize:13,color:P.neuSub,maxWidth:280,lineHeight:1.5}}>
             {cloudWaitReason
               ?"This looks like a new device, and the data already in the cloud can't be read. Starting fresh here could overwrite it, so we're still trying."
               :"This looks like a new device — we want to load your existing data first so nothing gets overwritten."}
@@ -8941,7 +8950,7 @@ function App(){
             includeMp2Estimate}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap,homeDisplay:data.homeDisplay||{},netWorthMilestones:data.netWorthMilestones||{}}}/>}
           {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
-          {tab==="goals"&&<GoalsView {...{goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners}}/>}
+          {tab==="goals"&&<GoalsView {...{goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners,profile,setProfile:setProfileSynced}}/>}
           {tab==="installments"&&<InstallmentsView {...{installments,installmentPayments,
             addInstallment,updateInstallment,recordInstallmentPayment,payOffInstallmentEarly,
             cancelInstallment,removeInstallment,
@@ -8974,7 +8983,7 @@ function App(){
         <div style={{position:"fixed",left:16,right:16,bottom:88,maxWidth:420,margin:"0 auto",zIndex:80,
           background:P.neuBg,border:`1px solid ${P.line}`,borderRadius:12,padding:"10px 14px",
           display:"flex",alignItems:"center",gap:10,fontSize:12,color:P.sub,boxShadow:"0 6px 18px rgba(0,0,0,.14)"}}>
-          <span style={{flex:1,lineHeight:1.5}}>Cloud settings applied — this device's own preferences were replaced.</span>
+          <span className="sans" style={{flex:1,lineHeight:1.5}}>Cloud settings applied — this device's own preferences were replaced.</span>
           <button onClick={()=>setAdoptedSettingsNote(false)}
             style={{border:"none",background:"transparent",color:P.jade,fontWeight:600,fontSize:12,padding:"4px 2px"}}>Got it</button>
         </div>}
@@ -9064,7 +9073,7 @@ function Verdict({tone="flat",children,title}){
   /* Technical Ledger: a flat status line, not a filled pill. The tone's colour
      carries the meaning on the text + icon; no background chip. */
   return(
-    <div title={title} style={{display:"inline-flex",alignItems:"center",gap:6,
+    <div title={title} className="sans" style={{display:"inline-flex",alignItems:"center",gap:6,
       marginBottom:10,maxWidth:"100%",
       color:t.fg,fontSize:12,fontWeight:700,lineHeight:1.3,letterSpacing:".01em"}}>
       {Icon&&<Icon size={13} style={{flexShrink:0}}/>}
@@ -9213,7 +9222,7 @@ function HistoryRangeChart({snapshots,profile,field,money,color,height=200,empty
           </ResponsiveContainer>
         </div>
       ):(
-        <p style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
+        <p className="sans" style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
       )}
     </div>
   );
@@ -9302,7 +9311,7 @@ function CompositionRangeChart({snapshots,profile,series,money,height=200,emptyT
           </div>
         </>
       ):(
-        <p style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
+        <p className="sans" style={{fontSize:13,color:P.neuSub}}>{emptyText||"Not enough history yet for this range."}</p>
       )}
     </div>
   );
@@ -10050,7 +10059,7 @@ function GoalContributionSheet({goals,contributeToGoal,onClose}){
             <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
           </div>
           {(!goals||goals.length===0)
-            ?<div style={{fontSize:13,color:P.sub}}>No goals yet — create one in the Goals tab first.</div>
+            ?<div className="sans" style={{fontSize:13,color:P.sub}}>No goals yet — create one in the Goals tab first.</div>
             :<>
               <div style={{marginBottom:12}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Goal</div>
@@ -11116,11 +11125,11 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
               </h3>
               <IconButton icon={I.X} label="Close" onClick={()=>setShowMoveSheet(false)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
             </div>
-            <div style={{fontSize:13,color:P.sub,marginBottom:12,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:13,color:P.sub,marginBottom:12,lineHeight:1.5}}>
               Moving <strong>{fmt(selectedInfo.total)}</strong> to another group. Each category keeps its own
               amount, sub-items and tracking — only which group it sits under changes.
             </div>
-            <div style={{fontSize:12,color:P.faint,marginBottom:12,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:12,color:P.faint,marginBottom:12,lineHeight:1.5}}>
               {selectedInfo.cats.map(c=>c.name||"Untitled").join(", ")}
             </div>
             {selectedInfo.emptied.length>0&&(
@@ -11196,7 +11205,7 @@ function BudgetView({planForMonth,planSourceForMonth,monthlyPlans,plans,clonePla
               </h3>
               <IconButton icon={I.X} label="Close" onClick={closePlanSheet} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
             </div>
-            <div style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
               {hasOwnPlan
                 ?"Only this month uses it. Later months carry it forward until you change them."
                 :planSource.fromMonth
@@ -11444,7 +11453,7 @@ function UnaccountedSheet({monthLabel,recon,total,fmt,onClose}){
           Everything logged against this period, whether you tracked it as spending or just moved it somewhere.
         </div>
         {/* The answer first, in a sentence. The table below is the working. */}
-        <div style={{fontSize:13,color:P.ink,lineHeight:1.5,marginBottom:14,
+        <div className="sans" style={{fontSize:13,color:P.ink,lineHeight:1.5,marginBottom:14,
           borderRadius:10,padding:"10px 12px",background:P.sf,border:`1px solid ${P.line}`}}>
           {reconcileSentence(recon,fmt)}
         </div>
@@ -11482,7 +11491,7 @@ function UnaccountedSheet({monthLabel,recon,total,fmt,onClose}){
             the difference between "you over-transferred" and "some of this
             doesn't match your plan", and only one of those is true. */}
         {recon.unmatched>0&&
-          <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:10}}>
+          <div className="sans" style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:10}}>
             {fmt(recon.unmatched)} of the transfers above doesn't match any category in this period's plan — usually a category that was renamed, deleted or switched to tracked after the fact.
           </div>}
         <div style={{display:"flex",alignItems:"baseline",gap:10,paddingTop:12}}>
@@ -12231,9 +12240,20 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
             const envTxsTotal=catTxs.reduce((s,t)=>s+t.amount,0);
             const envMoPlan=planForMonth(viewMonth);
             const envOpen=!!expandedEnvelopes[env.id];
+            /* Carry-over is offered only when last month's same-named category has
+               a non-zero leftover to bring in — same match/threshold CarryoverSheet
+               itself uses (by name, remaining!==0) — so the action never appears as
+               a no-op. Row actions live inside the expand now; the whole header is
+               the toggle. */
+            const prevByName=prevRollup.cats.find(c=>c.name===env.name);
+            const carryAmt=prevByName?Math.round((Number(prevByName.remaining)||0)*100)/100:null;
+            const canCarry=!isFuture&&!carriedCatIds.has(env.id)&&carryAmt!=null&&carryAmt!==0;
             return(
               <div key={env.id} className="env-item">
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div onClick={()=>toggleEnvelope(env.id)} role="button" tabIndex={0}
+                  onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggleEnvelope(env.id);}}}
+                  title={envOpen?"Hide details":"Show details"}
+                  style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,cursor:"pointer"}}>
                   <span style={{width:8,height:8,borderRadius:999,background:env.color,flexShrink:0}}/>
                   <span style={{flex:1,fontSize:14,fontWeight:500,color:P.ink,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{env.name}</span>
                   {pacing&&(
@@ -12263,10 +12283,10 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                       <I.Refresh size={9}/>{carry>=0?"+":""}{fmt(carry)}
                     </span>
                   )}
-                  <button onClick={()=>toggleEnvelope(env.id)} title={envOpen?"Hide transactions":"Show transactions"}
-                    style={{background:"transparent",border:"none",color:envOpen?P.success:P.muted,padding:2,display:"flex",alignItems:"center",flexShrink:0}}>
+                  <span aria-hidden="true"
+                    style={{color:envOpen?P.success:P.muted,padding:2,display:"flex",alignItems:"center",flexShrink:0}}>
                     <I.Chevron size={14} style={{transform:envOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
-                  </button>
+                  </span>
                 </div>
                 {/* flat utilization ruler with an even-pace tick */}
                 <div style={{position:"relative",marginBottom:8}}>
@@ -12289,35 +12309,33 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                     At this pace, depletes around {burn.depleteDate.toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                   </div>
                 )}
-                <div style={{display:"flex",alignItems:"center",gap:14,marginTop:8}}>
-                  <button onClick={()=>openAdd(env.id)}
-                    style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.jade,background:"transparent",border:"none",padding:0}}>
-                    <I.Plus size={12}/>Add to {env.name}
-                  </button>
-                  <button onClick={()=>setExtraFundsModal({catId:env.id,name:env.name})}
-                    style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.br,background:"transparent",border:"none",padding:0}}>
-                    <I.Send size={12}/>Add extra funds
-                  </button>
-                  {!isFuture&&(
-                    <button disabled={carriedCatIds.has(env.id)}
-                      onClick={()=>setCarryoverModal({catId:env.id,name:env.name})}
-                      title={carriedCatIds.has(env.id)?"Already carried this month":"Bring last month's leftover into this category"}
-                      style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,
-                        color:carriedCatIds.has(env.id)?P.faint:P.info,background:"transparent",border:"none",padding:0,
-                        cursor:carriedCatIds.has(env.id)?"default":"pointer"}}>
-                      <I.Refresh size={12}/>{carriedCatIds.has(env.id)?"Carried over":"Add remaining from last month"}
-                    </button>
-                  )}
-                </div>
-                {/* ── inline transactions for this envelope, tap the chevron above to reveal ── */}
+                {/* Actions + transactions live inside the expand — a collapsed row
+                    stays calm (name · meter · spent/left only). Tap the header. */}
                 {envOpen&&(
                   <div style={{marginTop:10,paddingTop:8,borderTop:`1px solid rgba(0,0,0,.06)`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",marginBottom:12}}>
+                      <button onClick={()=>openAdd(env.id)}
+                        style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.jade,background:"transparent",border:"none",padding:0}}>
+                        <I.Plus size={12}/>Add
+                      </button>
+                      <button onClick={()=>setExtraFundsModal({catId:env.id,name:env.name})}
+                        style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.br,background:"transparent",border:"none",padding:0}}>
+                        <I.Send size={12}/>Top up
+                      </button>
+                      {canCarry&&(
+                        <button onClick={()=>setCarryoverModal({catId:env.id,name:env.name})}
+                          title="Bring last month's leftover into this category"
+                          style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.info,background:"transparent",border:"none",padding:0,cursor:"pointer"}}>
+                          <I.Refresh size={12}/>Carry over {fmt(carryAmt)}
+                        </button>
+                      )}
+                    </div>
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:P.neuSub,marginBottom:4}}>
                       <span>{envTxs.length} transaction{envTxs.length===1?"":"s"}</span>
                       {envTxs.length>0&&<span className="tnum" style={{fontWeight:600}}>{fmt(envTxsTotal)}</span>}
                     </div>
                     {envTxs.length===0
-                      ?<div style={{fontSize:12,color:P.neuSub,padding:"8px 0"}}>No transactions logged for {env.name} yet.</div>
+                      ?<div className="sans" style={{fontSize:12,color:P.neuSub,padding:"8px 0"}}>No transactions logged for {env.name} yet.</div>
                       :envTxs.map((tx,idx)=>renderTxRow(tx,idx,envTxs.length,envMoPlan))
                     }
                   </div>
@@ -12705,7 +12723,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                       <option value="">Select a goal…</option>
                       {ownerGoals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
-                    {ownerGoals.length===0&&<div style={{fontSize:11,color:P.faint}}>No active goals for {owners[budgetOwner]} yet — add one in the Goals tab.</div>}
+                    {ownerGoals.length===0&&<div className="sans" style={{fontSize:11,color:P.faint}}>No active goals for {owners[budgetOwner]} yet — add one in the Goals tab.</div>}
                   </>
                 ):(
                   <select value={form.catId} onChange={e=>setForm(f=>({...f,catId:e.target.value}))} className="tx-select">
@@ -12991,7 +13009,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
               </h3>
               <IconButton icon={I.X} label="Close" onClick={()=>setShowPlanSheet(false)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
             </div>
-            <div style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
               {hasOwnPlan
                 ?`Income: ${cur} ${(monthPlan.income||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} · Custom budget for ${fmtMonth(viewMonth)}`
                 :`Showing allocations from "${monthPlan.name}". Create a plan for ${fmtMonth(viewMonth)} to set a different income or allocation — or just edit the amounts in the Budget tab and a copy is made for you.`}
@@ -13025,7 +13043,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
               <IconButton icon={I.X} label="Close" onClick={()=>setShowPlanPicker(false)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
             </div>
 
-            <div style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:13,color:P.sub,marginBottom:16,lineHeight:1.5}}>
               This creates a <strong>copy</strong> of an existing plan that you can adjust
               independently — different income, tweaked allocations — without changing the original.
             </div>
@@ -13513,7 +13531,7 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
       </button>
       {showHistory&&(
         billAdjustments.length===0?(
-          <div style={{fontSize:12,color:P.faint,padding:"4px 4px 8px"}}>No manual adjustments yet.</div>
+          <div className="sans" style={{fontSize:12,color:P.faint,padding:"4px 4px 8px"}}>No manual adjustments yet.</div>
         ):(
           <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:4}}>
             {[...billAdjustments].sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).map(a=>(
@@ -13596,7 +13614,7 @@ function UpdateBalanceSheet({account,onClose,onConfirm}){
                 number last typed — otherwise "Add 500" to an accrued balance
                 looks like the app quietly changed the balance on its own. */}
             {val.active&&
-              <div style={{fontSize:11,color:P.muted,marginBottom:14,lineHeight:1.5}}>
+              <div className="sans" style={{fontSize:11,color:P.muted,marginBottom:14,lineHeight:1.5}}>
                 Starting from the estimated balance — {num(val.balance)} confirmed on{" "}
                 {new Date(val.since+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                 {" "}plus {num(val.accrued)} accrued. Saving re-anchors it to today.
@@ -13692,7 +13710,7 @@ function InterestSettings({b,updateBank,todayStr,accent}){
         {/* Whole-balance tiers: the balance picks ONE rate and it applies to
             all of it. Said in the UI because the marginal reading is the more
             common convention and would quietly give a different number. */}
-        <div style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
           The balance picks one rate and it applies to the whole amount — not
           just the part above each threshold.
         </div>
@@ -13728,7 +13746,7 @@ function InterestSettings({b,updateBank,todayStr,accent}){
             {BANK_CREDITING.map(([k,l])=><option key={k} value={k}>{l}</option>)}
           </select>
         </div>
-        <div style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:11,color:P.faint,lineHeight:1.5}}>
           Accruing from {b.balanceAsOf
             ?new Date(b.balanceAsOf+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})
             :"—"}. Updating the balance re-anchors this to that day.
@@ -13867,7 +13885,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
                 <span>I can reach this money</span>
               </label>
             </div>
-            <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:-2}}>
+            <div className="sans" style={{fontSize:11,color:P.faint,lineHeight:1.5,marginTop:-2}}>
               {!bankIsAccessible(b)
                 ?"Left out of the Purchase Advisor's available cash, shown there as excluded, and includable for one purchase from that tab. Still counted in Net Worth."
                 :bankIsReserved(b)
@@ -14027,7 +14045,7 @@ function BanksView({banks,addBank,updateBank,removeBank,convert,sarRate,profile,
                 ))}
               </div>
             ):(
-              <div style={{fontSize:13,color:P.faint,padding:"8px 0",marginBottom:28}}>No accounts in this view yet.</div>
+              <div className="sans" style={{fontSize:13,color:P.faint,padding:"8px 0",marginBottom:28}}>No accounts in this view yet.</div>
             )}
 
             <div className="t-section" style={{color:P.muted,marginBottom:16}}>Account checkup</div>
@@ -14255,11 +14273,12 @@ function InvestmentsView({profile,setProfile,invs,addInv,updateInv,removeInv,add
       <div className="split-6-6">
         {/* ── LEFT: portfolio overview + asset allocation ── */}
         <div className="split-pad-r">
-          {/* Portfolio hero — the ONE Source Serif figure in the whole app. */}
+          {/* Portfolio hero — THE headline number (mono 700, the app's heaviest
+              weight), folded off Source Serif into the single mono identity. */}
           <div style={{paddingBottom:18,borderBottom:`1px solid ${P.hairline}`}}>
             <div className="t-label" style={{color:P.muted,marginBottom:10}}>Total portfolio value (USD){profile!=="household"?` · ${owners[profile]||""}`:""}</div>
             <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
-              <span key={Math.round(grandTotalUsd)} className="serif tnum num-flash" style={{fontSize:40,lineHeight:"46px",fontWeight:600,color:P.ink,letterSpacing:"-.01em"}}>{usd(grandTotalUsd)}</span>
+              <span key={Math.round(grandTotalUsd)} className="mono tnum num-flash" style={{fontSize:40,lineHeight:"46px",fontWeight:700,color:P.ink,letterSpacing:"-.01em"}}>{usd(grandTotalUsd)}</span>
               {(sarRate||convert)&&(
                 <span className="mono tnum" style={{fontSize:13,color:P.muted,display:"inline-flex",gap:12,flexWrap:"wrap"}}>
                   {sarRate&&<span>≈ SAR {Math.round(grandTotalUsd*sarRate).toLocaleString("en-US")}</span>}
@@ -15013,7 +15032,7 @@ function GoldAccountCard({hld,owners,updateInv,removeInv,goldPriceUsd,priceAt,co
           <span style={{color:P.neuSub,fontWeight:400}}>Spot ${goldPriceUsd?Number(goldPriceUsd).toFixed(2):"—"}/oz{priceAt?` · updated ${new Date(priceAt).toLocaleTimeString()}`:""}</span>
         </div>
       )}
-      {!v.hasPrice&&<div style={{fontSize:11,color:P.neuSub,marginBottom:8}}>No gold price cached yet — tap "Refresh prices" above.</div>}
+      {!v.hasPrice&&<div className="sans" style={{fontSize:11,color:P.neuSub,marginBottom:8}}>No gold price cached yet — tap "Refresh prices" above.</div>}
       <textarea value={hld.notes||""} placeholder="Notes" onChange={e=>updateInv(hld.id,{notes:e.target.value})}
         style={{width:"100%",borderRadius:8,padding:"6px 8px",fontSize:12,background:"rgba(0,0,0,.03)",border:"none",color:P.neuInk,resize:"vertical",minHeight:32}}/>
       </>}
@@ -15082,7 +15101,7 @@ function Mp2PayoutModal({hld,banks,mp2RatesByYear,onClose,onSubmit}){
             <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Record dividend payout — {hld?.name||"MP2"}</h3>
             <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
           </div>
-          <div style={{fontSize:11,color:P.sub,marginBottom:12,lineHeight:1.5}}>
+          <div className="sans" style={{fontSize:11,color:P.sub,marginBottom:12,lineHeight:1.5}}>
             Only records what's actually been paid. This won't touch a bank balance unless you pick an account below.
           </div>
           <div style={{marginBottom:12}}>
@@ -15182,7 +15201,7 @@ function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
             <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>MP2 declared dividend rates</h3>
             <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
           </div>
-          <div style={{fontSize:11,color:P.sub,marginBottom:12,lineHeight:1.5}}>
+          <div className="sans" style={{fontSize:11,color:P.sub,marginBottom:12,lineHeight:1.5}}>
             One official rate per year, shared by every MP2 account unless an account overrides it. Never a projection — only enter what Pag-IBIG has actually declared.
           </div>
           <div style={{display:"flex",gap:8,marginBottom:16}}>
@@ -15195,7 +15214,7 @@ function Mp2RatesModal({rates,addMp2Rate,updateMp2Rate,removeMp2Rate,onClose}){
             </button>
           </div>
           <div style={{maxHeight:260,overflowY:"auto",borderRadius:10,background:"rgba(0,0,0,.03)"}}>
-            {sorted.length===0&&<div style={{padding:12,fontSize:13,color:P.sub}}>No declared rates yet.</div>}
+            {sorted.length===0&&<div className="sans" style={{padding:12,fontSize:13,color:P.sub}}>No declared rates yet.</div>}
             {sorted.map(r=>(
               <div key={r.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderTop:"1px solid rgba(0,0,0,.05)"}}>
                 <span className="tnum" style={{fontWeight:600,color:P.ink}}>{r.year}</span>
@@ -15481,7 +15500,7 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
             ))}
           </div>
         ):(
-          <div style={{fontSize:13,color:P.faint,padding:"8px 0",marginBottom:28}}>Appears once 2+ days of history have been captured.</div>
+          <div className="sans" style={{fontSize:13,color:P.faint,padding:"8px 0",marginBottom:28}}>Appears once 2+ days of history have been captured.</div>
         )}
 
         {/* Next milestone — in the display currency, with a sticky achievement
@@ -15520,12 +15539,12 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
 
         {/* Assets & Liabilities ledger */}
         <div className="ledger-group t-label" style={{color:P.muted}}>Assets</div>
-        {assetItems.length===0&&<div style={{fontSize:13,color:P.faint,padding:"8px 0"}}>None yet.</div>}
+        {assetItems.length===0&&<div className="sans" style={{fontSize:13,color:P.faint,padding:"8px 0"}}>None yet.</div>}
         {assetItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
         <button onClick={()=>addAsset("asset")} className="ledger-row" style={{gap:8,color:P.muted,fontSize:13,fontWeight:500,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,width:"100%",cursor:"pointer",fontFamily:"inherit",textAlign:"left",padding:"14px 0"}}><I.Plus size={14}/>Add asset</button>
 
         <div className="ledger-group t-label" style={{color:P.muted}}>Liabilities</div>
-        {liabItems.length===0&&<div style={{fontSize:13,color:P.faint,padding:"8px 0"}}>None yet.</div>}
+        {liabItems.length===0&&<div className="sans" style={{fontSize:13,color:P.faint,padding:"8px 0"}}>None yet.</div>}
         {liabItems.map(a=><AssetRow key={a.id} a={a} updateAsset={updateAsset} removeAsset={removeAsset} owners={owners}/>)}
         <button onClick={()=>addAsset("liability")} className="ledger-row" style={{gap:8,color:P.muted,fontSize:13,fontWeight:500,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,width:"100%",cursor:"pointer",fontFamily:"inherit",textAlign:"left",padding:"14px 0"}}><I.Plus size={14}/>Add liability</button>
 
@@ -15536,7 +15555,7 @@ function NetWorthView({netWorthParts,profile,setProfile,owners,sarRate,convert,r
           {isCombined?"Whole-household totals, one row per month.":"Whole-household totals — this log is not split by person."}
         </p>
         {sorted.length===0&&
-          <p style={{fontSize:13,color:P.muted,margin:"0 0 12px"}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
+          <p className="sans" style={{fontSize:13,color:P.muted,margin:"0 0 12px"}}>No snapshots yet — this month will save automatically once you add a bank, investment, or asset.</p>}
         <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:12,marginBottom:12}}>
           <Status tone="success" icon={<I.Check size={12}/>}>This month syncs automatically</Status>
           <button onClick={captureSnapshot} style={{padding:"6px 12px",fontSize:12,fontWeight:500,color:P.ink,background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:0,cursor:"pointer",fontFamily:"inherit"}}>Force refresh now</button>
@@ -15629,75 +15648,58 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
 }
 
 
-/* ── GOAL SQUARE CARD (top-level so inputs keep focus) ── */
-function GoalSquare({g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}){
-  const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
+/* ── GOAL ROW — flat open-ledger row (top-level so the name input keeps focus) ── */
+function GoalRow({g,fmt,today,updateGoal,openAdd,openDetails}){
+  const saved=goalSavedTotal(g);
   const pctDone=g.target>0?Math.min(100,(saved/g.target)*100):0;
   const Icon=goalIcon(g.type);
-  const R=26,C=2*Math.PI*R;
-  /* Null unless this goal has a deadline, so a goal without one renders
-     exactly the card it always did — no empty state, nothing to dismiss. */
+  /* Null unless this goal has a deadline — an undated goal simply shows its
+     type, no verdict, exactly as before. */
   const dl=goalDeadlineStatus(g,today);
+  const verdictColor=dl?(dl.done?P.success:(dl.onTrack?P.success:(dl.overdue?P.attention:P.info))):P.info;
+  const typeLabel=(GOAL_TYPES.find(([k])=>k===g.type)||[])[1]||g.type;
+  /* Two-line row so a long name keeps the full width even at 320: line 1 is
+     icon + name + saved/target; line 2 is the meter + type/verdict + actions.
+     Single-line crushed the name to "Emer" once the amount and buttons took
+     their share of a 320px row. */
   return(
-    <div style={{borderRadius:16,padding:14,background:P.neuBg,boxShadow:`6px 6px 13px ${P.neuLo},-6px -6px 13px ${P.neuHi}`,display:"flex",flexDirection:"column",gap:8}}>
-      {/* top row: type icon + delete */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <button onClick={()=>openTypePicker(g.id)} title="Change goal type" aria-label="Change goal type"
-          style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,
-            background:g.color+"22",color:g.color,border:"none"}}>
-          <Icon size={18}/>
-        </button>
-        <IconButton icon={I.X} label={`Delete ${g.name||"goal"}`} onClick={()=>removeGoal(g.id)} size={15} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32}}/>
+    <div className="ledger-row" style={{flexDirection:"column",alignItems:"stretch",gap:8}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:28,height:28,flexShrink:0,background:g.color+"22",color:g.color}}><Icon size={16}/></span>
+        <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare"
+          style={{fontSize:14,fontWeight:500,flex:1,minWidth:0,color:P.ink}}/>
+        <div className="ledger-amt" style={{flexShrink:0}}>
+          <div style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(saved)}</div>
+          <div style={{fontSize:11,color:P.muted}}>of {fmt(g.target).replace(/^[^\d-]+/,"")}</div>
+        </div>
       </div>
-
-      {/* name */}
-      <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare"
-        style={{fontSize:14,fontWeight:600,width:"100%",minWidth:0,color:P.neuInk}}/>
-
-      {/* ring progress */}
-      <div style={{display:"flex",justifyContent:"center",padding:"2px 0"}}>
-        <svg width="72" height="72" viewBox="0 0 72 72">
-          <circle cx="36" cy="36" r={R} stroke={P.neuLo} strokeWidth="7" fill="none" opacity=".5"/>
-          <circle cx="36" cy="36" r={R} stroke={g.color} strokeWidth="7" fill="none" strokeLinecap="round"
-            strokeDasharray={C} strokeDashoffset={C*(1-pctDone/100)} transform="rotate(-90 36 36)"
-            style={{transition:"stroke-dashoffset .5s"}}/>
-          <text x="36" y="40" textAnchor="middle" fontSize="15" fontWeight="700" fill={P.neuInk} className="tnum">{pctDone.toFixed(0)}%</text>
-        </svg>
-      </div>
-
-      {/* saved / target */}
-      <div style={{textAlign:"center"}} className="tnum">
-        <div style={{fontSize:14,fontWeight:700,color:P.neuInk}}>{fmt(saved)}</div>
-        <div style={{fontSize:11,color:P.neuSub}}>of {fmt(g.target)}</div>
-      </div>
-
-      {/* Deadline verdict — a figure is not an answer. "38% of 5,200" doesn't
-          tell you whether you will make it; this line does. Only rendered when
-          a deadline exists. */}
-      {dl&&
-        <div style={{textAlign:"center",fontSize:10,fontWeight:600,lineHeight:1.4,
-          color:dl.done?P.grD:(dl.onTrack?P.grD:(dl.overdue?P.wine:"#E07B2A"))}}>
-          {dl.done?"Reached"
-            :dl.overdue?`Past ${instShortDate(dl.deadline)}`
-            :dl.onTrack?`On track · ${instShortDate(dl.deadline)}`
-            :`Behind · needs ${fmt(dl.requiredMonthly)}/mo`}
-        </div>}
-
-      {/* actions */}
-      <div style={{display:"flex",gap:6,marginTop:"auto"}}>
-        <button onClick={()=>openAdd(g.id)}
-          style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,borderRadius:999,padding:"6px 0",fontSize:12,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
-          <I.Plus size={12}/>Add
-        </button>
-        <IconButton icon={I.MoreHorizontal} label={`Details for ${g.name||"goal"}`} title="Details" onClick={()=>openDetails(g.id)} size={16} className="neu-btn"
-          style={{borderRadius:999,padding:"6px 10px",color:P.neuSub}}/>
+      <div style={{display:"flex",alignItems:"center",gap:10,paddingLeft:38}}>
+        <div style={{flex:1,minWidth:0}}>
+          <ProgressMeter pct={pctDone} color={verdictColor}/>
+          <div style={{fontSize:10,marginTop:6,letterSpacing:".03em",display:"flex",gap:6,flexWrap:"wrap",textTransform:"uppercase"}}>
+            <span style={{color:P.faint,fontWeight:600}}>{typeLabel}</span>
+            {dl&&<span style={{fontWeight:600,color:verdictColor}}>· {dl.done?"Reached"
+              :dl.overdue?`Past ${instShortDate(dl.deadline)}`
+              :dl.onTrack?`On track · ${instShortDate(dl.deadline)}`
+              :`Behind · needs ${fmt(dl.requiredMonthly)}/mo`}</span>}
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+          <button onClick={()=>openAdd(g.id)}
+            style={{display:"flex",alignItems:"center",gap:4,padding:"6px 12px",fontSize:12,fontWeight:500,
+              background:P.surface,border:`1px solid ${P.hairline}`,color:P.ink,cursor:"pointer",fontFamily:"inherit",borderRadius:0}}>
+            <I.Plus size={12}/>Add
+          </button>
+          <IconButton icon={I.MoreHorizontal} label={`Details for ${g.name||"goal"}`} title="Details" onClick={()=>openDetails(g.id)} size={16}
+            style={{color:P.muted,padding:6,minWidth:32,minHeight:32}}/>
+        </div>
       </div>
     </div>
   );
 }
 
-/* ── GOALS VIEW — square cards with type icons ── */
-function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners}){
+/* ── GOALS VIEW — open-ledger recompose (Technical Ledger) ── */
+function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners,profile,setProfile}){
   const today=todayISO();
   const[addModal,setAddModal]=useState(null);     // goalId for "add money"
   useScrollLock(!!addModal);
@@ -15705,153 +15707,255 @@ function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGo
   const[addNote,setAddNote]=useState("");
   const[detailModal,setDetailModal]=useState(null); // goalId for details
   useScrollLock(!!detailModal);
-  const[typePicker,setTypePicker]=useState(null);    // goalId for type picker
-  useScrollLock(!!typePicker);
-  /* Reached goals fold into a per-owner "Completed" group, collapsed by default
-     so the grid leads with what's still being saved for (Phase 8). Which group
-     is open is a per-screen preference — plain local state, never synced, same
-     reasoning as the Settings accordion and InstallmentsView's sections. */
-  const[showDone,setShowDone]=useState({me:false,wife:false});
+  /* Reached goals fold into a "Completed" group, collapsed by default and keyed
+     by scope. Which group is open is a per-screen preference — plain local
+     state, never synced, same reasoning as VIEW_PROFILE_KEY / Settings. */
+  const[showDone,setShowDone]=useState({});
   const addDlgRef=useDialogA11y(()=>setAddModal(null),!!addModal);
   const detailDlgRef=useDialogA11y(()=>setDetailModal(null),!!detailModal);
-  const typePickerDlgRef=useDialogA11y(()=>setTypePicker(null),!!typePicker);
 
   const openAdd=id=>{setAddModal(id);setAddAmount("");setAddNote("");};
   const openDetails=id=>setDetailModal(id);
-  const openTypePicker=id=>setTypePicker(id);
+
+  /* Scope follows the shared synced profile (like Banks / Net Worth). Goals only
+     ever store owner me|wife — "household" is the view-only union of both, never
+     a stored owner, so a Household add still writes to a real person. */
+  const isHousehold=profile==="household";
+  const inScope=g=>isHousehold?(g.owner==="me"||g.owner==="wife"):g.owner===profile;
+  const scopeGoals=goals.filter(inScope);
+  const active=scopeGoals.filter(g=>!goalReached(g));
+  const done=scopeGoals.filter(g=>goalReached(g));
+
+  /* Hero aggregates — reuse goalSavedTotal, never re-reduce contributions. */
+  const savedTotal=scopeGoals.reduce((s,g)=>s+goalSavedTotal(g),0);
+  const targetTotal=scopeGoals.reduce((s,g)=>s+(Number(g.target)||0),0);
+  const overallPct=targetTotal>0?Math.min(100,(savedTotal/targetTotal)*100):0;
+  const remainingTotal=Math.max(0,targetTotal-savedTotal);
+
+  /* Undated goals (goalDeadlineStatus === null) are EXCLUDED from the two
+     deadline rail modules — an undated goal is neither on-track nor at-risk. */
+  const dated=scopeGoals.map(g=>({g,dl:goalDeadlineStatus(g,today)})).filter(x=>x.dl);
+  const undatedCount=scopeGoals.length-dated.length;
+  const onTrack=dated.filter(x=>x.dl.onTrack);
+  const atRisk=dated.filter(x=>!x.dl.onTrack);
+  const neededMonthly=dated.reduce((s,x)=>s+(x.dl.done?0:x.dl.requiredMonthly),0);
+  const committedMonthly=dated.reduce((s,x)=>s+(Number(x.dl.monthly)||0),0);
+  const monthlyGap=committedMonthly-neededMonthly;
+
+  /* Hero verdict: no goals → flat; any dated goal behind → warn; else good. */
+  const heroTone=scopeGoals.length===0?"flat":(atRisk.length>0?"warn":"good");
+  const heroText=scopeGoals.length===0
+    ?"No goals yet — add one to start saving"
+    :atRisk.length>0
+      ?`${atRisk.length} goal${atRisk.length>1?"s":""} behind · ${Math.round(overallPct)}% funded overall`
+      :`On pace · ${Math.round(overallPct)}% of your goals funded`;
+
+  const scopeLabel=isHousehold?"Household":(owners[profile]||"");
+  const doneOpen=!!showDone[profile];
+  /* Currency code + number-only, so the hero shows a small "SAR" prefix beside a
+     narrow figure (like Net Worth) instead of a wide "SAR 67,000" that clips a
+     tight column at 390/320. */
+  const ccy=fmt(0).replace(/[\d.,\s]+/g,"")||"SAR";
+  const amt0=n=>fmt(n).replace(/^[^\d-]+/,"");
+
+  /* Renders a flat list of active goals for one owner + its "Add goal" row.
+     ownerKey is always a real person (me|wife) so addGoal never gets
+     "household". */
+  const renderGroup=(list,ownerKey)=>(
+    <>
+      {list.map(g=><GoalRow key={g.id} {...{g,fmt,today,updateGoal,openAdd,openDetails}}/>)}
+      <button onClick={()=>addGoal(ownerKey)} className="ledger-row"
+        style={{gap:8,color:P.muted,fontSize:13,fontWeight:500,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,width:"100%",cursor:"pointer",fontFamily:"inherit",textAlign:"left",padding:"14px 0"}}>
+        <I.Plus size={14}/>Add goal
+      </button>
+    </>
+  );
 
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      {["me","wife"].map(ok=>{
-        const list=goals.filter(g=>g.owner===ok);
-        const active=list.filter(g=>!goalReached(g));
-        const done=list.filter(g=>goalReached(g));
-        const doneOpen=!!showDone[ok];
-        const gridStyle={display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(148px,100%),1fr))",gap:10};
-        return(
-          <section key={ok} style={{marginBottom:22}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{width:8,height:8,borderRadius:999,background:ok==="me"?P.jade:P.br}}/>
-              <h2 style={{fontSize:14,fontWeight:600,color:ok==="me"?P.jade:P.br,margin:0}}>{owners[ok]}'s goals</h2>
-            </div>
-            <div style={gridStyle}>
-              {active.map(g=>(
-                <GoalSquare key={g.id} {...{g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
-              ))}
-              {/* add-goal square */}
-              <button onClick={()=>addGoal(ok)} className="neu-btn"
-                style={{borderRadius:16,padding:14,minHeight:150,color:P.jade,
-                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,fontSize:13,fontWeight:500}}>
-                <I.Plus size={20}/>Add goal
-              </button>
-            </div>
-            {/* Reached goals — collapsed by default, only shown when any exist. */}
-            {done.length>0&&(
-              <>
-                <button onClick={()=>setShowDone(s=>({...s,[ok]:!s[ok]}))} aria-expanded={doneOpen}
-                  style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:40,marginTop:12,
-                    background:"transparent",border:"none",padding:"4px 2px",
-                    color:P.neuSub,fontSize:13,fontWeight:600,textAlign:"left"}}>
-                  <I.Chevron size={13} style={{flexShrink:0,transform:doneOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
-                  Completed
-                  <span style={{fontSize:11,color:P.faint,fontWeight:600}}>{done.length}</span>
-                </button>
-                {doneOpen&&(
-                  <div style={{...gridStyle,marginTop:8}}>
-                    {done.map(g=>(
-                      <GoalSquare key={g.id} {...{g,fmt,today,updateGoal,removeGoal,openAdd,openDetails,openTypePicker}}/>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-        );
-      })}
+      <div className="split-8-4">
 
-      {/* ── Type picker modal ── */}
-      {typePicker&&(()=>{
-        const g=goals.find(x=>x.id===typePicker);
-        if(!g)return null;
-        return(
-          <Portal>
-          <div className="sheet-bg" onClick={()=>setTypePicker(null)}>
-            <div className="sheet" ref={typePickerDlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Goal type — {g.name}</h3>
-                <IconButton icon={I.X} label="Close" onClick={()=>setTypePicker(null)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                {GOAL_TYPES.map(([key,label])=>{
-                  const Icon=goalIcon(key);
-                  const active=g.type===key;
-                  return(
-                    <button key={key} onClick={()=>{updateGoal(g.id,{type:key});setTypePicker(null);}}
-                      style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"12px 6px",borderRadius:12,
-                        background:active?g.color+"22":"rgba(0,0,0,.04)",color:active?g.color:P.sub,
-                        border:active?`1px solid ${g.color}`:"1px solid transparent",fontSize:11,fontWeight:600,textAlign:"center",lineHeight:1.2}}>
-                      <Icon size={22}/>{label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+      {/* LEFT — scope, hero, goal ledger */}
+      <div className="split-pad-r">
+        {/* scope selector sits ABOVE its totals */}
+        <div style={{display:"flex",justifyContent:"flex-start",marginBottom:16}}>
+          <HomeProfileToggle profile={profile} setProfile={setProfile} owners={owners}/>
+        </div>
+
+        {/* ── summary — the ONE bordered surface on this tab ── */}
+        <GridSection flush title={`Goals${scopeLabel?` · ${scopeLabel}`:""}`} style={{marginBottom:24}}>
+          <div style={{padding:"20px 24px",borderBottom:`1px solid ${P.hairline}`}}>
+            <Verdict tone={heroTone}>{heroText}</Verdict>
+            <MetricBlock hero label="Total saved" cur={ccy} value={amt0(savedTotal)} sub={`${fmt(remainingTotal)} remaining`}/>
           </div>
-          </Portal>
-        );
-      })()}
+          <MetricStrip>
+            <MetricBlock label="Active goals" value={String(active.length)}/>
+            <MetricBlock label="Completed" value={String(done.length)}/>
+          </MetricStrip>
+        </GridSection>
 
-      {/* ── Add money modal ── */}
+        {/* goal ledger — always renders an "Add goal" affordance (inside
+            renderGroup), so an empty profile still has a way in. */}
+        {isHousehold
+          ?["me","wife"].map(ok=>{
+              const olist=active.filter(g=>g.owner===ok);
+              return(
+                <div key={ok}>
+                  <div className="ledger-group t-label" style={{color:P.muted}}>{owners[ok]||ok}</div>
+                  {renderGroup(olist,ok)}
+                </div>
+              );
+            })
+          :renderGroup(active,profile)}
+
+        {/* completed group — collapsed by default */}
+        {done.length>0&&
+          <div style={{marginTop:8}}>
+            <button onClick={()=>setShowDone(s=>({...s,[profile]:!s[profile]}))} aria-expanded={doneOpen}
+              style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:40,
+                background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,padding:"12px 0",
+                color:P.muted,fontSize:12,fontWeight:600,textAlign:"left",letterSpacing:".04em",textTransform:"uppercase",cursor:"pointer",fontFamily:"inherit"}}>
+              <I.Chevron size={13} style={{flexShrink:0,transform:doneOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+              Completed
+              <span style={{fontSize:11,color:P.faint}}>{done.length}</span>
+            </button>
+            {doneOpen&&done.map(g=><GoalRow key={g.id} {...{g,fmt,today,updateGoal,openAdd,openDetails}}/>)}
+          </div>}
+      </div>{/* end LEFT (split-pad-r) */}
+
+      {/* RIGHT rail — read-only derived modules; stacks below on mobile via
+          .split-8-4 (single column <1024px). All reuse goalSavedTotal /
+          goalDeadlineStatus — no parallel reduces. */}
+      <div className="split-pad-l" style={{paddingTop:8}}>
+
+        {/* Portfolio progress */}
+        <div className="t-section" style={{color:P.muted,marginBottom:16}}>Portfolio progress</div>
+        <div style={{marginBottom:28}}>
+          {[["Saved",savedTotal],["Target",targetTotal]].map(([lb,v])=>(
+            <div key={lb} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+              <span className="t-label" style={{color:P.muted,flex:1}}>{lb}</span>
+              <span className="mono tnum" style={{color:P.ink,fontSize:14,whiteSpace:"nowrap"}}>{fmt(v)}</span>
+            </div>
+          ))}
+          <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,margin:"14px 0 8px"}}>
+            <span className="t-label" style={{color:P.muted}}>Overall</span>
+            <span className="mono tnum" style={{fontSize:12,color:P.muted}}>{Math.round(overallPct)}%</span>
+          </div>
+          <ProgressMeter pct={overallPct} color={overallPct>=100?P.success:P.info}/>
+        </div>
+
+        {/* Monthly commitment — dated goals only */}
+        <div className="t-section" style={{color:P.muted,marginBottom:16}}>Monthly commitment</div>
+        <div style={{marginBottom:28}}>
+          {dated.length===0
+            ?<div className="sans" style={{fontSize:13,color:P.faint,padding:"4px 0"}}>No goals with a target date yet.</div>
+            :<>
+              {[["Needed",neededMonthly],["Committed",committedMonthly]].map(([lb,v])=>(
+                <div key={lb} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+                  <span className="t-label" style={{color:P.muted,flex:1}}>{lb}</span>
+                  <span className="mono tnum" style={{color:P.ink,fontSize:14,whiteSpace:"nowrap"}}>{fmt(v)}/mo</span>
+                </div>
+              ))}
+              <div style={{marginTop:12}}>
+                <Status tone={monthlyGap>=0?"success":"attention"}>
+                  {monthlyGap>=0?`Surplus ${fmt(monthlyGap)}/mo`:`Shortfall ${fmt(-monthlyGap)}/mo`}
+                </Status>
+              </div>
+            </>}
+          {undatedCount>0&&<div style={{fontSize:11,color:P.faint,marginTop:10}}>— {undatedCount} goal{undatedCount>1?"s":""} undated (excluded)</div>}
+        </div>
+
+        {/* On-track vs at-risk — dated goals only */}
+        <div className="t-section" style={{color:P.muted,marginBottom:16}}>On track vs at risk</div>
+        <div>
+          {dated.length===0
+            ?<div className="sans" style={{fontSize:13,color:P.faint,padding:"4px 0"}}>No goals with a target date yet.</div>
+            :<>
+              <div style={{display:"flex",gap:16}}>
+                <div style={{flex:1,padding:"10px 0",borderTop:`1px solid ${P.hairline}`,display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                  <span className="t-label" style={{color:P.muted}}>On track</span>
+                  <span className="mono tnum" style={{color:P.success,fontSize:15}}>{onTrack.length}</span>
+                </div>
+                <div style={{flex:1,padding:"10px 0",borderTop:`1px solid ${P.hairline}`,display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                  <span className="t-label" style={{color:P.muted}}>At risk</span>
+                  <span className="mono tnum" style={{color:atRisk.length>0?P.attention:P.muted,fontSize:15}}>{atRisk.length}</span>
+                </div>
+              </div>
+              {atRisk.map(x=>(
+                <div key={x.g.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderTop:`1px solid ${P.hairline}`}}>
+                  <span style={{flex:1,minWidth:0,color:P.ink,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.g.name||"Untitled goal"}</span>
+                  <span style={{fontSize:11,color:P.faint,whiteSpace:"nowrap"}}>{instShortDate(x.dl.deadline)}</span>
+                  <span className="mono tnum" style={{color:P.attention,fontSize:12,whiteSpace:"nowrap"}}>{fmt(x.dl.requiredMonthly)}/mo</span>
+                </div>
+              ))}
+            </>}
+          {undatedCount>0&&<div style={{fontSize:11,color:P.faint,marginTop:10}}>— {undatedCount} undated</div>}
+        </div>
+      </div>{/* end RIGHT rail (split-pad-l) */}
+
+      </div>{/* end .split-8-4 */}
+
+      {/* ── Add money sheet ── */}
       {addModal&&(()=>{
         const g=goals.find(x=>x.id===addModal);
         if(!g)return null;
-        const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const saved=goalSavedTotal(g);
+        const amt=Number(addAmount)||0;
+        const pct=g.target>0?Math.min(100,(saved/g.target)*100):0;
         return(
           <Portal>
-          <div className="sheet-bg" onClick={()=>setAddModal(null)}>
-            <div className="sheet" ref={addDlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Add money — {g.name}</h3>
-                <IconButton icon={I.X} label="Close" onClick={()=>setAddModal(null)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+          <div className="sheet-bg task-bg" onClick={()=>setAddModal(null)}>
+            <div className="sheet sheet-task" ref={addDlgRef} role="dialog" aria-modal="true" aria-label={`Add money to ${g.name||"goal"}`} tabIndex={-1} onClick={e=>e.stopPropagation()}>
+              <div className="sheet-task-head">
+                <button onClick={()=>setAddModal(null)} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+                <span className="t-section" style={{color:P.ink,fontSize:12}}>Add Money</span>
+                <span style={{width:40}}/>
               </div>
-              <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:16}}>
-                <div style={{fontSize:12,color:P.sub}}>Current saved</div>
-                <div className="mono tnum" style={{fontSize:24,fontWeight:600,color:P.ink}}>{fmt(saved)}</div>
-                <div style={{fontSize:12,color:P.faint}}>Target: {fmt(g.target)} · {g.target>0?((saved/g.target)*100).toFixed(0):0}% there</div>
-              </div>
-              <div style={{marginBottom:12}}>
-                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Amount to add</div>
-                <input type="text" inputMode="decimal" value={addAmount} onChange={e=>setAddAmount(e.target.value)}
-                  onBlur={e=>setAddAmount(e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(addAmount)||0)))}
-                  onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
-                  placeholder="0" autoFocus
-                  style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
-              </div>
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note (optional)</div>
-                <input value={addNote} onChange={e=>setAddNote(e.target.value)} placeholder="e.g. Monthly deposit"
-                  style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
-              </div>
-              {addAmount&&Number(addAmount)>0&&(
-                <div style={{fontSize:13,color:P.sub,marginBottom:12}} className="tnum">
-                  New total: {fmt(saved+Number(addAmount))} ({g.target>0?(((saved+Number(addAmount))/g.target)*100).toFixed(0):0}%)
+              <div className="sheet-task-body" style={{padding:"20px"}}>
+                <div style={{marginBottom:20}}>
+                  <div className="t-label" style={{color:P.muted,marginBottom:8}}>{g.name}</div>
+                  <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                    <span className="mono tnum" style={{fontSize:26,fontWeight:600,color:P.ink}}>{fmt(saved)}</span>
+                    <span style={{fontSize:12,color:P.faint}}>of {fmt(g.target)} · {pct.toFixed(0)}%</span>
+                  </div>
+                  <ProgressMeter pct={pct} color={P.info} style={{marginTop:12}}/>
                 </div>
-              )}
-              <button onClick={()=>{if(Number(addAmount)>0){contributeToGoal({goalId:addModal,amount:addAmount,note:addNote,owner:g.owner});setAddModal(null);}}}
-                style={{width:"100%",borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,background:P.jade,color:"#fff",border:"none"}}>
-                Add {addAmount?fmt(Number(addAmount)):"money"}
-              </button>
+                <div style={{marginBottom:16}}>
+                  <div className="t-label" style={{color:P.muted,marginBottom:6}}>Amount to add</div>
+                  <input type="text" inputMode="decimal" value={addAmount} onChange={e=>setAddAmount(e.target.value)}
+                    onBlur={e=>setAddAmount(e.target.value.trim()===""?"":String(evalMathExpr(e.target.value,Number(addAmount)||0)))}
+                    onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                    placeholder="0" autoFocus
+                    style={{width:"100%",padding:"10px 12px",fontSize:18,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,borderRadius:0,fontFamily:"inherit"}}/>
+                </div>
+                <div style={{marginBottom:16}}>
+                  <div className="t-label" style={{color:P.muted,marginBottom:6}}>Note (optional)</div>
+                  <input value={addNote} onChange={e=>setAddNote(e.target.value)} placeholder="e.g. Monthly deposit"
+                    style={{width:"100%",padding:"9px 12px",fontSize:14,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,borderRadius:0,fontFamily:"inherit"}}/>
+                </div>
+                {amt>0&&
+                  <div style={{fontSize:13,color:P.muted}} className="tnum">
+                    New total: {fmt(saved+amt)} ({g.target>0?(((saved+amt)/g.target)*100).toFixed(0):0}%)
+                  </div>}
+              </div>
+              <div className="sheet-task-foot">
+                <button onClick={()=>{if(amt>0){contributeToGoal({goalId:addModal,amount:addAmount,note:addNote,owner:g.owner});setAddModal(null);}}}
+                  disabled={!(amt>0)}
+                  style={{width:"100%",padding:"12px 0",fontSize:14,fontWeight:600,background:amt>0?P.ink:P.surfaceMuted,color:amt>0?P.onInk:P.faint,border:"none",borderRadius:0,cursor:amt>0?"pointer":"default",fontFamily:"inherit"}}>
+                  Add {amt>0?fmt(amt):"money"}
+                </button>
+              </div>
             </div>
           </div>
           </Portal>
         );
       })()}
 
-      {/* ── Details modal: edit target/monthly + contributions ── */}
+      {/* ── Details sheet: type + target/monthly/date/bank + contributions ── */}
       {detailModal&&(()=>{
         const g=goals.find(x=>x.id===detailModal);
         if(!g)return null;
-        const saved=(g.contributions||[]).filter(c=>!c.deletedAt).reduce((s,c)=>s+(Number(c.amount)||0),0);
+        const saved=goalSavedTotal(g);
         const remain=Math.max(0,g.target-saved);
         const months=g.monthly>0?Math.ceil(remain/g.monthly):null;
         const Icon=goalIcon(g.type);
@@ -15869,98 +15973,126 @@ function GoalsView({goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGo
         const linkedBank=linkableBanks.find(b=>b.id===g.bankId)||null;
         return(
           <Portal>
-          <div className="sheet-bg" onClick={()=>setDetailModal(null)}>
-            <div className="sheet" ref={detailDlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
-                <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,background:g.color+"22",color:g.color}}><Icon size={18}/></span>
-                <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:16,fontWeight:600,flex:1,minWidth:0,color:P.ink}}/>
-                <IconButton icon={I.X} label="Close" onClick={()=>setDetailModal(null)} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+          <div className="sheet-bg task-bg" onClick={()=>setDetailModal(null)}>
+            <div className="sheet sheet-task" ref={detailDlgRef} role="dialog" aria-modal="true" aria-label={`Details for ${g.name||"goal"}`} tabIndex={-1} onClick={e=>e.stopPropagation()}>
+              <div className="sheet-task-head">
+                <button onClick={()=>setDetailModal(null)} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+                <span className="t-section" style={{color:P.ink,fontSize:12}}>Goal Details</span>
+                <span style={{width:40}}/>
               </div>
+              <div className="sheet-task-body" style={{padding:"20px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+                  <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:34,height:34,background:g.color+"22",color:g.color,flexShrink:0}}><Icon size={18}/></span>
+                  <input value={g.name} onChange={e=>updateGoal(g.id,{name:e.target.value})} className="bare" style={{fontSize:16,fontWeight:600,flex:1,minWidth:0,color:P.ink}}/>
+                </div>
 
-              <div style={{display:"flex",gap:10,marginBottom:14}}>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Target</div>
-                  <NumField value={g.target} onCommit={v=>updateGoal(g.id,{target:v})} min={0}
-                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
+                {/* type — folded in from the old standalone picker */}
+                <div className="t-label" style={{color:P.muted,marginBottom:8}}>Type</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:20}}>
+                  {GOAL_TYPES.map(([key,label])=>{
+                    const TIcon=goalIcon(key);
+                    const on=g.type===key;
+                    return(
+                      <button key={key} onClick={()=>updateGoal(g.id,{type:key})}
+                        style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"12px 6px",
+                          background:on?g.color+"22":"var(--surface)",color:on?g.color:P.muted,
+                          border:on?`1px solid ${g.color}`:`1px solid ${P.hairline}`,fontSize:11,fontWeight:500,textAlign:"center",lineHeight:1.2,borderRadius:0,cursor:"pointer",fontFamily:"inherit"}}>
+                        <TIcon size={20}/>{label}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Monthly</div>
-                  <NumField value={g.monthly} onCommit={v=>updateGoal(g.id,{monthly:v})} min={0}
-                    className="tnum" style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
+
+                <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+                  <div style={{flex:"1 1 130px",minWidth:0}}>
+                    <div className="t-label" style={{color:P.muted,marginBottom:6}}>Target</div>
+                    <NumField value={g.target} onCommit={v=>updateGoal(g.id,{target:v})} min={0}
+                      className="tnum" style={{width:"100%",padding:"9px 12px",fontSize:14,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,borderRadius:0}}/>
+                  </div>
+                  <div style={{flex:"1 1 130px",minWidth:0}}>
+                    <div className="t-label" style={{color:P.muted,marginBottom:6}}>Monthly</div>
+                    <NumField value={g.monthly} onCommit={v=>updateGoal(g.id,{monthly:v})} min={0}
+                      className="tnum" style={{width:"100%",padding:"9px 12px",fontSize:14,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,borderRadius:0}}/>
+                  </div>
                 </div>
+                {/* ── Deadline and account ──
+                    The date input needs all three corrections or it will not line
+                    up with the field beside it: fontFamily:"inherit" (a bare date
+                    input renders in the UA font), an explicit height (its
+                    shadow-DOM -webkit-datetime-edit adds content height no padding
+                    reaches), and appearance:none in all three prefixes (Safari
+                    gives that shadow tree a min-content width that ignores
+                    width:100% and spills over its neighbour). The row wraps so it
+                    stacks on a narrow phone instead of colliding. */}
+                <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+                  <div style={{flex:"1 1 150px",minWidth:0}}>
+                    <div className="t-label" style={{color:P.muted,marginBottom:6}}>Target date</div>
+                    <input type="date" value={g.deadline||""} aria-label="Goal deadline"
+                      onChange={e=>updateGoal(g.id,{deadline:e.target.value||null})}
+                      style={{width:"100%",minWidth:0,padding:"9px 12px",fontSize:14,
+                        fontFamily:"inherit",height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,borderRadius:0,
+                        WebkitAppearance:"none",MozAppearance:"none",appearance:"none"}}/>
+                  </div>
+                  <div style={{flex:"1 1 150px",minWidth:0}}>
+                    <div className="t-label" style={{color:P.muted,marginBottom:6}}>Kept in</div>
+                    <select value={linkedBank?linkedBank.id:""} aria-label="Account this goal is kept in"
+                      onChange={e=>updateGoal(g.id,{bankId:e.target.value||null})}
+                      style={{width:"100%",minWidth:0,padding:"9px 12px",fontSize:14,
+                        fontFamily:"inherit",height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,borderRadius:0}}>
+                      <option value="">Not linked</option>
+                      {linkableBanks.map(b=><option key={b.id} value={b.id}>{b.name||"Account"}{b.bank?` — ${b.bank}`:""}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{fontSize:12,color:P.muted,marginBottom:dl?6:16}} className="tnum">
+                  Saved {fmt(saved)} · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
+                </div>
+                {/* Only ever shown when a deadline exists — goalDeadlineStatus
+                    returns null otherwise, so a goal without one keeps exactly
+                    the pace line it always had. */}
+                {dl&&
+                  <div className="sans" style={{fontSize:12,marginBottom:16,lineHeight:1.5,
+                    color:dl.done?P.success:(dl.onTrack?P.success:(dl.overdue?P.attention:P.info))}}>
+                    {dl.done
+                      ?`Reached — target date ${instShortDate(dl.deadline)}`
+                      :dl.overdue
+                        ?<span>Past its date · <span className="tnum">{fmt(dl.remain)}</span> still to go</span>
+                        :dl.onTrack
+                          ?<span>On track for {instShortDate(dl.deadline)} · needs <span className="tnum">{fmt(dl.requiredMonthly)}</span>/mo</span>
+                          :<span>Behind for {instShortDate(dl.deadline)} · <span className="tnum">{fmt(dl.monthly)}</span>/mo
+                             needs to be <span className="tnum">{fmt(dl.requiredMonthly)}</span>/mo</span>}
+                  </div>}
+                {linkedBank&&
+                  <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:16,lineHeight:1.5}}>
+                    This money sits in {linkedBank.name||"that account"}, so the Purchase Advisor
+                    won't count it twice.
+                  </div>}
+
+                <div className="t-label" style={{color:P.muted,marginBottom:8}}>Contributions</div>
+                {(g.contributions||[]).filter(c=>!c.deletedAt).length>0?(
+                  <div style={{marginBottom:8}}>
+                    {[...(g.contributions||[]).filter(c=>!c.deletedAt)].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
+                      <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 0",borderTop:`1px solid ${P.hairline}`,fontSize:13}}>
+                        <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
+                        <span className="mono tnum" style={{fontWeight:600,color:P.success}}>+{fmt(c.amount)}</span>
+                        {c.note&&<span style={{color:P.muted,flex:1,fontSize:12}}>{c.note}</span>}
+                        <IconButton icon={I.X} label="Delete contribution" onClick={()=>removeContribution(g.id,c.id)} size={12} style={{color:P.danger,opacity:.5,marginLeft:"auto",padding:6,minWidth:32,minHeight:32}}/>
+                      </div>
+                    ))}
+                  </div>
+                ):<div className="sans" style={{fontSize:12,color:P.faint,marginBottom:8}}>No contributions yet.</div>}
               </div>
-              {/* ── Deadline and account ──
-                  The date input needs all three corrections or it will not line
-                  up with the field beside it: fontFamily:"inherit" (a bare date
-                  input renders in the UA font), an explicit height (its
-                  shadow-DOM -webkit-datetime-edit adds content height no padding
-                  reaches), and appearance:none in all three prefixes (Safari
-                  gives that shadow tree a min-content width that ignores
-                  width:100% and spills over its neighbour). The row wraps so it
-                  stacks on a narrow phone instead of colliding. */}
-              <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-                <div style={{flex:"1 1 150px",minWidth:0}}>
-                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Target date</div>
-                  <input type="date" value={g.deadline||""} aria-label="Goal deadline"
-                    onChange={e=>updateGoal(g.id,{deadline:e.target.value||null})}
-                    style={{width:"100%",minWidth:0,borderRadius:10,padding:"8px 10px",fontSize:14,
-                      fontFamily:"inherit",height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,
-                      WebkitAppearance:"none",MozAppearance:"none",appearance:"none"}}/>
-                </div>
-                <div style={{flex:"1 1 150px",minWidth:0}}>
-                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".06em",marginBottom:3}}>Kept in</div>
-                  <select value={linkedBank?linkedBank.id:""} aria-label="Account this goal is kept in"
-                    onChange={e=>updateGoal(g.id,{bankId:e.target.value||null})}
-                    style={{width:"100%",minWidth:0,borderRadius:10,padding:"8px 10px",fontSize:14,
-                      fontFamily:"inherit",height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}>
-                    <option value="">Not linked</option>
-                    {linkableBanks.map(b=><option key={b.id} value={b.id}>{b.name||"Account"}{b.bank?` — ${b.bank}`:""}</option>)}
-                  </select>
-                </div>
+              <div className="sheet-task-foot" style={{display:"flex",gap:10}}>
+                <button onClick={()=>{removeGoal(g.id);setDetailModal(null);}}
+                  style={{padding:"12px 16px",fontSize:13,fontWeight:500,background:"transparent",border:`1px solid ${P.hairline}`,color:P.danger,borderRadius:0,cursor:"pointer",fontFamily:"inherit"}}>
+                  Delete goal
+                </button>
+                <button onClick={()=>{setDetailModal(null);openAdd(g.id);}}
+                  style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"12px 0",fontSize:14,fontWeight:600,background:P.ink,color:P.onInk,border:"none",borderRadius:0,cursor:"pointer",fontFamily:"inherit"}}>
+                  <I.Plus size={14}/>Add money
+                </button>
               </div>
-
-              <div style={{fontSize:12,color:P.sub,marginBottom:dl?6:14}} className="tnum">
-                Saved {fmt(saved)} · {fmt(remain)} to go{months!=null?` · ~${months} mo at this pace`:""}
-              </div>
-              {/* Only ever shown when a deadline exists — goalDeadlineStatus
-                  returns null otherwise, so a goal without one keeps exactly
-                  the pace line it always had. */}
-              {dl&&
-                <div style={{fontSize:12,marginBottom:14,lineHeight:1.5,
-                  color:dl.done?P.grD:(dl.onTrack?P.grD:(dl.overdue?P.wine:"#E07B2A"))}}>
-                  {dl.done
-                    ?`Reached — target date ${instShortDate(dl.deadline)}`
-                    :dl.overdue
-                      ?<span>Past its date · <span className="tnum">{fmt(dl.remain)}</span> still to go</span>
-                      :dl.onTrack
-                        ?<span>On track for {instShortDate(dl.deadline)} · needs <span className="tnum">{fmt(dl.requiredMonthly)}</span>/mo</span>
-                        :<span>Behind for {instShortDate(dl.deadline)} · <span className="tnum">{fmt(dl.monthly)}</span>/mo
-                           needs to be <span className="tnum">{fmt(dl.requiredMonthly)}</span>/mo</span>}
-                </div>}
-              {linkedBank&&
-                <div style={{fontSize:11,color:P.faint,marginBottom:14,lineHeight:1.5}}>
-                  This money sits in {linkedBank.name||"that account"}, so the Purchase Advisor
-                  won't count it twice.
-                </div>}
-
-              <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Contributions</div>
-              {(g.contributions||[]).filter(c=>!c.deletedAt).length>0?(
-                <div style={{borderRadius:10,overflow:"hidden",background:"rgba(0,0,0,.03)",marginBottom:8}}>
-                  {[...(g.contributions||[]).filter(c=>!c.deletedAt)].sort((a,b)=>b.date.localeCompare(a.date)).map(c=>(
-                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderBottom:"1px solid rgba(0,0,0,.06)",fontSize:13}}>
-                      <span style={{color:P.faint,fontSize:11}}>{c.date}</span>
-                      <span className="tnum" style={{fontWeight:600,color:P.jade}}>+{fmt(c.amount)}</span>
-                      {c.note&&<span style={{color:P.sub,flex:1,fontSize:12}}>{c.note}</span>}
-                      <IconButton icon={I.X} label="Delete contribution" onClick={()=>removeContribution(g.id,c.id)} size={12} style={{color:P.red,opacity:.5,marginLeft:"auto",padding:6,minWidth:32,minHeight:32}}/>
-                    </div>
-                  ))}
-                </div>
-              ):<div style={{fontSize:12,color:P.faint,marginBottom:8}}>No contributions yet.</div>}
-
-              <button onClick={()=>{setDetailModal(null);openAdd(g.id);}}
-                style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,padding:"9px 0",fontSize:14,fontWeight:600,background:g.color,color:"#fff",border:"none"}}>
-                <I.Plus size={14}/>Add money
-              </button>
             </div>
           </div>
           </Portal>
@@ -16010,7 +16142,7 @@ const INSTALLMENT_SECTIONS=[
 ];
 
 /* ── Add / Edit sheet ──────────────────────────────────────────────────────
-   Top level (not nested in InstallmentsView) for the same reason GoalSquare
+   Top level (not nested in InstallmentsView) for the same reason GoalRow
    is: a component redefined on every parent render remounts its inputs and
    they lose focus mid-typing.
 
@@ -16710,7 +16842,7 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
 
       {mine.length===0&&
         <div style={{...neu(16),padding:"24px 16px",textAlign:"center",color:P.neuSub}}>
-          <div style={{fontSize:14,fontWeight:600,color:P.neuInk,marginBottom:4}}>No installments yet</div>
+          <div className="sans" style={{fontSize:14,fontWeight:600,color:P.neuInk,marginBottom:4}}>No installments yet</div>
           <div style={{fontSize:12}}>Add a Tabby, Tamara, Amazon or card plan and each payment
             will show up in the Budget period it falls due.</div>
         </div>}
@@ -16857,12 +16989,12 @@ function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
             <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
               style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
           </div>
-          <div style={{fontSize:12,color:P.sub,marginBottom:14,lineHeight:1.5}}>
+          <div className="sans" style={{fontSize:12,color:P.sub,marginBottom:14,lineHeight:1.5}}>
             A what-if only. Nothing below changes your budget — it changes what these
             projections assume you spend, in {cur}, every period.
           </div>
           {categories.length===0
-            ?<div style={{fontSize:12,color:P.faint,padding:"12px 0"}}>This plan has no categories yet.</div>
+            ?<div className="sans" style={{fontSize:12,color:P.faint,padding:"12px 0"}}>This plan has no categories yet.</div>
             :<div style={{...neuInset(12),padding:"4px 0"}}>
               {categories.map(c=>(
                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
@@ -16999,7 +17131,7 @@ function PurchaseCompareSheet({options,describe,sav,label,fmt,noun,plural,produc
           <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
         </div>
         {sav&&sav.mode==="plan"&&sav.shortfall>0&&
-          <div style={{fontSize:12,color:P.neuSub,lineHeight:1.5,marginBottom:12}}>
+          <div className="sans" style={{fontSize:12,color:P.neuSub,lineHeight:1.5,marginBottom:12}}>
             As planned: set aside <b style={{color:P.neuInk}}>{fmt(sav.requiredPerBucket)}</b> a {noun} for {sav.n} {plural(sav.n,noun)}
             {sav.feasible?".":" — but the leanest period can't spare that. The options below close the gap."}
           </div>}
@@ -17012,7 +17144,7 @@ function PurchaseCompareSheet({options,describe,sav,label,fmt,noun,plural,produc
                   border:"none",padding:0,textAlign:"left"}}>
                 <div style={{minWidth:0,flex:1}}>
                   <div style={{fontSize:13,fontWeight:700,color:P.neuInk}}>{line.head}</div>
-                  <div style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
+                  <div className="sans" style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
                 </div>
                 <I.Chevron size={13} style={{flexShrink:0,color:P.faint,
                   transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
@@ -17512,7 +17644,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
               <span className="tnum">{fmt(stack.joint)}</span>
             </div>}
           {stack.notCountedGoals>0&&
-            <div style={{fontSize:11,color:P.faint,marginTop:6,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:11,color:P.faint,marginTop:6,lineHeight:1.5}}>
               {stack.notCountedGoals} protected goal{stack.notCountedGoals===1?"":"s"} sit
               {stack.notCountedGoals===1?"s":""} in an account not counted above, so
               {stack.notCountedGoals===1?" it is":" they are"} not subtracted again.
@@ -17522,7 +17654,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
               {stack.unconverted} account{stack.unconverted===1?"":"s"} in another currency
               couldn't be converted and {stack.unconverted===1?"is":"are"} excluded.
             </div>}
-          <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+          <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
             Goal balances sit inside these accounts, so protecting a goal subtracts it here —
             once, even when the goal names the account it lives in. Money set aside for bills
             isn't taken off automatically: mark the account it sits in on the Banks tab.
@@ -17632,7 +17764,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
               </Verdict>
               {sav.shortfall>0&&<>
                 {/* One plain sentence — the whole answer in a line. */}
-                <div style={{fontSize:13,color:P.neuInk,fontWeight:600,lineHeight:1.5,margin:"2px 0 10px"}}>
+                <div className="sans" style={{fontSize:13,color:P.neuInk,fontWeight:600,lineHeight:1.5,margin:"2px 0 10px"}}>
                   {savSchedule&&savSchedule.even
                     ?`Save ${fmt(sav.requiredPerBucket)} for ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}.`
                     :`Save across ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}`
@@ -17668,7 +17800,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                     ))}
                   </div>
                   {!savSchedule.feasible&&
-                    <div style={{fontSize:11,color:"#E07B2A",marginTop:6,lineHeight:1.5}}>
+                    <div className="sans" style={{fontSize:11,color:"#E07B2A",marginTop:6,lineHeight:1.5}}>
                       Even filling every {noun} to the brim, this plan is {fmt(savSchedule.gap)} short by {label(sav.targetBucket)}.
                     </div>}
                 </>}
@@ -17721,7 +17853,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                   <div style={rowLine}><span>Per period</span>
                     <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.earliest.requiredPerBucket)}</span></div>
                 </>}
-                <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
                   Set a date above and this becomes "can I make it?" instead. Counts only what
                   each period has left over — a plan that finishes along the way frees its money
                   up automatically.
@@ -17742,7 +17874,7 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
           {/* ── Levers ── */}
           <section style={card}>
             <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:4}}>What if…</div>
-            <div style={{fontSize:11,color:P.faint,marginBottom:12,lineHeight:1.5}}>
+            <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:12,lineHeight:1.5}}>
               These change the projections only. Nothing here edits your budget or your goals.
             </div>
 
@@ -17884,7 +18016,7 @@ function TargetsView({targets,addTarget,updateTarget,removeTarget,plans,activePl
 
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      <div style={{fontSize:12,color:P.neuSub,marginBottom:14,lineHeight:1.5}}>
+      <div className="sans" style={{fontSize:12,color:P.neuSub,marginBottom:14,lineHeight:1.5}}>
         Pick which budget categories count toward each target, and tag each one
         as going into stocks (grows at the invest rate) or cash/time deposit
         (grows at the cash rate). A GoTrade contribution and a Seabank
@@ -18123,7 +18255,7 @@ function ConflictModal({conflict,onUseCloud,onSaveLocalToCloud}){
     <div className="sheet-bg">
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600}}>Cloud and local data differ</h3>
-        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:10}}>
+        <p className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:10}}>
           This device has changes that haven't been saved to the cloud, and the cloud copy — {savedByLine} {remoteWhen} — is different. Choose which one to keep.
           {totalOnlyLocal>0&&totalOnlyRemote>0&&totalChanged===0&&
             <><br/><span style={{color:P.faint}}>You each added different things — nothing was edited on both sides, so whichever you pick, the other side's additions are the only thing at stake.</span></>}
@@ -18188,7 +18320,7 @@ function FirstConnectSheet({info,onUseCloud,onMerge,onLater}){
     <div className="sheet-bg">
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600}}>This device has data of its own</h3>
-        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>
+        <p className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>
           You've just connected, and there's already a document in the cloud. This device has never synced before, so nothing has been sent or changed yet — choose what should happen.
         </p>
         <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,lineHeight:1.7}}>
@@ -18245,7 +18377,7 @@ function SyncSheet({onClose,kvReady,isOnline,syncOp,syncStatus,syncMsg,lastSyncE
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
         style={{maxWidth:380,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600}}>Sync</h3>
-        <p style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>{explain}</p>
+        <p className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>{explain}</p>
         {syncMsg&&<p style={{fontSize:12,color:P.gr,fontWeight:600,marginBottom:12}}>{syncMsg}</p>}
         {syncStatus==="failed"&&lastSyncError&&
           <p style={{fontSize:11,color:P.amber,marginBottom:12,wordBreak:"break-word"}}>{lastSyncError}</p>}
@@ -18320,7 +18452,7 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
     {field:"changed",title:"Edited since last sync",color:P.amber,bg:P.amberS},
   ];
   const derivedNote=derived>0&&(
-    <p style={{fontSize:11,color:P.faint,marginBottom:14,lineHeight:1.5}}>
+    <p className="sans" style={{fontSize:11,color:P.faint,marginBottom:14,lineHeight:1.5}}>
       Plus {derived} automatic {derived===1?"entry":"entries"} (net-worth / portfolio history recomputed from the latest prices). These don't trigger a cloud save on their own — they ride along the next time you save something you actually changed.
     </p>
   );
@@ -18330,7 +18462,7 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600}}>What's pending</h3>
         {!snapshot?(
-          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No cached copy of the last synced state yet on this device — this'll be available after the next successful sync.</p>
+          <p className="sans" style={{fontSize:12,color:P.faint,marginBottom:14}}>No cached copy of the last synced state yet on this device — this'll be available after the next successful sync.</p>
         ):diff.length>0?(
           <React.Fragment>
             <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:derived>0?8:14}}>
@@ -18414,7 +18546,7 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:340,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
         <div style={{color:P.gr,marginBottom:6,display:"flex",justifyContent:"center"}}><I.Users size={22}/></div>
         <h3 style={{margin:"0 0 6px",fontWeight:600}}>Whose budget?</h3>
-        <p style={{fontSize:13,color:P.sub,margin:"0 0 16px",lineHeight:1.5}}>
+        <p className="sans" style={{fontSize:13,color:P.sub,margin:"0 0 16px",lineHeight:1.5}}>
           Pick which profile this device should show by default in Budget and Expenses. You can still switch anytime with the in-app toggle — this just sets what loads first.
         </p>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -18469,9 +18601,9 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
           {!ok&&
             <div style={{background:P.amberS,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
               <div style={{fontSize:12,color:P.amber,fontWeight:600,marginBottom:6}}>What's wrong with it</div>
-              {errors.slice(0,6).map((e,i)=><div key={i} style={{fontSize:12,color:P.sub,lineHeight:1.5}}>• {e}</div>)}
+              {errors.slice(0,6).map((e,i)=><div key={i} className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.5}}>• {e}</div>)}
               {errors.length>6&&<div style={{fontSize:11,color:P.faint,marginTop:4}}>…and {errors.length-6} more.</div>}
-              <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>Nothing on this device has been touched.</div>
+              <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>Nothing on this device has been touched.</div>
             </div>}
 
           {ok&&summary&&
@@ -18491,7 +18623,7 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
             </div>}
 
           {ok&&warnings.length>0&&
-            <div style={{fontSize:11,color:P.faint,lineHeight:1.5,marginBottom:12}}>
+            <div className="sans" style={{fontSize:11,color:P.faint,lineHeight:1.5,marginBottom:12}}>
               {warnings.map((w,i)=><div key={i}>• {w}</div>)}
             </div>}
 
@@ -18719,7 +18851,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         {lastSyncError&&
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12,
             borderRadius:10,padding:"9px 12px",background:P.amberS,border:`1px solid ${P.amber}33`}}>
-            <span style={{flex:1,minWidth:0,fontSize:12,color:P.amber,lineHeight:1.5}}>Last sync failed: {lastSyncError}</span>
+            <span className="sans" style={{flex:1,minWidth:0,fontSize:12,color:P.amber,lineHeight:1.5}}>Last sync failed: {lastSyncError}</span>
             <button onClick={()=>setOpenSec(s=>({...s,cloud:true}))}
               style={{background:"none",border:"none",padding:"6px 0",fontSize:12,fontWeight:600,color:P.amber,minHeight:44}}>Open cloud sync</button>
           </div>}
@@ -18735,7 +18867,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
           <I.Users size={14}/>Change default profile for this device
         </button>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Pay periods</div>
-        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           Budget and track expenses by paycheck instead of calendar month. Off by default — when off, that person's Budget and Expenses tabs work exactly as before.
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
@@ -18820,7 +18952,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                   </div>
                   {periodRow(current,"This period","change")}
                   {periodRow(next,"Next period","set start")}
-                  <div style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                  <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
                     Correcting a start date moves the boundary, so a period gets longer or shorter — it doesn't shift. Budget amounts don't change; the daily allowance adjusts.
                   </div>
                   {corrections.length>0&&(
@@ -18856,7 +18988,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
           <span style={{fontSize:12,color:P.gr,fontWeight:600}}>Switch to {theme==="dark"?"light":"dark"}</span>
         </button>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Savings target</div>
-        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           The benchmark Home judges your savings rate against. Display only — it never changes a stored figure.
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
@@ -18870,7 +19002,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Currency label</div>
         <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Home Display</div>
-        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           Which currency each Home card shows its figure in. Presentation only — never affects any stored balance or calculation.
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
@@ -18924,7 +19056,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
           })()}
         </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Savings &amp; Investing categories</div>
-        <div style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           Which budget categories count toward the Home Savings &amp; Investing card. Matched by
           category name each month — not Income minus Expenses, and not the "Invest &amp; Grow" target in Budget.
         </div>
@@ -18991,7 +19123,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         </div>
         </>)}
         {section("nav","Navigation",<>
-        <div style={{fontSize:12,color:P.faint,marginBottom:10,lineHeight:1.5}}>
+        <div className="sans" style={{fontSize:12,color:P.faint,marginBottom:10,lineHeight:1.5}}>
           Pick up to {NAV_BAR_SIZE} tabs for the bottom bar, in order — the rest live under More.
           Set per person, and synced to that person's devices.
         </div>
@@ -19321,7 +19453,7 @@ class ErrorBoundary extends React.Component{
         <div style={{maxWidth:420,textAlign:"center"}}>
           <div style={{fontSize:32,marginBottom:12}}>⚠️</div>
           <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Something went wrong</div>
-          <div style={{fontSize:14,color:P.sub,marginBottom:20,lineHeight:1.5}}>
+          <div className="sans" style={{fontSize:14,color:P.sub,marginBottom:20,lineHeight:1.5}}>
             Where'dItGo hit an unexpected error and couldn't continue. Your saved data on this device hasn't been touched — reloading usually fixes it.
           </div>
           <button onClick={()=>window.location.reload()}

@@ -41,32 +41,40 @@ not treat the current dark palette or an automatic inversion as approved.
 
 Load the actual families rather than the current system/Iowan approximations.
 
-**Corrected against the approved Stitch `code.html` (2026-08-26).** The earlier
-table over-assigned Source Serif and Inter-bold; the approved screens are
-**JetBrains-Mono-dominant**. Source Serif appears on essentially ONE figure —
-the Investments portfolio total (`font-display-currency`, 40px). Inter is for
-body text and row titles only. Where this table and an approved screenshot
-disagree, the screenshot wins.
+**Mono-primary flip (2026-08-27).** JetBrains Mono is now the **app-wide default**
+(`body`) — it is the primary visual identity. Everything inherits it: headings,
+nav, values, statistics, labels, categories, metadata, and short item names
+(goal / category / envelope / bank / holding / asset / installment / transaction
+names). **Inter is the exception, applied ONLY via `.sans`** to longer readable
+prose — sentence-style content: `Verdict` lines, helper/hint captions,
+empty-state messages, chart empty-text, freshness/sync lines, dialog bodies,
+and error/confirm sentences. Hierarchy comes from **size / weight / opacity /
+casing / letter-spacing**, not from adding font families. **Source Serif 4 was
+removed** — the one serif figure (Investments portfolio total) folded into mono
+700. Where this table and an approved screenshot disagree, the intent above wins.
+
+**Casing rule:** UPPERCASE (+ tracking) for structural labels and small metadata
+(`.t-label`, `.t-section`, group headers, status pills, inline flags, nav).
+**Mixed / as-typed** for interactive controls (buttons, inputs), readable content
+(names), and prose. Never uppercase a user-typed name or a button label.
 
 | Role | Family | Size / line | Weight and treatment |
 | --- | --- | --- | --- |
-| Primary financial display | Source Serif 4 | 40/46 | 600, tabular — Investments total only |
-| Hero figure (Home/Budget/Expenses) | JetBrains Mono | 24–34 | 500 (600 acceptable), tabular |
+| Portfolio hero (Investments total) | JetBrains Mono | 40/46 | **700**, tabular — the app's heaviest weight |
+| Hero figure (Home/Budget/Expenses/etc.) | JetBrains Mono | 24–34 | 600, tabular |
 | Instrument value | JetBrains Mono | 18–24 | 500, tabular |
 | Page/section title | JetBrains Mono | 12/16 | 500, uppercase, `.12em` |
 | Instrument label | JetBrains Mono | 10/14 | 400, uppercase, `.14em`, muted |
 | Nav (sidebar/bottom) | JetBrains Mono | 12 / 10 | 400 inactive, 500 active, uppercase |
 | Segmented control | JetBrains Mono | 10 | 500, uppercase, `.10em` |
-| Body/data row | Inter | 14/20 | 400; 500 for row titles |
-| Small metadata | Inter | 12/18 | 400 |
+| Item name / data row title | JetBrains Mono | 13–16 | 500 (600 for emphasis), mixed case |
+| Prose / helper / verdict (`.sans`) | Inter | 12–14 / 1.5 | 400 (700 for verdict warnings) |
 
-Everything technical — nav, page titles, instrument labels, and almost all
-financial figures/percentages/dates/units — is **JetBrains Mono** (weights
-400/500). Source Serif is reserved for the single dominant amount the approved
-Investments screen renders in `font-display-currency`. Inter is body-only, with
-500 for important row titles and 600–700 reserved for genuine emphasis/warnings.
-Self-host these weights: Inter 400/500/600/700, JetBrains Mono 400/500/600,
-Source Serif 4 600. Do not create extra type scales for individual screens.
+**The default is mono; reach for `.sans` only for sentence-style prose.** New code
+inherits mono automatically — add `.sans` when writing a helper line, empty state,
+or explanatory paragraph, nothing else. Self-host: **JetBrains Mono 400/500/600/700**
+(the full ramp — hierarchy is weight-driven now) + **Inter 400/500/600/700** (prose).
+Do not reintroduce Source Serif or create per-screen type scales.
 
 ### Spacing, shape, and elevation
 
@@ -180,8 +188,8 @@ and Add/Edit Transaction. Reuse them rather than re-inventing per screen.
 - **Metric strip** — a flat row of instruments (uppercase `.t-label`, one
   dominant mono figure, optional status/ruler) divided by vertical hairlines
   (`MetricStrip`/`MetricBlock`, or a screen-local `.bm`/`.exp-metrics` grid that
-  stacks on mobile). Source Serif stays on the Investments portfolio total ONLY;
-  every other hero/figure is JetBrains Mono.
+  stacks on mobile). Every hero/figure is JetBrains Mono — the Investments
+  portfolio total is mono 700 (the app's heaviest weight); Source Serif is gone.
 - **Period control** — `.period-chip` (mono, hairline, dropdown affordance) or a
   flat ‹ month/subtitle › nav for the pay-period/month selector.
 - **Scope switch** — the 3-way `HomeProfileToggle` (Me/Wife/Household) or 2-way

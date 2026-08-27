@@ -5,7 +5,7 @@
 // index.html and with version.json — all three should be bumped together
 // on every deploy so the displayed build and the cached app release always
 // correspond.
-const BUILD_ID = '2026.08.27.0006';
+const BUILD_ID = '2026.08.27.0007';
 const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
@@ -23,10 +23,10 @@ const APP_SHELL = [
   './fonts/inter-500.woff2',
   './fonts/inter-600.woff2',
   './fonts/inter-700.woff2',
-  './fonts/source-serif-4-600.woff2',
   './fonts/jetbrains-mono-400.woff2',
   './fonts/jetbrains-mono-500.woff2',
   './fonts/jetbrains-mono-600.woff2',
+  './fonts/jetbrains-mono-700.woff2',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
   'https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js',
   'https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js',

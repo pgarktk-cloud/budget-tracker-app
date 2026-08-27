@@ -476,6 +476,110 @@ writes SAR). **Growth**, the **trend/driving charts**, and the composition
 multi-day snapshots or live quotes exist there (data-limited, verified by code +
 parse, consistent with Home).
 
+## Goals — recomposition (2026-08-27, Category C)
+
+**Status: Pass.** Goals was the most-behind screen (hand-rolled neumorphic 148px
+tiles with SVG progress rings, split into stacked me/wife grids, three separate
+modals, no aggregate). Ported to the open-ledger language following the Banks /
+Net Worth precedent; verified at **390 + 320 + 430 + 1600, both themes**, across
+**Me / My wife / Household**, plus the add-money sheet, the details sheet, a
+dated-goal rail, and the empty state. Shots in `artifacts/ui-verification/goals/`
+(`{1600,390}-{light,dark}`, `430-light`, `320-light`, `me-1600-light`,
+`wife-390-light`, `dated-rail-1600`, `add-sheet`, `details-sheet`, `empty`). All
+26 runners + parse green; **presentation-only** (`GoalsView` + the new `GoalRow`
+markup + the two sheets — no calc/data/mutator/sync/undo diff; `goaltest.cjs`
+43/43).
+
+- **One card only.** The summary is the tab's **single** `GridSection`; the goal
+  ledger and all three rail modules are **open sections** (`.t-section` label +
+  hairline rows).
+- **Scope = shared synced `profile`.** `HomeProfileToggle` (Me / My wife /
+  Household) sits **above** the summary; `GoalsView` now takes `profile` +
+  `setProfile:setProfileSynced` (the one mount-site prop change), so scope
+  persists across tabs exactly like Banks / Net Worth. Goals store owner me|wife
+  only — **Household is the view-only union** (`g.owner==="me"||"wife"`); each
+  owner group's "Add goal" writes to a real person, never `addGoal("household")`.
+- **Hero answers "how much have I saved?":** a `Verdict` line derived from the
+  overall funded % (flat "No goals yet" → warn "N goals behind" → good "On
+  pace"), a **`MetricBlock hero`** Total saved (small `SAR` prefix + narrow
+  figure, `remaining` as its sub — avoids the 24px-mono column clip at 320/390),
+  then a 2-up `MetricStrip` of Active / Completed counts.
+- **`GoalSquare` → `GoalRow`** (module-scope, top-level for input focus): a flat
+  **two-line** hairline row — line 1 = type icon + inline name + saved/target;
+  line 2 = `ProgressMeter` + type/deadline verdict + `[Add]`/`[Details]`. Two
+  lines so a long name keeps full width at 320 (single-line crushed it to
+  "Emer"). Meter colour + verdict reuse `goalDeadlineStatus` (done/on-track →
+  jade, behind → info, overdue → coral). Household groups rows by owner via
+  `.ledger-group`; single scope is flat. Reached goals fold into a collapsed
+  **Completed** `.ledger-group` keyed by scope.
+- **Desktop `.split-8-4`** — LEFT = toggle + hero + ledger; RIGHT rail carries
+  three **new read-only derived modules**, all reusing `goalSavedTotal` /
+  `goalDeadlineStatus` (no parallel reduces): **Portfolio progress** (Σ saved / Σ
+  target + overall `ProgressMeter`), **Monthly commitment** (Σ required vs Σ
+  committed over DATED goals + `Status` surplus/shortfall), **On-track vs
+  at-risk** (partition dated goals, list at-risk by name + date + needed/mo).
+  Undated goals (no `deadline` — `goalDeadlineStatus` returns null) are
+  **excluded** from the two deadline modules with a "N goals undated" footnote;
+  Portfolio progress is the only module that counts them. Rail stacks below on
+  mobile.
+- **Sheets flattened to `.sheet-task`** (Portal + scroll-lock kept): **Add money**
+  (amount + note + live preview + disabled-until-valid foot) and **Details**
+  (NumField target/monthly, date + owner-scoped bank select, pace/deadline
+  verdict, contributions list). The standalone **type picker modal was folded
+  into Details** as a selector grid (3 modals → 2); goal **delete** moved into
+  the Details foot.
+
+**Intentional differences:** no direct Stitch mockup (Category C) — derived from
+the open-ledger language. Keeps the 3-way `HomeProfileToggle` (needs the
+Household union view). All figures use the app's `fmt` (SAR in sample) rather
+than a per-item stored currency (goals carry no currency; money lives in the
+linked bank). With sample data all three seed goals are **undated**, so the two
+deadline rail modules show their empty state + "3 undated" footnote until a
+target date is set (verified populated in `dated-rail-1600`: setting a future
+date flips the hero to "1 goal behind", the row to "BEHIND · NEEDS …/mo", and
+the rail to "SHORTFALL …/mo" + an at-risk entry).
+
+## Typography flip — monospace as primary (2026-08-27)
+
+**Status: Pass.** JetBrains Mono became the app-wide default (`body`); Inter is now
+the exception (`.sans`) for prose only. Verified across **every major screen at
+1600 + 390, light + dark** (shots in `artifacts/ui-verification/typography/`).
+Browser probe confirmed `getComputedStyle(body).fontFamily` = JetBrains Mono and
+`document.fonts.check('bold 16px "JetBrains Mono"')` = true (JBM 700 loaded, no
+synthetic bold). Zero console errors; parse + all 26 runners green; `node stage.cjs`
+passes.
+
+- **Flip:** `body` default Inter→JetBrains Mono. Names, buttons, status pills, and
+  the 28 `fontFamily:"inherit"` form-control corrections all inherit mono for free.
+- **Prose → `.sans` (Inter):** `Verdict` (component-level, covers all), dialog
+  bodies, empty-states, chart empty-text, helper/freshness/error sentences —
+  ~64 sites. Confirmed sans/readable on screen (e.g. Investments "Allocation
+  appears once you add holdings.", "Portfolio value split by account type over
+  time."; Home verdicts).
+- **Serif folded:** the one Source Serif figure (Investments portfolio total) is
+  now mono **700** — the app's heaviest weight, the single headline number. Source
+  Serif 4 removed (`@font-face`, `.serif`, `SERVED`, `APP_SHELL`).
+- **Casing unchanged:** structural labels/metadata stay UPPERCASE; names/controls
+  stay mixed case — only the family flipped.
+- **Known minor:** Budget's dense single-line category rows at 390 clip long names
+  slightly more (mono is ~10% wider than Inter) — pre-existing row density,
+  editable inputs, not a blocker. Goals' two-line rows + every other screen render
+  names fully.
+
+## Expenses envelope-row declutter (2026-08-27)
+
+**Status: Pass.** The three always-visible per-row actions (Add to / Add extra
+funds / Add remaining from last month) crowded the row on mobile. Now the whole
+envelope header is the expand toggle; a **collapsed row shows only name · group ·
+meter · spent/left** (zero buttons), and tapping it reveals a compact
+`+ Add · Top up · Carry over {amount}` bar above the transaction list. Labels
+shortened; **Carry over appears only when a name-matched prior-bucket category has
+non-zero leftover** (same basis `CarryoverSheet` uses). JSX-only in
+`ExpenseTrackerView` — handlers/sheets/data unchanged. Verified at 390 + 1600,
+light + dark (`artifacts/ui-verification/expenses-declutter/`): collapsed rows
+calm, expand reveals the actions + txns, no old long labels remain, zero console
+errors, parse + 26 runners green.
+
 ## Verification table
 
 | Screen | Mobile (390) | Desktop (1600) | Stitch reference | Status | Remaining differences |
@@ -486,6 +590,7 @@ parse, consistent with Home).
 | Add/Edit Transaction | ✓ | ✓ | Transaction (A) | **Pass** | Full-screen TaskSurface reflowed to **connected left-label field rows** (`.tx-field`, mono label left / borderless value right / hairline-divided) in Stitch order AMOUNT · TITLE · CATEGORY · DATE · NOTE; mono header (Close / ADD TRANSACTION / Clear), REMAINING-BUDGET context row, TRACKED/UNTRACKED/GOALS segmented, prominent mono amount, pinned green RECORD. Required-empty validation = red field label + dimmed RECORD. Desktop = bounded centered canvas (≤600px), not Stitch's full-bleed console. All flows preserved. See "Add/Edit Transaction — recomposition" above. |
 | Banks | ✓ (390 · 320 · 430) | ✓ | Derived (B) | **Pass** (recomposed 2026-08-27, Rounds 1–3) | Open-ledger: owner-grouped **hairline account rows** (no boxes), identity line "Name · BANK", normalized 10px/mono metadata with coloured status squares, 16px balances, "+ Add account" rows, inline row-expand for edit/interest/delete. Toggle **above** the flat MetricStrip summary (Total + USD/PHP + owner split). Desktop **8/4 split** with a read-only **Cash availability + Account checkup + Currency exposure** rail (reuses `bankValuation`/`bankTierRate`; %s total 100). `UpdateBalanceSheet` → `sheet-task` (full-screen mobile / bounded desktop). See "Banks — recomposition" above. |
 | Net Worth | ✓ (390 · 320 · 430) | ✓ | Derived (B) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (the summary MetricStrip — Total in the display currency + secondary conversions + Combined delta as `Status`); Composition / trend / driving are **open sections**. Scope toggle **above**; flat composition bar + legend (%s total 100, liabilities signed coral); two existing range charts reused unchanged; `AssetRow` → **row-expand** hairline rows (name · owner + signed value → tap reveals edit fields, item keeps its own currency); "+ Add asset/liability" rows. **Display currency follows Home** (`homeDisplay.netWorth`, PHP in sample) for all derived totals; snapshot log stays SAR. Desktop **8/4 split** with a read-only rail: **Growth** · **Next milestone** (display-currency) · assets/liabilities ledger · monthly snapshot log. Growth/trend/composition-investments show empty/`0` offline (data-limited). See "Net Worth — recomposition" above. |
+| Goals | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (hero — funded-% `Verdict` + `MetricBlock hero` Total saved w/ remaining sub + 2-up Active/Completed strip). `GoalSquare` tiles/SVG rings → flat **two-line `GoalRow`s** (icon + name + saved/target; meter + type/deadline verdict + Add/Details), owner-grouped under Household via `.ledger-group`, flat under a single owner; collapsed **Completed** group. Scope toggle **above** (shared synced `profile`; Household = me∪wife union, adds write to a real person). Desktop **8/4 split** with a read-only rail: **Portfolio progress** · **Monthly commitment** · **On-track vs at-risk** (all reuse `goalSavedTotal`/`goalDeadlineStatus`; undated goals excluded from the two deadline modules + footnoted). Add-money + Details → `.sheet-task`; standalone type picker folded into Details (3 modals → 2). See "Goals — recomposition" above. |
 | Investments | ✓ | ✓ | Investments (A) | **Pass** (recomposed 2026-08-26) | Rebuilt to the Stitch composition: desktop **6/6 split** (portfolio overview + asset allocation LEFT · **holdings ledger** RIGHT, one vertical rule — the previously-missing split now built); analysis charts (Portfolio trend · What's driving it · Growth projection) moved to a full-width strip below. Portfolio total in **Source Serif 4** (the one serif figure); labels/returns/market-cost/allocation/holdings all mono. Holdings groups (Stocks/ETF · MP2 · Time Deposits · Gold) are open-ledger rows under mono group labels; residual `neu()`/`glass` chrome flattened; filters/selects/buttons flat hairline. Values read $0 in sample (no live quotes offline). See "Investments — recomposition" below. |
 
 ## Per-screen typography detail (against the approved screenshots)
