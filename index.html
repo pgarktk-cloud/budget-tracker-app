@@ -3739,8 +3739,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.56.0";
-const BUILD_ID="2026.08.27.0007";
+const APP_VERSION="1.57.0";
+const BUILD_ID="2026.08.27.0008";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -16248,7 +16248,7 @@ function InstallmentEditSheet({initial,prefill,payments,owner,ownerLabel,cur,fmt
 
      Height lives here rather than on the schedule rows below, which reuse `box`
      at a smaller size and set their own. */
-  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
+  const box={width:"100%",borderRadius:0,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
     height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink};
   const dateBox={...box,minWidth:0,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"};
   /* Wrap rather than collide: the Provider row above already does this, and these
@@ -16401,7 +16401,7 @@ function InstallmentEditSheet({initial,prefill,payments,owner,ownerLabel,cur,fmt
         </div>
 
         <button onClick={submit} disabled={!canSave}
-          style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
+          style={{width:"100%",borderRadius:0,padding:"11px 0",fontSize:14,fontWeight:600,
             background:canSave?P.jade:P.sfA,color:canSave?"#fff":P.faint,border:"none"}}>
           {editing?"Save changes":"Create installment"}
         </button>
@@ -16452,7 +16452,7 @@ function InstallmentPaymentSheet({inst,payment,fmt,cur,payPeriods,fundingCategor
   const lab={fontSize:12,color:P.sub,marginBottom:4};
   /* Same three date-input corrections as InstallmentEditSheet — this sheet has
      the identical Amount / Payment date pair and drifted the same way. */
-  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
+  const box={width:"100%",borderRadius:0,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
     height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink};
   const dateBox={...box,minWidth:0,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"};
   return(
@@ -16465,7 +16465,7 @@ function InstallmentPaymentSheet({inst,payment,fmt,cur,payPeriods,fundingCategor
           <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
             style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
         </div>
-        <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:14}}>
+        <div style={{background:P.surfaceSubtle,borderRadius:0,padding:12,marginBottom:14}}>
           <div style={{fontSize:12,color:P.sub}}>{installmentProviderLabel(inst)}</div>
           <div style={{fontSize:15,fontWeight:600,color:P.ink}}>{inst.name}</div>
           <div style={{fontSize:12,color:P.faint,marginTop:2}}>
@@ -16518,7 +16518,7 @@ function InstallmentPaymentSheet({inst,payment,fmt,cur,payPeriods,fundingCategor
             <button onClick={()=>{if(ok)onConfirm({actualAmount:Number(amount)||0,paidDate:date,
               fundedCatId:fundedCatId||null});}}
               disabled={!ok}
-              style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
+              style={{width:"100%",borderRadius:0,padding:"11px 0",fontSize:14,fontWeight:600,
                 background:ok?P.jade:P.sfA,color:ok?"#fff":P.faint,border:"none"}}>
               Record {fmt(Number(amount)||0)}
             </button>
@@ -16548,7 +16548,7 @@ function InstallmentPayoffSheet({inst,pays,fmt,cur,payPeriods,onClose,onConfirm}
   const periods=[...new Set(open.map(p=>bucketKeyFor(p.dueDate,payPeriods,owner)))]
     .sort().map(k=>bucketLabel(k,payPeriods,owner));
   const lab={fontSize:12,color:P.sub,marginBottom:4};
-  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,
+  const box={width:"100%",borderRadius:0,padding:"9px 10px",fontSize:14,
     background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink};
   return(
     <Portal>
@@ -16560,7 +16560,7 @@ function InstallmentPayoffSheet({inst,pays,fmt,cur,payPeriods,onClose,onConfirm}
           <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
             style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
         </div>
-        <div style={{background:"rgba(0,0,0,.05)",borderRadius:12,padding:12,marginBottom:14}}>
+        <div style={{background:P.surfaceSubtle,borderRadius:0,padding:12,marginBottom:14}}>
           <div style={{fontSize:15,fontWeight:600,color:P.ink}}>{inst.name}</div>
           <div style={{fontSize:12,color:P.sub,marginTop:6}}>Remaining scheduled balance</div>
           <div className="mono tnum" style={{fontSize:22,fontWeight:600,color:P.ink}}>{fmt(remaining)}</div>
@@ -16592,7 +16592,7 @@ function InstallmentPayoffSheet({inst,pays,fmt,cur,payPeriods,onClose,onConfirm}
           the payoff itself.
         </div>
         <button onClick={()=>onConfirm({amount:Number(amount)||0,payoffDate:date,note})}
-          style={{width:"100%",borderRadius:10,padding:"11px 0",fontSize:14,fontWeight:600,
+          style={{width:"100%",borderRadius:0,padding:"11px 0",fontSize:14,fontWeight:600,
             background:P.jade,color:"#fff",border:"none"}}>
           Pay off {fmt(Number(amount)||0)}
         </button>
@@ -16658,10 +16658,13 @@ function InstallmentScheduleSheet({inst,pays,fmt,today,onClose,onRecord}){
 }
 
 /* ── One installment card ── */
-function InstallmentCard({inst,pays,fmt,today,highlight,onRecord,onPayoff,onSchedule,onEdit,onCancel,onDelete}){
-  const[menu,setMenu]=useState(false);
+/* Open-ledger row (Technical Ledger). Collapsed = identity + status square +
+   progress + next-due; tap to reveal the payment count and every action inline
+   (row-expand, like AssetRow + the Expenses declutter). Top-level for the same
+   reason GoalRow is — a component redefined per render remounts + loses focus. */
+function InstallmentRow({inst,pays,fmt,today,highlight,onRecord,onPayoff,onSchedule,onEdit,onCancel,onDelete}){
+  const[open,setOpen]=useState(false);
   const status=installmentDerivedStatus(inst,pays);
-  const meta=INSTALLMENT_STATUS_META[status]||INSTALLMENT_STATUS_META.active;
   const prov=installmentProvider(inst.provider);
   const Icon=I[prov.iconKey]||I.Receipt;
   const prog=installmentProgress(pays);
@@ -16669,70 +16672,66 @@ function InstallmentCard({inst,pays,fmt,today,highlight,onRecord,onPayoff,onSche
   const next=installmentNextPayment(pays,today);
   const overdue=pays.some(p=>installmentPaymentDerivedStatus(p,today)==="overdue");
   const done=installmentExpectedCompletion(pays);
-  const open=status==="active";
-  const badgeColor=overdue&&open?P.wine:meta.color();
-  const badgeBg=overdue&&open?P.redS:meta.bg();
-  const act={display:"flex",alignItems:"center",gap:6,minHeight:40,padding:"6px 10px",
-    borderRadius:10,fontSize:12,fontWeight:600,border:`1px solid ${P.line}`,
-    background:"transparent",color:P.neuSub,cursor:"pointer"};
+  const isActive=status==="active";
+  /* One semantic accent drives the status square + meter fill: wine when a
+     payment is overdue, jade while active, muted for cancelled, green once done. */
+  const sColor=overdue&&isActive?P.wine:isActive?P.jade:status==="cancelled"?P.muted:P.gr;
+  const statusLabel=overdue&&isActive?"Overdue":(INSTALLMENT_STATUS_META[status]||INSTALLMENT_STATUS_META.active).label;
+  /* Arriving from a Budget row highlights the row — expand it so the action is
+     one tap, not two. */
+  useEffect(()=>{if(highlight)setOpen(true);},[highlight]);
+  const toggle=()=>setOpen(o=>!o);
+  const act={display:"inline-flex",alignItems:"center",gap:6,minHeight:38,padding:"7px 12px",
+    fontSize:12,fontWeight:500,border:`1px solid ${P.hairline}`,borderRadius:0,
+    background:P.surface,color:P.ink,cursor:"pointer",fontFamily:"inherit"};
   return(
-    <section style={{...neu(16),padding:14,marginBottom:12,
-      outline:highlight?`2px solid ${P.jade}`:"none"}}>
-      <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,flexShrink:0,display:"flex",
-          alignItems:"center",justifyContent:"center",background:prov.color+"22",color:prov.color}}>
-          <Icon size={18}/>
+    <div className="ledger-row" style={{flexDirection:"column",alignItems:"stretch",gap:0,padding:0,
+      outline:highlight?`2px solid ${P.jade}`:"none",outlineOffset:highlight?2:0,transition:"outline-color .3s"}}>
+      <div onClick={toggle} role="button" tabIndex={0}
+        onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}}}
+        style={{display:"flex",flexDirection:"column",gap:8,padding:"13px 0",cursor:"pointer",minWidth:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+          <I.Chevron size={13} style={{color:P.muted,flexShrink:0,transform:open?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+          <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:26,height:26,flexShrink:0,background:prov.color+"22",color:prov.color}}><Icon size={15}/></span>
+          <div style={{flex:1,minWidth:0,display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:14,fontWeight:500,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{inst.name||"Installment"}</span>
+            <span className="t-label" style={{color:P.muted}}>{installmentProviderLabel(inst)}</span>
+          </div>
+          <span title={statusLabel} style={{width:7,height:7,flexShrink:0,background:sColor}}/>
+          <span className="ledger-amt tnum" style={{fontSize:15,fontWeight:500,color:P.ink}}>{fmt(remaining)}</span>
         </div>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:15,fontWeight:600,color:P.neuInk,overflow:"hidden",
-            textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{inst.name||"Installment"}</div>
-          <div style={{fontSize:12,color:P.neuSub}}>{installmentProviderLabel(inst)}</div>
+        <div style={{display:"flex",alignItems:"center",gap:10,paddingLeft:36}}>
+          <div style={{flex:1,minWidth:0}}><ProgressMeter pct={prog.pct} color={sColor}/></div>
+          <span style={{fontSize:11,color:overdue&&isActive?P.wine:P.faint,flexShrink:0,whiteSpace:"nowrap"}}>
+            {next
+              ?<>Next <span className="tnum" style={{color:P.muted,fontWeight:600}}>{fmt(next.scheduledAmount)}</span> · {instShortDate(next.dueDate)}</>
+              :done?<>Ends {instShortDate(done)}</>
+              :"Settled"}
+          </span>
         </div>
-        <span className="status-pill" style={{flexShrink:0,color:badgeColor,background:badgeBg,
-          border:"none",fontWeight:700}}>
-          {overdue&&open?"Overdue":meta.label}
-        </span>
       </div>
-
-      <div style={{...neuInset(999),height:8,margin:"12px 0 6px",overflow:"hidden"}}>
-        <div style={{height:"100%",width:`${prog.pct}%`,borderRadius:999,
-          background:liquidFillBg(overdue&&open?P.wine:prov.color),transition:"width .4s"}}/>
-      </div>
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:P.neuSub}}>
-        <span>{prog.paid} of {prog.total} payments paid</span>
-        <span className="tnum">{fmt(remaining)} left</span>
-      </div>
-
-      <div style={{display:"flex",justifyContent:"space-between",gap:10,
-        fontSize:12,color:P.faint,marginTop:6,flexWrap:"wrap"}}>
-        {next
-          ?<span>Next <span className="tnum" style={{color:P.neuSub,fontWeight:600}}>{fmt(next.scheduledAmount)}</span> on {instShortDate(next.dueDate)}</span>
-          :<span>No payments outstanding</span>}
-        {done&&open&&<span>Ends {instShortDate(done)}</span>}
-      </div>
-
-      <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
-        {open&&next&&
-          <button onClick={()=>onRecord(next)} style={{...act,border:"none",background:P.jade,color:"#fff"}}>
-            <I.Check size={13}/> Record payment
-          </button>}
-        {open&&next&&
-          <button onClick={onPayoff} style={act}><I.Send size={13}/> Pay off early</button>}
-        <button onClick={onSchedule} style={act}><I.Calendar size={13}/> Schedule</button>
-        <button onClick={onEdit} style={act}><I.Edit size={13}/> Edit</button>
-        <button onClick={()=>setMenu(m=>!m)} aria-expanded={menu} style={act}>
-          <I.MoreHorizontal size={13}/> More
-        </button>
-      </div>
-      {menu&&
-        <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
-          {open&&
-            <button onClick={()=>{setMenu(false);onCancel();}}
-              style={{...act,color:P.wine}}><I.X size={13}/> Cancel plan</button>}
-          <button onClick={()=>{setMenu(false);onDelete();}}
-            style={{...act,color:P.wine}}><I.Trash size={13}/> Delete record</button>
-        </div>}
-    </section>
+      {open&&(
+        <div style={{padding:"2px 0 16px 36px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,color:P.muted,flexWrap:"wrap"}}>
+            <span>{prog.paid} of {prog.total} payments paid</span>
+            <span className="tnum">{fmt(remaining)} left{done&&isActive?` · ends ${instShortDate(done)}`:""}</span>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {isActive&&next&&
+              <button onClick={()=>onRecord(next)} style={{...act,border:"none",background:P.jade,color:"#fff"}}>
+                <I.Check size={13}/> Record payment
+              </button>}
+            {isActive&&next&&
+              <button onClick={onPayoff} style={act}><I.Send size={13}/> Pay off early</button>}
+            <button onClick={onSchedule} style={act}><I.Calendar size={13}/> Schedule</button>
+            <button onClick={onEdit} style={act}><I.Edit size={13}/> Edit</button>
+            {isActive&&
+              <button onClick={onCancel} style={{...act,color:P.wine}}><I.X size={13}/> Cancel plan</button>}
+            <button onClick={onDelete} style={{...act,color:P.wine}}><I.Trash size={13}/> Delete record</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -16740,6 +16739,7 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
   recordInstallmentPayment,payOffInstallmentEarly,cancelInstallment,removeInstallment,
   fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,focus,fundingCategoriesFor}){
   const today=todayISO();
+  const isMobile=useIsMobile();
   const bucket=bucketNow(payPeriods,budgetOwner);
   const mine=useMemo(()=>installmentsForOwner(installments,budgetOwner),[installments,budgetOwner]);
   const paysOf=useMemo(()=>{
@@ -16803,81 +16803,181 @@ function InstallmentsView({installments,installmentPayments,addInstallment,updat
   const payoffInst=payoffId?mine.find(x=>x.id===payoffId):null;
   const schedInst=scheduleId?mine.find(x=>x.id===scheduleId):null;
 
+  /* Small currency code + number-only, so the hero shows a narrow "SAR" prefix
+     instead of a wide "SAR 1,234.00" that clips a tight column (Goals/NetWorth
+     pattern). */
+  const ccy=fmt(0).replace(/[\d.,\s]+/g,"")||"SAR";
+  const amt0=n=>fmt(n).replace(/^[^\d-]+/,"");
+  const monthYear=s=>{const d=new Date(String(s)+"T00:00:00");return isNaN(d.getTime())?String(s):d.toLocaleDateString("en-US",{month:"short",year:"numeric"});};
+  const pctInts=vals=>{const t=vals.reduce((a,b)=>a+b,0);if(t<=0)return vals.map(()=>0);
+    const raw=vals.map(v=>v/t*100),fl=raw.map(Math.floor);const rem=100-fl.reduce((a,b)=>a+b,0);
+    const ord=raw.map((v,i)=>[i,v-fl[i]]).sort((a,b)=>b[1]-a[1]);const out=fl.slice();
+    for(let k=0;k<rem;k++)out[ord[k%ord.length][0]]++;return out;};
+
+  const activeList=grouped.active;
+  /* Hero verdict: overdue trumps everything; else on-track if something's due
+     this period; else a flat "nothing due". Reuses summary — no new reduce. */
+  const heroTone=summary.overdueCount>0?"bad":(summary.activeCount>0&&summary.dueThisPeriod>0)?"good":"flat";
+  const heroText=summary.overdueCount>0
+    ?`${summary.overdueCount} payment${summary.overdueCount===1?"":"s"} past due`
+    :summary.activeCount===0
+      ?(mine.length?"All installments settled":"No installments yet")
+      :summary.dueThisPeriod>0?"On track this period":"Nothing due this period";
+
+  /* ── Rail modules (read-only, derived over active plans via existing helpers) ── */
+  const horizon=useMemo(()=>{
+    let end="",closed=0,total=0;
+    activeList.forEach(x=>{
+      const ps=paysOf[x.id]||[];
+      const c=installmentExpectedCompletion(ps);
+      if(c&&c>end)end=c;
+      const pr=installmentProgress(ps);closed+=pr.closed;total+=pr.total;
+    });
+    return{end:end||null,pct:total>0?Math.min(100,(closed/total)*100):0,total};
+  },[activeList,paysOf]);
+  const upcoming=useMemo(()=>{
+    const rows=[];
+    activeList.forEach(x=>{
+      (paysOf[x.id]||[]).filter(installmentPaymentIsOpen).forEach(p=>{
+        if(p.dueDate)rows.push({id:p.id,dueDate:p.dueDate,amount:Number(p.scheduledAmount)||0,name:x.name||"Installment"});
+      });
+    });
+    rows.sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate)));
+    return rows.slice(0,6);
+  },[activeList,paysOf]);
+  const exposure=useMemo(()=>{
+    const m={};
+    activeList.forEach(x=>{
+      const bal=installmentRemainingBalance(x,paysOf[x.id]||[]);
+      if(bal<=0)return;
+      const label=installmentProviderLabel(x);
+      if(!m[label])m[label]={label,color:installmentProvider(x.provider).color,amt:0};
+      m[label].amt+=bal;
+    });
+    const arr=Object.values(m).sort((a,b)=>b.amt-a.amt);
+    const pcts=pctInts(arr.map(r=>r.amt));
+    return arr.map((r,i)=>({...r,pct:pcts[i]}));
+  },[activeList,paysOf]);
+
   return(
-    <div>
-      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+    <div style={{background:"transparent",padding:0,margin:0}}>
+      <div className="split-8-4">
+        <div className="split-pad-r">
+          <div style={{marginBottom:16}}>
+            <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+          </div>
 
-      {/* ── Summary ── */}
-      <section style={{...neu(16),padding:14,marginBottom:16}}>
-        <div style={{fontSize:12,color:P.neuSub}}>Due this period</div>
-        <div className="mono tnum" style={{fontSize:26,fontWeight:600,color:P.neuInk}}>
-          {fmt(summary.dueThisPeriod)}
-        </div>
-        <div style={{fontSize:11,color:P.faint,marginBottom:12}}>
-          {bucketLabel(bucket,payPeriods,budgetOwner)}
-        </div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:P.neuSub}}>
-          <div style={{...neuInset(12),padding:"8px 10px",flex:"1 1 120px"}}>
-            <div style={{fontSize:11,color:P.faint}}>Remaining balance</div>
-            <div className="tnum" style={{fontSize:15,fontWeight:600,color:P.neuInk}}>{fmt(summary.remaining)}</div>
-          </div>
-          <div style={{...neuInset(12),padding:"8px 10px",flex:"1 1 90px"}}>
-            <div style={{fontSize:11,color:P.faint}}>Active</div>
-            <div className="tnum" style={{fontSize:15,fontWeight:600,color:P.neuInk}}>{summary.activeCount}</div>
-          </div>
-          <div style={{...neuInset(12),padding:"8px 10px",flex:"1 1 140px"}}>
-            <div style={{fontSize:11,color:P.faint}}>Next payment</div>
-            <div style={{fontSize:13,fontWeight:600,color:P.neuInk}}>
-              {summary.next
-                ?<span className="tnum">{fmt(summary.next.scheduledAmount)} · {instShortDate(summary.next.dueDate)}</span>
-                :"—"}
+          {/* The ONE bordered card — the hero summary. */}
+          <GridSection flush title={`Installments · ${owners[budgetOwner]||budgetOwner}`} style={{marginBottom:24}}>
+            <div style={{padding:"20px 24px",borderBottom:`1px solid ${P.hairline}`}}>
+              <Verdict tone={heroTone}>{heroText}</Verdict>
+              <MetricBlock hero label="Due this period" cur={ccy} value={amt0(summary.dueThisPeriod)}
+                sub={bucketLabel(bucket,payPeriods,budgetOwner)}/>
             </div>
-          </div>
-        </div>
-        {summary.overdueCount>0&&
-          <div style={{marginTop:10,fontSize:12,color:P.wine,fontWeight:600}}>
-            {summary.overdueCount} payment{summary.overdueCount===1?"":"s"} past due.
-          </div>}
-      </section>
-
-      {mine.length===0&&
-        <div style={{...neu(16),padding:"24px 16px",textAlign:"center",color:P.neuSub}}>
-          <div className="sans" style={{fontSize:14,fontWeight:600,color:P.neuInk,marginBottom:4}}>No installments yet</div>
-          <div style={{fontSize:12}}>Add a Tabby, Tamara, Amazon or card plan and each payment
-            will show up in the Budget period it falls due.</div>
-        </div>}
-
-      {INSTALLMENT_SECTIONS.map(({key,label})=>{
-        const items=grouped[key]||[];
-        if(!items.length)return null;
-        const isOpen=!!openSections[key];
-        return(
-          <div key={key} style={{marginBottom:16}}>
-            <button onClick={()=>setOpenSections(s=>({...s,[key]:!s[key]}))}
-              aria-expanded={isOpen}
-              style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:40,
-                background:"transparent",border:"none",padding:"4px 2px",marginBottom:6,
-                color:key==="active"?P.neuInk:P.neuSub,
-                fontSize:key==="active"?15:13,fontWeight:key==="active"?700:600}}>
-              <I.Chevron size={13} style={{transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
-              {label}
-              <span style={{fontSize:11,color:P.faint,fontWeight:600}}>{items.length}</span>
-            </button>
-            {isOpen&&items.map(x=>(
-              <div key={x.id} ref={el=>{cardRefs.current[x.id]=el;}}>
-                <InstallmentCard inst={x} pays={paysOf[x.id]||[]} fmt={fmt} today={today}
-                  highlight={highlight===x.id}
-                  onRecord={p=>setPaySheet({installmentId:x.id,paymentId:p.id})}
-                  onPayoff={()=>setPayoffId(x.id)}
-                  onSchedule={()=>setScheduleId(x.id)}
-                  onEdit={()=>setSheet({mode:"edit",id:x.id})}
-                  onCancel={()=>setConfirm({type:"cancel",id:x.id,name:x.name||"this installment"})}
-                  onDelete={()=>setConfirm({type:"delete",id:x.id,name:x.name||"this installment"})}/>
+            {/* Desktop keeps the MetricStrip instrument cells (room to spare).
+                Mobile drops to compact key/value rows — a 24px mono money figure
+                clips in a phone half-column even 2-up, so a right-aligned 14px
+                figure (the rail-row shape) is the width-robust form. Next payment
+                isn't repeated here — it's on each active row and leads the rail's
+                Upcoming schedule. */}
+            {isMobile
+              ?<div style={{padding:"6px 24px 14px"}}>
+                {[["Remaining balance",fmt(summary.remaining)],["Active plans",String(summary.activeCount)]].map(([lb,v],i)=>(
+                  <div key={lb} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 0",borderTop:i>0?`1px solid ${P.hairline}`:"none"}}>
+                    <span className="t-label" style={{color:P.muted,flex:1}}>{lb}</span>
+                    <span className="mono tnum" style={{fontSize:14,fontWeight:500,color:P.ink,whiteSpace:"nowrap"}}>{v}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+              :<MetricStrip>
+                <MetricBlock label="Remaining balance" cur={ccy} value={amt0(summary.remaining)}/>
+                <MetricBlock label="Active plans" value={String(summary.activeCount)}/>
+              </MetricStrip>}
+          </GridSection>
+
+          {mine.length===0&&
+            <div>
+              <button onClick={()=>setSheet({mode:"add"})} className="ledger-row"
+                style={{gap:8,color:P.ink,fontSize:14,fontWeight:500,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,width:"100%",cursor:"pointer",fontFamily:"inherit",textAlign:"left",padding:"14px 0"}}>
+                <I.Plus size={16}/>Add your first installment
+              </button>
+              <div className="sans" style={{fontSize:12,color:P.muted,lineHeight:1.5,padding:"6px 0 0"}}>
+                Add a Tabby, Tamara, Amazon or card plan and each payment will show up in the Budget period it falls due.
+              </div>
+            </div>}
+
+          {mine.length>0&&INSTALLMENT_SECTIONS.map(({key,label})=>{
+            const items=grouped[key]||[];
+            if(!items.length)return null;
+            const isOpen=!!openSections[key];
+            return(
+              <div key={key} style={{marginBottom:20}}>
+                <button onClick={()=>setOpenSections(s=>({...s,[key]:!s[key]}))}
+                  aria-expanded={isOpen}
+                  style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:40,
+                    background:"transparent",border:"none",padding:"4px 0",cursor:"pointer",fontFamily:"inherit"}}>
+                  <I.Chevron size={12} style={{color:P.muted,flexShrink:0,transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+                  <span className="t-section" style={{color:key==="active"?P.ink:P.muted}}>{label}</span>
+                  <span className="t-label" style={{color:P.faint,marginLeft:"auto"}}>{items.length}</span>
+                </button>
+                {isOpen&&<div>{items.map(x=>(
+                  <div key={x.id} ref={el=>{cardRefs.current[x.id]=el;}}>
+                    <InstallmentRow inst={x} pays={paysOf[x.id]||[]} fmt={fmt} today={today}
+                      highlight={highlight===x.id}
+                      onRecord={p=>setPaySheet({installmentId:x.id,paymentId:p.id})}
+                      onPayoff={()=>setPayoffId(x.id)}
+                      onSchedule={()=>setScheduleId(x.id)}
+                      onEdit={()=>setSheet({mode:"edit",id:x.id})}
+                      onCancel={()=>setConfirm({type:"cancel",id:x.id,name:x.name||"this installment"})}
+                      onDelete={()=>setConfirm({type:"delete",id:x.id,name:x.name||"this installment"})}/>
+                  </div>
+                ))}</div>}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop rail — read-only derived modules (stacks below on mobile). */}
+        <div className="split-pad-l" style={{paddingTop:8}}>
+          <div className="t-section" style={{color:P.muted,marginBottom:16}}>Debt-free horizon</div>
+          <div style={{marginBottom:28}}>
+            {horizon.total>0?(
+              <>
+                <div style={{fontSize:15,fontWeight:500,color:P.ink,marginBottom:2}}>
+                  {horizon.end?`Debt-free by ${monthYear(horizon.end)}`:"—"}
+                </div>
+                <div style={{fontSize:11,color:P.muted,marginBottom:10}}>{Math.round(horizon.pct)}% paid off overall</div>
+                <ProgressMeter pct={horizon.pct} color={horizon.pct>=100?P.success:P.info}/>
+              </>
+            ):<div style={{fontSize:12,color:P.muted}}>No active plans.</div>}
           </div>
-        );
-      })}
+
+          <div className="t-section" style={{color:P.muted,marginBottom:16}}>Upcoming schedule</div>
+          <div style={{marginBottom:28}}>
+            {upcoming.length?upcoming.map(r=>(
+              <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+                <span className="t-label" style={{color:P.muted,flexShrink:0,width:52}}>{instShortDate(r.dueDate)}</span>
+                <span style={{flex:1,minWidth:0,fontSize:13,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+                <span className="mono tnum" style={{fontSize:13,color:P.ink,whiteSpace:"nowrap"}}>{fmt(r.amount)}</span>
+              </div>
+            )):<div style={{fontSize:12,color:P.muted}}>Nothing scheduled.</div>}
+          </div>
+
+          {exposure.length>0&&<>
+            <div className="t-section" style={{color:P.muted,marginBottom:16}}>Provider exposure</div>
+            <div style={{marginBottom:8}}>
+              {exposure.map(r=>(
+                <div key={r.label} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderTop:`1px solid ${P.hairline}`}}>
+                  <span style={{width:7,height:7,flexShrink:0,background:r.color}}/>
+                  <span style={{flex:1,minWidth:0,fontSize:13,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.label}</span>
+                  <span className="mono tnum" style={{fontSize:13,color:P.ink,whiteSpace:"nowrap"}}>{fmt(r.amt)}</span>
+                  <span className="t-label" style={{color:P.muted,width:36,textAlign:"right",flexShrink:0}}>{r.pct}%</span>
+                </div>
+              ))}
+            </div>
+          </>}
+        </div>
+      </div>
 
       {/* Installments' own FAB: the global one adds a transaction, which is a
           different action from adding a plan.
