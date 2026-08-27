@@ -1166,6 +1166,13 @@ and an error naming a collection the user has never heard of.
   at the top**, self-contained, because planning sessions write their plan to
   `~/.claude/plans/`, which is machine-local and NOT in the repo. Anything a
   future session must be able to execute from has to be copied into these docs.
+- `docs/stitch-workflow.md` — the Stitch screen-port playbook; **read before
+  touching any redesign screen.** It ties the scattered redesign lessons
+  (mockup-outranks-code-export, global-primitives-first, presentation-only, the
+  true-390px gap-list verify loop) into one procedure and links out to
+  `design-system.md`/`ui-audit.md`/`ui-verification.md`. Its project-agnostic
+  twin, `docs/stitch-ui-overhaul-playbook.md`, is meant to be copied into other
+  repos.
 
 Keep these updated at the end of any substantial session (see prior handover
 in git history / conversation, not duplicated here).
