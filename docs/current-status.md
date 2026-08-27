@@ -54,9 +54,12 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
-**Deploying now: v1.56.0 / build `2026.08.27.0007`** — three presentation-only
-changes, all user-approved and browser-verified (390/1600, light+dark), 26 runners
-+ parse green, `stage.cjs` guard green:
+**SHIPPED: v1.56.0 / build `2026.08.27.0007`** — commit `deab055` on `main`
+(pushed), deployed to Cloudflare Pages and **confirmed live on the apex**
+`https://whered-it-go.pages.dev` (version.json = 1.56.0; `jetbrains-mono-700.woff2`
+served 200). Three presentation-only changes, all user-approved and
+browser-verified (390/1600, light+dark), 26 runners + parse green, `stage.cjs`
+guard green:
 1. **Goals recompose** (Category C) — open-ledger: one bordered hero (funded-%
    Verdict + saved/remaining/counts), flat two-line `GoalRow`s replacing the
    neumorphic tiles/SVG rings, Me/Wife/Household scope (shared synced `profile`),
