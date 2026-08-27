@@ -3516,6 +3516,10 @@ function reconcilePeriod({plan,expenses,bucketKey,payPeriods,owner,goals,install
   let trackedSpend=0,untrackedTransfers=0,goalContribs=0,extraFunds=0,unmatched=0;
   (expenses||[]).forEach(e=>{
     const amt=Number(e.amount)||0;
+    // Carry-over is last period's leftover re-labelled as this month's room —
+    // no real money moved, so it is neither income nor spend here. Skipping it
+    // keeps `unaccounted` honest and stops it reading as phantom income.
+    if(e.isCarryover)return;
     if(e.isExtraFunds)extraFunds+=amt;
     // Prefer the EXPLICIT link; catId-matching-a-goal-id is the pre-v1.27.0
     // fallback, kept so legacy rows still classify.
@@ -3584,8 +3588,10 @@ function reconcileSentence(rec,fmt){
    effective-budget rule (sub-category sum when subs exist, else the category
    amount), same skip of zero-budget categories, same bucket filter, and the
    same isExtraFunds handling where ad-hoc top-ups raise the effective budget
-   rather than counting as spend. Kept as one shared top-level function so
-   Home reads the numbers rather than re-deriving them. */
+   rather than counting as spend. isCarryover rows (last period's leftover
+   brought forward) raise the budget the same way and are likewise never spend.
+   Kept as one shared top-level function so Home reads the numbers rather than
+   re-deriving them. */
 function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods},bucket){
   const month=bucket||bucketNow(payPeriods,owner);
   const plan=planForMonth?planForMonth(month,owner):null;
@@ -3604,13 +3610,13 @@ function trackedSpendingFor(owner,{planForMonth,expenses,payPeriods},bucket){
   }
   const inBucket=(expenses||[]).filter(e=>
     e.date&&(e.owner||"me")===owner&&bucketKeyFor(e.date,payPeriods,owner)===month);
-  const spentMap={},extraMap={};
+  const spentMap={},extraMap={},carryMap={};
   inBucket.forEach(e=>{
-    const m=e.isExtraFunds?extraMap:spentMap;
+    const m=e.isCarryover?carryMap:e.isExtraFunds?extraMap:spentMap;
     m[e.catId]=(m[e.catId]||0)+e.amount;
   });
   const cats=envs.map(e=>{
-    const budget=e.baseBudget+(extraMap[e.id]||0);
+    const budget=e.baseBudget+(extraMap[e.id]||0)+(carryMap[e.id]||0);
     const spent=spentMap[e.id]||0;
     return{id:e.id,name:e.name,color:e.color,owner,budget,spent,
       remaining:budget-spent,
@@ -3706,8 +3712,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.53.3";
-const BUILD_ID="2026.08.27.0004";
+const APP_VERSION="1.54.0";
+const BUILD_ID="2026.08.27.0005";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -7963,7 +7969,7 @@ function App(){
 
   /* expense tracker — transactions per budget category.
      Schema: {id,catId,name,note,amount,date,owner,isTransfer,isExtraFunds,
-              createdAt,ord?}
+              isCarryover,createdAt,ord?}
      `createdAt` is stamped once at insert and never re-stamped — that's what
      separates it from `updatedAt`, which every edit bumps and which therefore
      can't answer "what did I log first". `ord` is the optional manual
@@ -7975,7 +7981,13 @@ function App(){
      one-off top-up to a *tracked* category's spending room for the viewed
      month only (e.g. a spouse handing over extra cash for groceries) — it
      boosts that category's effective budget in the Expenses tab without
-     ever touching the category's base amount/percentage in the Budget tab. */
+     ever touching the category's base amount/percentage in the Budget tab.
+     isCarryover marks money brought forward from LAST period's leftover for a
+     tracked category (v1.54.0): like isExtraFunds it raises the viewed month's
+     spending room, but it is NOT real money-in — it re-labels cash already in
+     the bank — so it is excluded from the salary-reconciliation income line.
+     It may be negative (carrying an overspend forward). It always precedes
+     isExtraFunds/isTransfer in every classifier over `expenses`. */
   const expenses=(data.expenses||[]).filter(e=>!e.deletedAt);
   /* Returns the new row's id, which rapid entry needs so its undo toast can
      target the row it just wrote.
@@ -7985,10 +7997,10 @@ function App(){
      once. Minting the id inside meant two invocations produced two different
      ids for one logical insert. Nothing depended on that before, but returning
      the id makes it observable, and the pure version is correct either way. */
-  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false)=>{
+  const addExpenseTx=(catId,name,note,amount,date,owner=budgetOwner,isTransfer=false,isExtraFunds=false,isCarryover=false)=>{
     const now=new Date().toISOString();
     const id=uid();
-    setData(d=>({...d,expenses:[...(d.expenses||[]),{id,catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,createdAt:now,updatedAt:now}]}));
+    setData(d=>({...d,expenses:[...(d.expenses||[]),{id,catId,name,note:note||"",amount:Number(amount),date,owner,isTransfer:!!isTransfer,isExtraFunds:!!isExtraFunds,isCarryover:!!isCarryover,createdAt:now,updatedAt:now}]}));
     pushImportantRef.current();
     return id;
   };
@@ -8107,6 +8119,14 @@ function App(){
      e.g. a spouse sending extra cash earmarked for a specific category. */
   const addExtraFunds=(catId,catName,amount,date,note,owner=budgetOwner)=>{
     addExpenseTx(catId,catName,note||"Extra funds",amount,date,owner,false,true);
+  };
+  /* carry-over: brings LAST period's leftover for a tracked category forward as
+     spending room in the viewed month. Distinct from extra funds — it is not
+     money-in, so the salary sheet ignores it (see reconcilePeriod). The amount
+     may be negative when last period overspent. The row's name is fixed to
+     "Carried over" so the transaction list labels it. */
+  const addCarryover=(catId,catName,amount,date,note,owner=budgetOwner)=>{
+    addExpenseTx(catId,"Carried over",note||"Carried from last month",amount,date,owner,false,false,true);
   };
 
   /* ── Installments ──────────────────────────────────────────────────────
@@ -8826,7 +8846,7 @@ function App(){
           {tab==="budget"&&<BudgetView {...{planForMonth,planSourceForMonth,monthlyPlans,plans,clonePlanForMonth,editPlanForMonth,removePlanForMonth,activePlanId,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,investTarget:(data.investTarget||{})[budgetOwner]||{thresholdPct:20,groupNames:[]},setInvestTarget,syncNow:()=>pushImportantRef.current(),
             installments,installmentPayments,onOpenInstallment:openInstallment,goals,
             trimPolicy:data.trimPolicy,setTrimPolicy}}/>}
-          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
+          {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,addCarryover,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
             installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates:data.txTemplates}}/>}
           {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
           {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
@@ -11297,7 +11317,7 @@ function recentTxTemplates(expenses,owner,{limit=8,catIds=null,excludeKeys=null}
   const ok=catIds?(catIds instanceof Set?catIds:new Set(catIds)):null;
   const skip=excludeKeys?(excludeKeys instanceof Set?excludeKeys:new Set(excludeKeys)):null;
   const rows=(expenses||[]).filter(e=>
-    e&&!e.deletedAt&&!e.isTransfer&&!e.isExtraFunds
+    e&&!e.deletedAt&&!e.isTransfer&&!e.isExtraFunds&&!e.isCarryover
     &&(e.owner||"me")===owner
     &&e.name&&e.catId&&Number(e.amount)>0
     &&(!ok||ok.has(e.catId)));
@@ -11398,7 +11418,7 @@ function UnaccountedSheet({monthLabel,recon,total,fmt,onClose}){
 }
 
 /* ── EXPENSE TRACKER VIEW ── */
-function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates}){
+function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,addCarryover,fmt,cur,budgetOwner,setBudgetOwner,owners,payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest,installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates}){
   const isMobile=useIsMobile();
   const usesPayPeriod=ownerUsesPayPeriod(payPeriods,budgetOwner);
   const nowMonth=bucketNow(payPeriods,budgetOwner);
@@ -11441,6 +11461,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
   const[cloneSource,setCloneSource]=useState("");
   const[transferModal,setTransferModal]=useState(null); // {catId,name,budget} for quick transfer
   const[extraFundsModal,setExtraFundsModal]=useState(null); // {catId,name} for ad-hoc extra funds top-up
+  const[carryoverModal,setCarryoverModal]=useState(null); // {catId,name} for "add remaining from last month"
 
 
   const addMonths=(ym,n)=>bucketShift(ym,payPeriods,budgetOwner,n);
@@ -11526,7 +11547,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
 
   const spentMap=useMemo(()=>{
     const m={};
-    viewMonthExpenses.forEach(e=>{if(!e.isExtraFunds)m[e.catId]=(m[e.catId]||0)+e.amount;});
+    viewMonthExpenses.forEach(e=>{if(!e.isExtraFunds&&!e.isCarryover)m[e.catId]=(m[e.catId]||0)+e.amount;});
     return m;
   },[viewMonthExpenses]);
 
@@ -11541,10 +11562,43 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     return m;
   },[viewMonthExpenses]);
 
+  /* carry-over — last period's leftover brought forward as spending room for
+     this bucket (isCarryover:true). Adds to the effective budget exactly like
+     extra funds, but is NOT money-in (excluded from spentMap above and from the
+     salary sheet). May be negative when last period overspent. carriedCatIds is
+     the guard set that disables the "Add remaining from last month" button once
+     a category has already been carried into this bucket. */
+  const carryoverMap=useMemo(()=>{
+    const m={};
+    viewMonthExpenses.forEach(e=>{if(e.isCarryover)m[e.catId]=(m[e.catId]||0)+e.amount;});
+    return m;
+  },[viewMonthExpenses]);
+  const carriedCatIds=useMemo(()=>
+    new Set(viewMonthExpenses.filter(e=>e.isCarryover).map(e=>e.catId))
+  ,[viewMonthExpenses]);
+
+  /* Last period's per-category leftover, for the "add remaining from last month"
+     sheet. Reuses the shared trackedSpendingFor so the "remaining" figure equals
+     last bucket's displayed Left (base + extra + carry − spent) — snowballing is
+     intentional. Matched into the current category BY NAME (ids re-mint on plan
+     clone); when no name matches, the sheet offers this list as a manual picker.
+     Note: trackedSpendingFor skips zero-base categories, so a prior category with
+     no budgeted amount won't appear as a source. */
+  const prevBucketKey=addMonths(viewMonth,-1);
+  const prevBucketLabel=bucketLabel(prevBucketKey,payPeriods,budgetOwner);
+  /* A carry-over row must date INTO the viewed bucket so carryoverMap picks it
+     up. Today's date works while viewing the current bucket; for a calendar
+     bucket viewed off-"now" a mid-month date is safely inside, and a pay-period
+     key is itself a date within its own period. */
+  const carryDate=isNow?todayISO():(/^\d{4}-\d{2}$/.test(viewMonth)?`${viewMonth}-15`:viewMonth);
+  const prevRollup=useMemo(()=>
+    trackedSpendingFor(budgetOwner,{planForMonth,expenses,payPeriods},prevBucketKey)
+  ,[budgetOwner,planForMonth,expenses,payPeriods,prevBucketKey]);
+
   /* funded map — how much has been transferred into each untracked category this month */
   const fundedMap=spentMap; // same underlying transaction log, just interpreted differently per category
 
-  const totalBudget=envelopes.reduce((s,e)=>s+e.budget+(extraFundsMap[e.id]||0),0);
+  const totalBudget=envelopes.reduce((s,e)=>s+e.budget+(extraFundsMap[e.id]||0)+(carryoverMap[e.id]||0),0);
   const totalSpent=envelopes.reduce((s,e)=>s+(spentMap[e.id]||0),0);
   const totalLeft=totalBudget-totalSpent;
 
@@ -11621,7 +11675,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
      CLAUDE.md records against any reduce over `expenses`. */
   const recentNames=useMemo(()=>{
     const seen=new Map();
-    [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.name&&!e.isTransfer&&!e.isExtraFunds)
+    [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.name&&!e.isTransfer&&!e.isExtraFunds&&!e.isCarryover)
       .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
       .forEach(e=>{if(!seen.has(e.name))seen.set(e.name,e.catId);});
     return[...seen.keys()].slice(0,40);
@@ -11634,7 +11688,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     const out=[];const seen=new Set();
     const push=n=>{if(n&&!seen.has(n)){seen.add(n);out.push(n);}};
     if(form.catId){
-      [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer&&!e.isExtraFunds)
+      [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.catId===form.catId&&e.name&&!e.isTransfer&&!e.isExtraFunds&&!e.isCarryover)
         .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
         .forEach(e=>push(e.name));
     }
@@ -11864,6 +11918,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
             {tx.isTransfer&&<span className="mono" style={{fontSize:9,fontWeight:600,letterSpacing:".06em",color:P.info,flexShrink:0}}>TRANSFER</span>}
             {tx.installmentId&&<span className="mono" style={{fontSize:9,fontWeight:600,letterSpacing:".06em",color:P.success,flexShrink:0}}>{tx.installmentPayoff?"PAYOFF":"INSTALLMENT"}</span>}
             {tx.isExtraFunds&&<span className="mono" style={{fontSize:9,fontWeight:600,letterSpacing:".06em",color:P.success,flexShrink:0}}>+EXTRA</span>}
+            {tx.isCarryover&&<span className="mono" style={{fontSize:9,fontWeight:600,letterSpacing:".06em",color:P.info,flexShrink:0}}>CARRIED</span>}
           </div>
           {/* Under a day sub-header the date is repeated noise, and with it
               gone the line can be empty — don't render an empty 11px strip. */}
@@ -11873,7 +11928,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                 coversBucket?`covers ${coversBucket}`:"",tx.note].filter(Boolean).join(" · ")}
             </div>}
         </div>
-        <span className="tnum tx-row-amount mono" style={{fontSize:14,fontWeight:600,color:tx.isExtraFunds?P.success:P.ink,flexShrink:0}}>{tx.isExtraFunds?"+":""}{fmt(tx.amount)}</span>
+        <span className="tnum tx-row-amount mono" style={{fontSize:14,fontWeight:600,color:tx.isExtraFunds?P.success:tx.isCarryover?(tx.amount>=0?P.info:P.wine):P.ink,flexShrink:0}}>{(tx.isExtraFunds||(tx.isCarryover&&tx.amount>=0))?"+":""}{fmt(tx.amount)}</span>
         <div className="tx-row-actions">
           <IconButton icon={I.Edit} label={`Edit ${tx.name||"transaction"}`} onClick={()=>openEdit(tx)} size={13} style={{color:P.jade,opacity:.6,padding:6,minWidth:32,minHeight:32,flexShrink:0}}/>
           <IconButton icon={I.X} label={`Delete ${tx.name||"transaction"}`} onClick={()=>removeExpenseTx(tx.id)} size={14} style={{color:P.wine,opacity:.5,padding:6,minWidth:32,minHeight:32,flexShrink:0}}/>
@@ -11905,7 +11960,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
     :{elapsed:isFuture?0:9999,total:bucketProgress(viewMonth,payPeriods,budgetOwner).total};
   const burnFor=(env)=>{
     const spent=spentMap[env.id]||0;
-    const effBudget=env.budget+(extraFundsMap[env.id]||0);
+    const effBudget=env.budget+(extraFundsMap[env.id]||0)+(carryoverMap[env.id]||0);
     if(dayOfMonth<=0||effBudget<=0)return null;
     const dailyRate=spent/dayOfMonth;
     if(dailyRate<=0)return{onPace:true,depleteDay:null,dailyRate:0};
@@ -12078,7 +12133,8 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
           :envelopes.map(env=>{
             const spent=spentMap[env.id]||0;
             const extra=extraFundsMap[env.id]||0;
-            const effBudget=env.budget+extra;
+            const carry=carryoverMap[env.id]||0;
+            const effBudget=env.budget+extra+carry;
             const left=effBudget-spent;
             const ratio=effBudget>0?spent/effBudget:0;
             const trend=trendByCat[env.id];
@@ -12118,6 +12174,12 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                       <I.Plus size={9}/>{fmt(extra)}
                     </span>
                   )}
+                  {carry!==0&&(
+                    <span title={`${fmt(carry)} carried over from last month`} className="mono"
+                      style={{fontSize:10,fontWeight:600,color:carry>=0?P.info:P.wine,display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+                      <I.Refresh size={9}/>{carry>=0?"+":""}{fmt(carry)}
+                    </span>
+                  )}
                   <button onClick={()=>toggleEnvelope(env.id)} title={envOpen?"Hide transactions":"Show transactions"}
                     style={{background:"transparent",border:"none",color:envOpen?P.success:P.muted,padding:2,display:"flex",alignItems:"center",flexShrink:0}}>
                     <I.Chevron size={14} style={{transform:envOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
@@ -12153,6 +12215,16 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                     style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,color:P.br,background:"transparent",border:"none",padding:0}}>
                     <I.Send size={12}/>Add extra funds
                   </button>
+                  {!isFuture&&(
+                    <button disabled={carriedCatIds.has(env.id)}
+                      onClick={()=>setCarryoverModal({catId:env.id,name:env.name})}
+                      title={carriedCatIds.has(env.id)?"Already carried this month":"Bring last month's leftover into this category"}
+                      style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,
+                        color:carriedCatIds.has(env.id)?P.faint:P.info,background:"transparent",border:"none",padding:0,
+                        cursor:carriedCatIds.has(env.id)?"default":"pointer"}}>
+                      <I.Refresh size={12}/>{carriedCatIds.has(env.id)?"Carried over":"Add remaining from last month"}
+                    </button>
+                  )}
                 </div>
                 {/* ── inline transactions for this envelope, tap the chevron above to reveal ── */}
                 {envOpen&&(
@@ -12332,7 +12404,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
         /* Remaining-budget instrumentation for the task header: when a tracked
            envelope is chosen, show what's left in it (base + extra funds − spent). */
         const _selEnv=addMode==="tracked"&&form.catId?envelopes.find(e=>e.id===form.catId):null;
-        const _selRemaining=_selEnv?((_selEnv.budget||0)+(extraFundsMap[_selEnv.id]||0))-(spentMap[_selEnv.id]||0):null;
+        const _selRemaining=_selEnv?((_selEnv.budget||0)+(extraFundsMap[_selEnv.id]||0)+(carryoverMap[_selEnv.id]||0))-(spentMap[_selEnv.id]||0):null;
         const _clearForm=()=>setForm(f=>({...f,catId:"",goalId:"",name:"",note:"",amount:""}));
         const _ctxLabel=editTx?`Editing · ${fmtMonth(form.date?bucketKeyFor(form.date,payPeriods,budgetOwner):viewMonth)}`
           :isFuture?`Planning · ${fmtMonth(viewMonth)}`:`Recording · ${fmtMonth(viewMonth)}`;
@@ -12575,7 +12647,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                 {addMode==="tracked"&&form.catId&&form.amount&&(()=>{
                   const env=envelopes.find(e=>e.id===form.catId);
                   if(!env)return null;
-                  const effBudget=env.budget+(extraFundsMap[env.id]||0);
+                  const effBudget=env.budget+(extraFundsMap[env.id]||0)+(carryoverMap[env.id]||0);
                   const editingTx=editTx?expenses.find(e=>e.id===editTx):null;
                   const excludeAmt=(editingTx&&editingTx.catId===form.catId)?editingTx.amount:0;
                   const already=(spentMap[form.catId]||0)-excludeAmt;
@@ -12698,6 +12770,15 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
         onClose={()=>setExtraFundsModal(null)}
         onConfirm={(amount,date,note)=>{addExtraFunds(extraFundsModal.catId,extraFundsModal.name,amount,date,note,budgetOwner);setExtraFundsModal(null);}}
         fmt={fmt} cur={cur} viewMonth={viewMonth} isNow={isNow} usesPayPeriod={usesPayPeriod}/></Portal>}
+
+      {/* ── carry-over sheet ("add remaining from last month") ── */}
+      {carryoverModal&&<Portal><CarryoverSheet
+        carryoverModal={carryoverModal}
+        prevCats={prevRollup.cats}
+        prevBucketLabel={prevBucketLabel}
+        onClose={()=>setCarryoverModal(null)}
+        onConfirm={(amount,sourceName)=>{addCarryover(carryoverModal.catId,carryoverModal.name,amount,carryDate,sourceName?`Carried from ${sourceName} · ${prevBucketLabel}`:`Carried from ${prevBucketLabel}`,budgetOwner);setCarryoverModal(null);}}
+        fmt={fmt}/></Portal>}
 
       {/* ── reorder categories modal — controls the envelope card order above ── */}
       {showReorder&&(
@@ -13008,6 +13089,78 @@ function ExtraFundsSheet({extraFundsModal,onClose,onConfirm,fmt,cur,viewMonth,is
             background:P.jade,color:"#fff",border:"none",opacity:Number(amount)>0?1:.5}}>
           <I.Plus size={14}/>Add extra funds
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── carry-over sheet — brings LAST period's leftover for a category forward as
+   spending room in the viewed month. All-or-nothing: the amount is last month's
+   final displayed Left and is read-only. Matches the source category BY NAME;
+   when no name matches it offers a manual picker over last month's categories.
+   A negative leftover (overspend) may be carried too. Never touches last month
+   and never touches the Budget tab. ── */
+function CarryoverSheet({carryoverModal,prevCats,prevBucketLabel,onClose,onConfirm,fmt}){
+  useScrollLock(true); // only ever mounted while open
+  const dlgRef=useDialogA11y(onClose);
+  const cats=prevCats||[];
+  const byName=cats.find(c=>c.name===carryoverModal.name)||null;
+  const[pickId,setPickId]=useState(byName?byName.id:(cats[0]?cats[0].id:""));
+  const source=byName||cats.find(c=>c.id===pickId)||null;
+  const amount=source?Math.round((Number(source.remaining)||0)*100)/100:null;
+  const canConfirm=source!=null&&amount!==0;
+  const negative=amount!=null&&amount<0;
+  return(
+    <div className="sheet-bg" onClick={onClose}>
+      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>Carry over — {carryoverModal.name}</h3>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+        </div>
+        <div style={{fontSize:12,color:P.faint,marginBottom:16}}>
+          Brings {prevBucketLabel}'s leftover into {carryoverModal.name}'s spending room for this month. {prevBucketLabel} keeps its own leftover, and the Budget tab is unchanged.
+        </div>
+
+        {cats.length===0?(
+          <div style={{fontSize:13,color:P.sub,padding:"8px 0 16px"}}>
+            Nothing to carry — {prevBucketLabel} has no tracked categories with a budget.
+          </div>
+        ):(<>
+          {!byName&&(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:4}}>
+                No category named "{carryoverModal.name}" in {prevBucketLabel} — pick the source
+              </div>
+              <select value={pickId} onChange={e=>setPickId(e.target.value)}
+                style={{width:"100%",borderRadius:10,padding:"10px",fontSize:14,fontFamily:"inherit",background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,appearance:"none",WebkitAppearance:"none",MozAppearance:"none"}}>
+                {cats.map(c=>(
+                  <option key={c.id} value={c.id}>{c.name} — {fmt(Math.round((Number(c.remaining)||0)*100)/100)} left</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div style={{borderRadius:12,padding:"14px 16px",marginBottom:16,background:negative?P.wineS:"rgba(0,0,0,.04)",
+            border:`1px solid ${negative?"rgba(186,26,26,.25)":"var(--hairline)"}`}}>
+            <div style={{fontSize:11,color:P.sub,marginBottom:2}}>
+              {byName?`Remaining in ${source.name} · ${prevBucketLabel}`:`Remaining in ${source?source.name:""}`}
+            </div>
+            <div className="tnum" style={{fontSize:22,fontWeight:700,color:negative?P.wine:P.info}}>
+              {amount!=null?`${amount>=0?"+":""}${fmt(amount)}`:"—"}
+            </div>
+            {negative&&(
+              <div style={{fontSize:11,color:P.wine,marginTop:4}}>
+                You overspent this category last month — carrying it forward reduces this month's room by {fmt(-amount)}.
+              </div>
+            )}
+          </div>
+
+          <button disabled={!canConfirm} onClick={()=>{if(canConfirm)onConfirm(amount,source.name);}}
+            style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,padding:"10px 0",fontSize:14,fontWeight:600,
+              background:P.info,color:"#fff",border:"none",opacity:canConfirm?1:.5,cursor:canConfirm?"pointer":"default"}}>
+            <I.Refresh size={14}/>{amount!=null?`Carry ${amount>=0?"+":""}${fmt(amount)}`:"Carry over"}
+          </button>
+        </>)}
       </div>
     </div>
   );

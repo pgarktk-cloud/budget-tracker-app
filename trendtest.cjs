@@ -203,4 +203,31 @@ t("household handles a period only one owner tracked", ()=>{
   assert.strictEqual(h[0].spent,100,"periods wife didn't track still work");
 });
 
+console.log("\ntrackedSpendingFor — carry-over raises budget, never spend");
+const cur=d=>CUR+"-"+d; // a date inside the current bucket
+t("a carryover row RAISES budget/remaining and is NOT counted as spent", ()=>{
+  const base=ctx.trackedSpendingFor("me",mk([tx("me",cur("05"),"gas",100)]),CUR);
+  const gasBase=base.cats.find(c=>c.id==="gas");
+  const withCarry=ctx.trackedSpendingFor("me",mk([
+    tx("me",cur("05"),"gas",100),
+    {owner:"me",date:cur("06"),catId:"gas",amount:200,isCarryover:true},
+  ]),CUR);
+  const gas=withCarry.cats.find(c=>c.id==="gas");
+  assert.strictEqual(gas.spent,gasBase.spent,"carryover must not count as spend");
+  assert.strictEqual(gas.budget,gasBase.budget+200,"carryover must raise budget");
+  assert.strictEqual(gas.remaining,gasBase.remaining+200,"carryover must raise remaining");
+});
+t("a NEGATIVE carryover LOWERS budget and remaining", ()=>{
+  const base=ctx.trackedSpendingFor("me",mk([tx("me",cur("05"),"gas",100)]),CUR);
+  const gasBase=base.cats.find(c=>c.id==="gas");
+  const withNeg=ctx.trackedSpendingFor("me",mk([
+    tx("me",cur("05"),"gas",100),
+    {owner:"me",date:cur("06"),catId:"gas",amount:-150,isCarryover:true},
+  ]),CUR);
+  const gas=withNeg.cats.find(c=>c.id==="gas");
+  assert.strictEqual(gas.spent,gasBase.spent,"negative carryover must not move spend");
+  assert.strictEqual(gas.budget,gasBase.budget-150,"negative carryover must lower budget");
+  assert.strictEqual(gas.remaining,gasBase.remaining-150,"negative carryover must lower remaining");
+});
+
 console.log("\n"+pass+" assertions passed"+(process.exitCode?" (with failures above)":""));

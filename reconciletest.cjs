@@ -252,5 +252,30 @@ t("11 · an empty period is all zeroes, not NaN",()=>{
     `${l.key} actual is ${l.actual}`));
 });
 
+t("12 · a carryover row is never income, spend, transfer or unaccounted",()=>{
+  // Baseline: one real spend of 300 against a 1000 tracked category.
+  const base=run({plan:plan([cat("c1",1000)]),expenses:[tx({amount:300})]});
+  // Same, plus a carryover row bringing 200 of last month's leftover forward.
+  const withCarry=run({plan:plan([cat("c1",1000)]),
+    expenses:[tx({amount:300}),tx({amount:200,isCarryover:true})]});
+  // Carryover must not touch ANY reconciliation figure — it is not real money.
+  assert.strictEqual(lineOf(withCarry,"extraFunds").actual,lineOf(base,"extraFunds").actual,
+    "carryover leaked into extra-funds income");
+  assert.strictEqual(lineOf(withCarry,"tracked").actual,lineOf(base,"tracked").actual,
+    "carryover counted as tracked spend");
+  assert.strictEqual(lineOf(withCarry,"transfers").actual,lineOf(base,"transfers").actual,
+    "carryover counted as a transfer");
+  assert.strictEqual(withCarry.unaccounted,base.unaccounted,"carryover changed unaccounted");
+  assert.strictEqual(withCarry.unmatched,base.unmatched,"carryover changed unmatched");
+});
+t("12b · a NEGATIVE carryover is likewise ignored by reconciliation",()=>{
+  const base=run({plan:plan([cat("c1",1000)]),expenses:[tx({amount:300})]});
+  const withNeg=run({plan:plan([cat("c1",1000)]),
+    expenses:[tx({amount:300}),tx({amount:-150,isCarryover:true})]});
+  assert.strictEqual(withNeg.unaccounted,base.unaccounted,"negative carryover changed unaccounted");
+  assert.strictEqual(lineOf(withNeg,"tracked").actual,lineOf(base,"tracked").actual,
+    "negative carryover moved tracked spend");
+});
+
 console.log(`\n${n-fails}/${n} passed`);
 process.exit(fails?1:0);

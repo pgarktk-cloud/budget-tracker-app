@@ -148,6 +148,15 @@ t("THE TRAP: isExtraFunds rows are money coming IN and are never offered",()=>{
   assert.ok(!out.some(x=>x.name==="Wife sent extra"),"extra funds offered as a repeat");
 });
 
+t("THE TRAP: isCarryover rows are room brought forward and are never offered",()=>{
+  // Same classification rule as isExtraFunds: a carryover row is not a spend,
+  // so its name must never surface as a repeat/name suggestion.
+  const rows=TX.concat([{id:"9",owner:"me",catId:"food",name:"Carried over",
+    amount:141.28,date:"2026-08-06",isCarryover:true}]);
+  const out=templates(rows,"me",{catIds:cats});
+  assert.ok(!out.some(x=>x.name==="Carried over"),"carryover offered as a repeat");
+});
+
 t("isTransfer rows are never offered — their catId is a goal/installment id",()=>{
   const rows=TX.concat([
     {id:"6",owner:"me",catId:"goal-1",name:"House fund",amount:5000,date:"2026-08-06",isTransfer:true},
