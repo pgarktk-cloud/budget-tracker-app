@@ -929,16 +929,18 @@ function useDialogA11y(onClose,active=true){
    PRIMARY are the five in the bottom bar; MORE live behind the More sheet.
    Chosen from actual weekly use, not from what the data model happens to
    contain: Bills is touched a few times a month, Household only when the
-   split changes, Currency rarely. Net Worth moved to More because Home now
-   owns the "how rich am I" question and Home already links straight into it
-   (as it does for Goals).
+   split changes (and lives inside Bills, not as its own tab). Currency is not
+   a tab at all any more — it was used rarely and is now a quick-tool sheet
+   opened from the header (see CurrencySheet) instead of occupying a nav slot.
+   Net Worth moved to More because Home now owns the "how rich am I" question
+   and Home already links straight into it (as it does for Goals).
    HIDDEN is reachable by code but has no nav entry. Forecast (`targets`)
    sits here: the tab was retired, but its view and `data.targets` stay put
    — deleting them would orphan saved records and mean touching
    CONFLICT_COLLECTIONS for no user-visible gain. Note this does make the
    Forecast view unreachable from the UI; that was the explicit ask. */
 const PRIMARY_TABS=["home","budget","expenses","banks","investments"];
-const MORE_TABS=["networth","goals","installments","advisor","bills","currency"];
+const MORE_TABS=["networth","goals","installments","advisor","bills"];
 const HIDDEN_TABS=["targets"];
 /* The tabs a person may put on the bottom bar (Phase 7). HIDDEN_TABS are
    reachable by code only and are deliberately not choosable. PRIMARY_TABS is
@@ -1214,6 +1216,11 @@ const I={
   Package:Ic([<path key="a" d="M21 8.5 12 3.5 3 8.5v7L12 20.5l9-5z"/>,<path key="b" d="m3 8.5 9 5 9-5"/>,<path key="c" d="M12 13.5v7"/>,<path key="d" d="m7.5 6 9 5"/>]),
   Card:Ic([<rect key="a" x="2" y="5" width="20" height="14" rx="2"/>,<line key="b" x1="2" y1="10" x2="22" y2="10"/>,<line key="c" x1="6" y1="15" x2="10" y2="15"/>]),
   Cart:Ic([<circle key="a" cx="9" cy="21" r="1"/>,<circle key="b" cx="19" cy="21" r="1"/>,<path key="c" d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>]),
+  /* Added for the header's Currency button — I.Swap was already spoken for
+     (the from/to swap control inside the converter itself), so a second use
+     of the same glyph for "open the converter" would read as two different
+     things wearing one icon. */
+  Coins:Ic([<circle key="a" cx="8" cy="8" r="6"/>,<path key="b" d="M18.09 10.37A6 6 0 1 1 10.34 18"/>,<path key="c" d="M7 6h1v4"/>,<path key="d" d="m16.71 13.88.7.71-2.82 2.82"/>]),
 };
 
 /* ══ Technical Ledger presentational primitives ══════════════════════════════
@@ -3758,8 +3765,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.58.3";
-const BUILD_ID="2026.08.28.0004";
+const APP_VERSION="1.59.2";
+const BUILD_ID="2026.08.28.0007";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -6084,7 +6091,6 @@ const TAB_META={
   installments:{label:"Installments",short:"Instal",icon:I.Layers},
   advisor:{label:"Purchase Advisor",short:"Advisor",icon:I.Cart},
   bills:{label:"Bills",short:"Bills",icon:I.PiggyBank},
-  currency:{label:"Currency",short:"Currency",icon:I.Swap},
   targets:{label:"Forecast",short:"Forecast",icon:I.TrendUp},
 };
 
@@ -6181,6 +6187,7 @@ function App(){
   const[showSettings,setShowSettings]=useState(false);
   const[showPendingDiff,setShowPendingDiff]=useState(false);
   const[showSyncSheet,setShowSyncSheet]=useState(false);   // v1.45.0 header control
+  const[showCurrency,setShowCurrency]=useState(false);      // Currency is a quick-tool sheet, not a tab
   const[globalAddTrigger,setGlobalAddTrigger]=useState(0); // bumped to tell ExpenseTrackerView to open the add-transaction modal
   const[expensesFilterRequest,setExpensesFilterRequest]=useState(null); // {catNames,nonce} — Home's Savings & Investing card drill-down (Phase 4)
   const[syncMsg,setSyncMsg]=useState("");
@@ -8925,6 +8932,15 @@ function App(){
                   <HomeProfileToggle profile={profile} setProfile={setProfileSynced} owners={data.owners}/>
                 </div>}
               <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+              {/* Currency converter — a quick tool, not a tab (see the "Which
+                  tabs go where" comment). Icon-only, matching Settings' bare
+                  glyph rather than the labelled pill it had on Home, to stay
+                  inside the header's width budget alongside the sync pill. */}
+              <button onClick={()=>setShowCurrency(true)} aria-label="Currency converter" title="Currency converter"
+                style={{display:"flex",alignItems:"center",justifyContent:"center",borderRadius:2,
+                  minWidth:44,minHeight:44,color:P.sub,background:"transparent",border:"none"}}>
+                <I.Coins size={18}/>
+              </button>
               {/* Compact sync utility: a single control, opening the sync sheet.
                   Icon-only on mobile (no boxed connection button); the state
                   label appears alongside it from 768px up (.sync-label). The
@@ -8967,7 +8983,6 @@ function App(){
             confirmTdMaturity,transferTdProceeds,banks,
             includeMp2Estimate}}/>}
           {tab==="networth"&&<NetWorthView {...{netWorthParts,profile,setProfile:setProfileSynced,owners:data.owners,sarRate,convert,ratesErr,assets,addAsset,updateAsset,removeAsset,history,snapshots,captureSnapshot,addPastSnap,removeSnap,homeDisplay:data.homeDisplay||{},netWorthMilestones:data.netWorthMilestones||{}}}/>}
-          {tab==="currency"&&<CurrencyView {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
           {tab==="goals"&&<GoalsView {...{goals,banks,fmt,addGoal,updateGoal,removeGoal,contributeToGoal,removeContribution,owners:data.owners,profile,setProfile:setProfileSynced}}/>}
           {tab==="installments"&&<InstallmentsView {...{installments,installmentPayments,
             addInstallment,updateInstallment,recordInstallmentPayment,payOffInstallmentEarly,
@@ -9021,6 +9036,8 @@ function App(){
         onSaveToCloud={()=>{setShowPendingDiff(false);saveToCloud();}}/>}
       {showRecentlyDeleted&&<RecentlyDeletedModal data={data} restoreRecord={restoreRecord}
         retentionDays={TOMBSTONE_RETENTION_DAYS} onClose={()=>setShowRecentlyDeleted(false)}/>}
+      {showCurrency&&<CurrencySheet onClose={()=>setShowCurrency(false)}
+        {...{rates,ratesAt,ratesErr,ratesLoading,onRefresh:loadRates,convert,fxAmount,setFxAmount,fxFrom,setFxFrom,fxTo,setFxTo}}/>}
       {undoAction&&
         <div style={{position:"fixed",left:16,right:16,maxWidth:420,margin:"0 auto",
           bottom:"calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 24px)",zIndex:80,
@@ -13372,6 +13389,80 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
   );
 }
 
+/* Compact, read-only stand-in for HouseholdView on the Bills desktop rail.
+   `hh.expenses` is uncapped, so rendering the full HouseholdView grid there
+   made the rail (and the whole page, since the rail scrolls with it — it has
+   no inner scroll container) grow without bound. This shows the same split
+   bar/share totals and nothing editable; every control (the split slider,
+   row edit/delete, "Track in Bills", "Add shared expense") moved into
+   SharedExpensesModal below. No CRUD logic is duplicated — both this and the
+   modal read `hh`/`fmt`/`owners` the same way HouseholdView already did. */
+function HouseholdShareSummary({hh,owners,fmt,onOpenList}){
+  const total=hh.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const mine=total*(hh.splitMine/100),theirs=total-mine;
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12}}>
+        <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Shared monthly expenses</span>
+        <span className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmt(total)}</span>
+      </div>
+      <div style={{height:22,overflow:"hidden",display:"flex",marginBottom:6}}>
+        <div style={{width:`${hh.splitMine}%`,background:P.gr,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          {hh.splitMine>=14&&<span style={{fontSize:11,fontWeight:700,color:"#fff"}} className="tnum">{hh.splitMine}%</span>}
+        </div>
+        <div style={{width:`${100-hh.splitMine}%`,background:P.br,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          {100-hh.splitMine>=14&&<span style={{fontSize:11,fontWeight:700,color:"#fff"}} className="tnum">{100-hh.splitMine}%</span>}
+        </div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:P.faint,marginBottom:12}}>
+        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:7,height:7,borderRadius:999,background:P.gr,display:"inline-block"}}/>{owners.me}</span>
+        <span style={{display:"flex",alignItems:"center",gap:4}}>{owners.wife}<span style={{width:7,height:7,borderRadius:999,background:P.br,display:"inline-block"}}/></span>
+      </div>
+      <div style={{display:"flex",gap:12,marginBottom:14}}>
+        <div style={{flex:1,background:"transparent",border:`1px solid ${P.hairline}`,padding:12}}>
+          <div style={{fontSize:11,color:P.grD}}>{owners.me}'s Share</div>
+          <div className="mono tnum" style={{fontSize:22,fontWeight:600,color:P.grD}}>{fmt(mine)}</div>
+        </div>
+        <div style={{flex:1,background:"transparent",border:`1px solid ${P.hairline}`,padding:12}}>
+          <div style={{fontSize:11,color:P.br}}>{owners.wife}'s Share</div>
+          <div className="mono tnum" style={{fontSize:22,fontWeight:600,color:P.br}}>{fmt(theirs)}</div>
+        </div>
+      </div>
+      <button onClick={onOpenList}
+        style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",padding:"10px 0",
+          fontSize:12,fontWeight:500,color:P.grD,background:"transparent",border:`1px solid ${P.hairline}`,minHeight:40}}>
+        <I.Receipt size={13}/>View shared expenses ({hh.expenses.length})
+      </button>
+    </div>
+  );
+}
+
+/* Full-screen task-surface modal opened from HouseholdShareSummary's button.
+   Renders the unmodified HouseholdView — same editable list, same handlers —
+   just given its own scroll surface instead of sitting inline in the rail. */
+function SharedExpensesModal({householdProps,onClose}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  return(
+    <Portal>
+      <div className="sheet-bg task-bg" onClick={onClose}>
+        <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" aria-label="Shared expenses" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+          <div className="sheet-task-head">
+            <button onClick={onClose} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+            <span className="t-section" style={{color:P.ink,fontSize:12}}>Shared expenses (Household)</span>
+            <span style={{width:40}}/>
+          </div>
+          <div className="sheet-task-body">
+            <div style={{padding:"14px 20px"}}>
+              <HouseholdView {...householdProps}/>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
 /* ── BILLS VIEW ─────────────────────────────────────────────────────────
    A lightweight layer over Household: household.expenses items marked
    "Track in Bills" get one snapshot record per calendar month here
@@ -13461,6 +13552,7 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
   const[showAdjust,setShowAdjust]=useState(false);
   const[showHistory,setShowHistory]=useState(false);
   const[showHousehold,setShowHousehold]=useState(false);
+  const[showSharedExpenses,setShowSharedExpenses]=useState(false);
   const[openBills,setOpenBills]=useState(()=>new Set());
   const[confirmDeleteExpId,setConfirmDeleteExpId]=useState(null);
   const householdProps={hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners,onRequestDelete:setConfirmDeleteExpId};
@@ -13699,11 +13791,14 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
             ))}
         </div>
 
-        {/* Shared expenses (Household) — always visible here on desktop, folded
-            into a mobile accordion in the main column instead (see above). */}
+        {/* Shared expenses (Household) — a compact, read-only summary on the
+            desktop rail (folded into a mobile accordion in the main column
+            instead, see above). The full editable list is uncapped, so it
+            moved into a modal rather than rendering inline here — see
+            HouseholdShareSummary's comment. */}
         {!isMobile&&<div style={{marginTop:28}}>
           {secLabel("Shared expenses (Household)")}
-          <HouseholdView {...householdProps}/>
+          <HouseholdShareSummary hh={hh} owners={owners} fmt={fmt} onOpenList={()=>setShowSharedExpenses(true)}/>
         </div>}
       </div>{/* end rail */}
 
@@ -13712,6 +13807,8 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
       {showAdjust&&
         <AdjustReserveSheet currentReserve={billsReserve} fmt={fmt} onClose={()=>setShowAdjust(false)}
           onConfirm={(newBalance,note)=>{adjustBillsReserve(newBalance,note);setShowAdjust(false);}}/>}
+      {showSharedExpenses&&
+        <SharedExpensesModal householdProps={householdProps} onClose={()=>setShowSharedExpenses(false)}/>}
       <ConfirmDialog open={!!confirmDeleteExpId} title="Delete this expense?"
         message="This removes it from the shared split and, if it was tracked in Bills, from future months' Bills lists. Past Bills history is kept."
         onConfirm={()=>{removeExpense(confirmDeleteExpId);setConfirmDeleteExpId(null);}}
@@ -15808,6 +15905,35 @@ function CurrencyView({rates,ratesAt,ratesErr,ratesLoading,onRefresh,convert,fxA
           })}
         </div>
         {ratesAt&&<div style={{fontSize:11,color:P.neuSub,marginTop:10}}>Updated {new Date(ratesAt).toLocaleString()}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Currency stopped being a tab (it was used rarely and cost a nav slot) — it's
+   now a quick-tool sheet opened from the header. Uses the same full-screen
+   .sheet-task surface as Add/Edit Transaction (sharp corners, head/body
+   skeleton) rather than the smaller rounded-corner .sheet — mismatched
+   corner radii between this and the Transaction modal was the visible tell
+   that it was a different, off-pattern sheet type. App-level, so no <Portal>
+   needed (see the comment above the App-level modal list). CurrencyView
+   itself is unchanged; this only supplies the sheet shell. */
+function CurrencySheet({onClose,...currencyProps}){
+  useScrollLock(true);
+  const dlgRef=useDialogA11y(onClose);
+  return(
+    <div className="sheet-bg task-bg" onClick={onClose}>
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" aria-label="Currency converter" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+        <div className="sheet-task-head">
+          <button onClick={onClose} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+          <span className="t-section" style={{color:P.ink,fontSize:12}}>Currency converter</span>
+          <span style={{width:40}}/>
+        </div>
+        <div className="sheet-task-body">
+          <div style={{padding:"14px 20px"}}>
+            <CurrencyView {...currencyProps}/>
+          </div>
+        </div>
       </div>
     </div>
   );

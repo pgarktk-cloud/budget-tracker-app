@@ -1,9 +1,9 @@
 # Current Status
 
-_Last updated: 2026-08-28 — **v1.58.3 shipped** (Household folded into Bills +
-Budget/Expenses group cards, commit `bef1655`, live on apex). See "State of play"
-below. Feature/logic baseline unchanged except one UX-only addition (Bills
-Reserve history footer line — no data model change)._
+_Last updated: 2026-08-28 — **v1.59.2 shipped** (Currency retired as a tab —
+now a header quick-tool sheet; Bills desktop rail collapsed to a read-only
+share summary + modal). See "State of play" below. Presentation + nav-registry
+only; no data model change._
 
 ## Technical Ledger redesign — read this FIRST (2026-08-26, DEPLOYED)
 
@@ -40,10 +40,12 @@ Approved refs: `stitch-reference/*/screen.png`.
 **NEXT SESSION — Category B/C screens (partial/no direct Stitch reference).**
 Not yet recomposed; they inherit the flat/mono system but keep older
 Inter-600 `h3`/card-title patterns: Banks, standalone Net Worth,
-Forecast (hidden), Currency, More, Settings, and system overlays. (Goals,
-Installments, Purchase Advisor and Bills are done; Household is no longer a
-separate screen — folded into Bills, see "State of play".) Extrapolate from
-the proven primitives above. Minor polish still open (see `docs/ui-verification.md`
+Forecast (hidden), More, Settings, and system overlays. (Goals, Installments,
+Purchase Advisor and Bills are done; Household is no longer a separate
+screen — folded into Bills; Currency is no longer a screen at all — it's a
+header-opened quick-tool sheet, already on the current `.sheet-task` pattern,
+see "State of play".) Extrapolate from the proven primitives above. Minor
+polish still open (see `docs/ui-verification.md`
 "remaining differences"): Budget income `NumField` shows the raw ungrouped
 value; a few sample-data empty/`$0` states.
 - Test tooling lives in this session's `scratchpad/` (NOT committed; recreate
@@ -56,7 +58,40 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
-**LATEST SHIPPED: v1.58.3 / build `2026.08.28.0004`** — commit `bef1655` on
+**LATEST SHIPPED: v1.59.2 / build `2026.08.28.0007`** — not yet committed/
+pushed/deployed as of this writing (see commit step below). All 26 runners +
+parse green; browser-verified (desktop + 390px mobile) via local static
+server. Changes:
+- **Currency retired as a tab.** Removed from `MORE_TABS`/`TAB_META`/the tab
+  render dispatch. `CurrencyView` itself is unchanged; it's now wrapped by a
+  new `CurrencySheet`, opened from a header icon button (new `I.Coins` glyph
+  — `I.Swap` was already used for the converter's own from/to swap control)
+  placed left of the sync-cloud pill and Settings. Uses the same full-screen
+  `.sheet-task` surface as Add/Edit Transaction (sharp corners, mono
+  head/body) — it initially shipped on the smaller rounded `.sheet`, then was
+  corrected to match. `navTabsFor` self-heals any device that had Currency
+  pinned to its custom nav bar (no migration needed — confirmed by
+  `navtabtest.cjs`'s existing "tab removed from the app" case).
+- **Bills desktop rail no longer renders the full Household expense grid
+  inline** (it was uncapped and made the rail's page scroll excessively).
+  New `HouseholdShareSummary` shows a read-only split bar + share totals plus
+  a "View shared expenses (N)" button; the full editable list (split slider,
+  row edit/delete, "Track in Bills", "Add shared expense") moved into a new
+  `SharedExpensesModal` (same `.sheet-task` pattern). Mobile is untouched —
+  its accordion still renders the unmodified `HouseholdView` inline, exactly
+  as before. No CRUD logic duplicated; `HouseholdView` itself is unchanged
+  and is reused verbatim inside the modal.
+- Household-tab removal itself was already shipped in v1.58.3 below; this
+  session found nothing left to do there (confirmed no lingering "household"
+  tab-registry entries) and instead fixed the real problem raised — the
+  rail's scroll length.
+
+**Next C screens: More → Settings → Forecast.** (Currency is done — it's not
+a screen any more.)
+
+---
+
+**SHIPPED: v1.58.3 / build `2026.08.28.0004`** — commit `bef1655` on
 `main` (pushed), deployed to Cloudflare Pages, **confirmed live on the apex**
 (`version.json` = 1.58.3/`2026.08.28.0004`). Presentation + one UX-only addition;
 all 26 runners + parse green; browser-verified (light+dark) via a local static
