@@ -663,6 +663,52 @@ rather than the left column — its account toggles are per-decision levers, and
 mobile it stacks below the options. Scope stays the existing 2-way `budgetOwner`
 `OwnerToggle` (the advisor is never `household`); no mount-site prop change.
 
+## Bills — recomposition (2026-08-28, Category C)
+
+**Status: Pass (working tree; not committed / not deployed).** Bills (stacked
+`neu(16)` bordered cards — reserve hero, month nav, three `P.sf` stat tiles, per-
+bill cards with an always-visible control grid, an inline history disclosure)
+ported to the open-ledger language. Verified at **390 + 320 + 430 + 1600, both
+themes**, and an **expanded bill row**. All 26 runners + parse green;
+**presentation-only** (`BillsView` render + `AdjustReserveSheet` flat-token sweep —
+no reconciler/mutator/`computeBillsReserve`/data/sync diff; `billstest.cjs` 23/23).
+Harness `scratchpad/billsshots.cjs` (seeds Track-in-Bills household items so the
+reconciler generates rows + one reserve adjustment). Shots in
+`artifacts/ui-verification/bills/`.
+
+- **Bills are household-level, no owner scope** (they derive from
+  `household.expenses` where `trackInBills` is on) — so, like the app, the tab
+  carries **no `OwnerToggle`**. `owners` stays an unused prop (no mount change).
+- **Hero = Bills Reserve (cumulative) + this-month strip**, the tab's **single**
+  `GridSection`. A `Verdict` (in surplus / overdrawn / balanced) + `MetricBlock
+  hero` reserve figure + the opening-reserve `NumField` and Adjust button, then a
+  `MetricStrip` of Total allocated · Total paid · Difference; **mobile drops the
+  strip to compact key/value rows** (`useIsMobile`) to avoid the half-column money
+  clip. The **month navigator sits above the hero** and scopes the strip + list
+  (flat hairline chip + ‹ › arrows, "· Current" caption).
+- **Per-bill cards → row-expand ledger rows.** Collapsed = coloured status square
+  (jade paid / coral over-paid / muted unpaid) + name + `allocated · N left` + a
+  `ProgressMeter` (paid/allocated). Tap reveals the Allocated / Paid `NumField` /
+  Remaining / payment-date grid + a **Mark paid** toggle — the exact `updateBill`
+  wiring, unchanged. (User chose row-expand over always-visible controls.)
+- **Reserve history → open disclosure** (hairline rows, `t-section` header), no
+  bordered cards.
+- **Desktop `.split-8-4`** — LEFT = month nav + hero + ledger + history; RIGHT rail
+  = three **read-only derived modules** (all pure reads, no new logic): **Reserve
+  breakdown** (Opening + Σ(allocated−paid over all bills) + Σ adjustments = the hero
+  figure — it reconciles on screen), **Payment progress** (`ProgressMeter` + "N of M
+  paid" + paid / remaining for the month), **Recent adjustments** (last 4 from
+  `billAdjustments`). Rail stacks below on mobile.
+- **`AdjustReserveSheet` flat-token swept** (radii 10→2, `#fff`→`P.onInk`, confirm
+  button `P.gr`); Portal / scroll-lock / a11y / the plain decimal + note inputs
+  untouched (kept as-is — not converted to `NumField`, which would change commit
+  behaviour; a possible later follow-up).
+
+**Intentional differences:** no direct Stitch mockup (Category C). Household-level,
+so **no scope toggle** (unlike Banks/Net Worth/Goals). **Row-expand hides the
+pay/date controls behind one tap** (chosen for a calmer ledger). Reserve stat tiles
+folded into the hero `MetricStrip` rather than a separate boxed row.
+
 ## Typography flip — monospace as primary (2026-08-27)
 
 **Status: Pass.** JetBrains Mono became the app-wide default (`body`); Inter is now
@@ -716,6 +762,7 @@ errors, parse + 26 runners green.
 | Net Worth | ✓ (390 · 320 · 430) | ✓ | Derived (B) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (the summary MetricStrip — Total in the display currency + secondary conversions + Combined delta as `Status`); Composition / trend / driving are **open sections**. Scope toggle **above**; flat composition bar + legend (%s total 100, liabilities signed coral); two existing range charts reused unchanged; `AssetRow` → **row-expand** hairline rows (name · owner + signed value → tap reveals edit fields, item keeps its own currency); "+ Add asset/liability" rows. **Display currency follows Home** (`homeDisplay.netWorth`, PHP in sample) for all derived totals; snapshot log stays SAR. Desktop **8/4 split** with a read-only rail: **Growth** · **Next milestone** (display-currency) · assets/liabilities ledger · monthly snapshot log. Growth/trend/composition-investments show empty/`0` offline (data-limited). See "Net Worth — recomposition" above. |
 | Goals | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (hero — funded-% `Verdict` + `MetricBlock hero` Total saved w/ remaining sub + 2-up Active/Completed strip). `GoalSquare` tiles/SVG rings → flat **two-line `GoalRow`s** (icon + name + saved/target; meter + type/deadline verdict + Add/Details), owner-grouped under Household via `.ledger-group`, flat under a single owner; collapsed **Completed** group. Scope toggle **above** (shared synced `profile`; Household = me∪wife union, adds write to a real person). Desktop **8/4 split** with a read-only rail: **Portfolio progress** · **Monthly commitment** · **On-track vs at-risk** (all reuse `goalSavedTotal`/`goalDeadlineStatus`; undated goals excluded from the two deadline modules + footnoted). Add-money + Details → `.sheet-task`; standalone type picker folded into Details (3 modals → 2). See "Goals — recomposition" above. |
 | Installments | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-27) | Open-ledger, cousin of Goals: **one** bordered card (hero — due-this-period `Verdict` + `MetricBlock hero` + Remaining balance / Active plans; desktop `MetricStrip`, mobile compact key/value rows to avoid the half-column money clip). `InstallmentCard` → **row-expand `InstallmentRow`** (collapsed name·provider + status square + meter + next-due + amount; tap reveals every action). Status groups → open `t-section` accordions; empty state = "+ Add your first installment" row. **Scope 2-way `OwnerToggle` (no Household — installments can't be joint).** Desktop **8/4 split** with a read-only rail: **Debt-free horizon** · **Upcoming schedule** · **Provider exposure** (%s total 100; all reuse existing installment helpers). Four sheets flat-token swept. Sample seeds no installments → populated shots use injected plans. See "Installments — recomposition" above. |
+| Bills | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-28, working tree) | Household-level, **no scope toggle**. **One** bordered hero `GridSection` = Bills Reserve `Verdict` + `MetricBlock hero` + opening-reserve `NumField`/Adjust + a `MetricStrip` (Total allocated · Total paid · Difference; mobile → compact rows via `useIsMobile`). Month nav **above** the hero, scopes the strip + list. Per-bill cards → **row-expand rows** (status square + name + `allocated · N left` + `ProgressMeter`; tap reveals Paid `NumField` + date + Mark-paid). Reserve history → open disclosure. Desktop **8/4 split** rail = **Reserve breakdown** (reconciles to the hero figure) · **Payment progress** · **Recent adjustments**. `AdjustReserveSheet` flat-token swept. `billstest` 23/23. See "Bills — recomposition" above. |
 | Purchase Advisor | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-28, working tree) | Form-driven decision console. **Hero = the buy-form itself** (the tab's **single** `GridSection`; a verdict line at its foot resolves the decision once priced) — the one screen where the bordered card is an input surface. Three scenarios (cash / payment plan / save up) → **row-expand rows** (`pathRow`: tone square + name + key figure; tap reveals today's full detail + per-period tables). Levers → open "What if…" section. Desktop **8/4 split** with a **four-module** read-only rail (user picked all): **Path comparison** · **Earliest affordable** · **Cash availability** (the full interactive stack, moved here) · **Budget headroom** — all pure reads over existing `scenarios`/`stack`/`thisBucket`/`trimTotal`. Three sheets flat-token swept. `purchasetest` 85/85 (S3 asserts intact). See "Purchase Advisor — recomposition" above. |
 | Investments | ✓ | ✓ | Investments (A) | **Pass** (recomposed 2026-08-26) | Rebuilt to the Stitch composition: desktop **6/6 split** (portfolio overview + asset allocation LEFT · **holdings ledger** RIGHT, one vertical rule — the previously-missing split now built); analysis charts (Portfolio trend · What's driving it · Growth projection) moved to a full-width strip below. Portfolio total in **Source Serif 4** (the one serif figure); labels/returns/market-cost/allocation/holdings all mono. Holdings groups (Stocks/ETF · MP2 · Time Deposits · Gold) are open-ledger rows under mono group labels; residual `neu()`/`glass` chrome flattened; filters/selects/buttons flat hairline. Values read $0 in sample (no live quotes offline). See "Investments — recomposition" below. |
 

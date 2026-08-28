@@ -13383,18 +13383,18 @@ function AdjustReserveSheet({currentReserve,fmt,onClose,onConfirm}){
         <div style={{marginBottom:12}}>
           <div style={{fontSize:12,color:P.sub,marginBottom:4}}>New balance</div>
           <input type="text" inputMode="decimal" value={balance} onChange={e=>setBalance(e.target.value)} autoFocus
-            style={{width:"100%",borderRadius:10,padding:"10px",fontSize:18,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
+            style={{width:"100%",borderRadius:2,padding:"10px",fontSize:18,fontWeight:600,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
           {delta!==0&&
             <div style={{marginTop:6,fontSize:12,color:delta>0?P.gr:P.wine}}>{delta>0?"+":""}{fmt(delta)} change</div>}
         </div>
         <div style={{marginBottom:16}}>
           <div style={{fontSize:12,color:P.sub,marginBottom:4}}>Note <span style={{color:P.faint,fontWeight:400}}>(optional)</span></div>
           <input value={note} onChange={e=>setNote(e.target.value)} placeholder="e.g. bank statement reconciliation"
-            style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
+            style={{width:"100%",borderRadius:2,padding:"8px 10px",fontSize:14,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink}}/>
         </div>
         <button onClick={()=>onConfirm(Number(balance)||0,note)}
-          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,padding:"12px 0",fontSize:14,fontWeight:600,
-            background:P.jade,color:"#fff",border:"none"}}>
+          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:2,padding:"12px 0",fontSize:14,fontWeight:600,
+            background:P.gr,color:P.onInk,border:"none"}}>
           <I.Check size={14}/>Save reserve balance
         </button>
       </div>
@@ -13403,7 +13403,7 @@ function AdjustReserveSheet({currentReserve,fmt,onClose,onConfirm}){
   );
 }
 function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey,fmt,owners}){
-  const card=neu(16);
+  const isMobile=useIsMobile();
   const monthKeys=useMemo(()=>{
     const set=new Set(bills.map(b=>b.monthKey));
     set.add(currentMonthKey);
@@ -13419,133 +13419,226 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
   const monthDiff=totalAllocated-totalPaid;
   const[showAdjust,setShowAdjust]=useState(false);
   const[showHistory,setShowHistory]=useState(false);
-  /* no local draft here any more — NumField keeps its own while you type and
-     only commits a number on blur, so the old openingDraft state + resync
-     effect were duplicating what the field already does. */
+  const[openBills,setOpenBills]=useState(()=>new Set());
+
+  /* Rail derivations — all pure reads. The reserve breakdown reconciles to the
+     hero figure the same way computeBillsReserve() builds it: opening + Σ over
+     ALL bills of (allocated−paid) + Σ manual adjustments. */
+  const reserveNet=bills.reduce((s,b)=>s+((Number(b.allocated)||0)-(Number(b.paid)||0)),0);
+  const adjTotal=billAdjustments.reduce((s,a)=>s+(Number(a.amount)||0),0);
+  const paidCount=monthBills.filter(b=>b.status==="paid").length;
+  const paidPct=monthBills.length?Math.round(paidCount/monthBills.length*100):0;
+  const recentAdj=[...billAdjustments].sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+
+  const reserveTone=billsReserve<0?"bad":billsReserve>0?"good":"flat";
+  const secLabel=t=>(<div className="t-section" style={{color:P.muted,margin:"0 0 12px"}}>{t}</div>);
+  const railLine={display:"flex",justifyContent:"space-between",gap:8,fontSize:12,
+    color:P.sub,borderTop:`1px solid ${P.hairline}`,padding:"9px 0"};
+  const signed=v=>`${v>0?"+":v<0?"−":""}${fmt(Math.abs(v))}`;
 
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      {/* ── Bills Reserve ── */}
-      <div style={{...card,padding:16,marginBottom:16}}>
-        <div style={{fontSize:13,fontWeight:600,color:P.sub,marginBottom:4}}>Bills Reserve</div>
-        <div className="mono tnum" style={{fontSize:30,fontWeight:600,color:billsReserve<0?P.wine:P.ink,marginBottom:10}}>{fmt(billsReserve)}</div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.faint}}>
-            <span>Opening reserve</span>
-            <NumField value={openingReserve} onCommit={setOpeningReserve}
-              className="bare tnum" style={{width:70,fontSize:12,fontWeight:600,color:P.ink}}/>
+     <div className="split-8-4">
+      <div className="split-pad-r">
+
+        {/* ── Month navigator (scopes the strip + list below) ── */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+          <IconButton icon={I.ArrowUp} label="Previous month" disabled={!canPrev} onClick={()=>canPrev&&setViewMonth(monthKeys[idx-1])}
+            size={16} style={{color:canPrev?P.sub:P.faint,opacity:canPrev?1:.4,transform:"rotate(-90deg)"}}/>
+          <div style={{flex:1,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+            border:`1px solid ${P.hairline}`,borderRadius:2}}>
+            <span className="mono" style={{fontSize:13,fontWeight:500,color:P.ink,textTransform:"uppercase",letterSpacing:".06em"}}>{monthKeyLabel(viewMonth)}</span>
+            {viewMonth===currentMonthKey&&<span className="t-label" style={{color:P.success}}>· Current</span>}
           </div>
+          <IconButton icon={I.ArrowUp} label="Next month" disabled={!canNext} onClick={()=>canNext&&setViewMonth(monthKeys[idx+1])}
+            size={16} style={{color:canNext?P.sub:P.faint,opacity:canNext?1:.4,transform:"rotate(90deg)"}}/>
         </div>
-        <button onClick={()=>setShowAdjust(true)}
-          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:12,padding:"11px 0",
-            fontSize:13,fontWeight:600,color:P.jade,background:P.grS,border:"none",minHeight:44}}>
-          <I.PiggyBank size={14}/>Adjust Bills Reserve
-        </button>
-      </div>
 
-      {/* ── Month navigator ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-        <IconButton icon={I.ArrowUp} label="Previous month" disabled={!canPrev} onClick={()=>canPrev&&setViewMonth(monthKeys[idx-1])}
-          size={16} style={{color:canPrev?P.sub:P.faint,opacity:canPrev?1:.4,transform:"rotate(-90deg)"}}/>
-        <div style={{fontSize:14,fontWeight:600,color:P.ink,display:"flex",alignItems:"center",gap:6}}>
-          <I.Calendar size={13} style={{color:P.faint}}/>{monthKeyLabel(viewMonth)}
-          {viewMonth===currentMonthKey&&<span style={{fontSize:10,fontWeight:600,color:P.jade,background:P.grS,borderRadius:999,padding:"2px 8px"}}>Current</span>}
-        </div>
-        <IconButton icon={I.ArrowUp} label="Next month" disabled={!canNext} onClick={()=>canNext&&setViewMonth(monthKeys[idx+1])}
-          size={16} style={{color:canNext?P.sub:P.faint,opacity:canNext?1:.4,transform:"rotate(90deg)"}}/>
-      </div>
-
-      {/* ── Month summary ── */}
-      <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-        <div style={{flex:"1 1 100px",background:P.sf,borderRadius:12,padding:12}}>
-          <div style={{fontSize:11,color:P.faint}}>Total Allocated</div>
-          <div className="mono tnum" style={{fontSize:18,fontWeight:600,color:P.ink}}>{fmt(totalAllocated)}</div>
-        </div>
-        <div style={{flex:"1 1 100px",background:P.sf,borderRadius:12,padding:12}}>
-          <div style={{fontSize:11,color:P.faint}}>Total Paid</div>
-          <div className="mono tnum" style={{fontSize:18,fontWeight:600,color:P.ink}}>{fmt(totalPaid)}</div>
-        </div>
-        <div style={{flex:"1 1 100px",background:monthDiff<0?P.wineS:P.grS,borderRadius:12,padding:12}}>
-          <div style={{fontSize:11,color:monthDiff<0?P.wine:P.grD}}>Monthly Difference</div>
-          <div className="mono tnum" style={{fontSize:18,fontWeight:600,color:monthDiff<0?P.wine:P.grD}}>{monthDiff>=0?"+":""}{fmt(monthDiff)}</div>
-        </div>
-      </div>
-
-      {/* ── Bills list ── */}
-      {monthBills.length===0?(
-        <div style={{...card,padding:20,textAlign:"center",marginBottom:16}}>
-          <div style={{fontSize:13,color:P.sub}}>
-            {viewMonth===currentMonthKey
-              ?"No bills tracked yet. Turn on \"Track in Bills\" for a Household item to see it here."
-              :"No bills recorded for this month."}
-          </div>
-        </div>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
-          {monthBills.map(b=>{
-            const remaining=(Number(b.allocated)||0)-(Number(b.paid)||0);
-            const isPaid=b.status==="paid";
-            return(
-              <div key={b.id} style={{...card,padding:"12px 14px"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8}}>
-                  <div style={{fontSize:14,fontWeight:600,color:P.ink,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.itemName}</div>
-                  <button onClick={()=>updateBill(b.id,{status:isPaid?"unpaid":"paid",paymentDate:!isPaid&&!b.paymentDate?new Date().toISOString().slice(0,10):b.paymentDate})}
-                    aria-pressed={isPaid}
-                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,borderRadius:999,padding:"7px 12px",fontSize:12,fontWeight:600,minHeight:32,
-                      border:`1px solid ${isPaid?P.grS:P.line}`,background:isPaid?P.grS:"transparent",color:isPaid?P.grD:P.faint}}>
-                    {isPaid?<I.Check size={13}/>:<I.Calendar size={13}/>}{isPaid?"Paid":"Unpaid"}
-                  </button>
-                </div>
-                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                  <div style={{flex:"1 1 90px"}}>
-                    <div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Allocated</div>
-                    <div className="tnum" style={{fontSize:14,fontWeight:600,color:P.ink}}>{fmt(b.allocated)}</div>
-                  </div>
-                  <div style={{flex:"1 1 90px"}}>
-                    <div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Paid</div>
-                    <NumField value={b.paid} onCommit={v=>updateBill(b.id,{paid:v})} min={0}
-                      className="bare tnum" style={{fontSize:14,fontWeight:600,color:P.ink,width:"100%"}}/>
-                  </div>
-                  <div style={{flex:"1 1 90px"}}>
-                    <div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Remaining</div>
-                    <div className="tnum" style={{fontSize:14,fontWeight:600,color:remaining<0?P.wine:P.ink}}>{fmt(remaining)}</div>
-                  </div>
-                  <div style={{flex:"1 1 130px"}}>
-                    <div style={{fontSize:10,color:P.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Payment date</div>
-                    <input type="date" value={b.paymentDate||""} onChange={e=>updateBill(b.id,{paymentDate:e.target.value})}
-                      className="bare" style={{fontSize:13,color:P.ink,width:"100%"}}/>
-                  </div>
-                </div>
+        {/* ── HERO — Bills Reserve (cumulative) + this-month strip ── */}
+        <GridSection flush title="Bills Reserve" style={{marginBottom:24}}>
+          <div style={{padding:"20px 24px",borderBottom:`1px solid ${P.hairline}`}}>
+            <Verdict tone={reserveTone}>
+              {billsReserve<0
+                ?`Overdrawn by ${fmt(-billsReserve)} — more has been paid than set aside`
+                :billsReserve>0
+                  ?`In surplus — ${fmt(billsReserve)} set aside beyond what's been billed`
+                  :"Balanced — nothing held in reserve"}
+            </Verdict>
+            <MetricBlock hero label="Reserve balance" value={fmt(billsReserve)}
+              valueColor={billsReserve<0?P.wine:undefined}/>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginTop:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:P.faint}}>
+                <span>Opening reserve</span>
+                <NumField value={openingReserve} onCommit={setOpeningReserve}
+                  className="bare tnum" style={{width:80,fontSize:12,fontWeight:500,color:P.ink}}/>
               </div>
-            );
-          })}
-        </div>
-      )}
+              <button onClick={()=>setShowAdjust(true)}
+                style={{display:"flex",alignItems:"center",gap:6,borderRadius:2,padding:"9px 14px",
+                  fontSize:12,fontWeight:500,color:P.grD,background:"transparent",border:`1px solid ${P.hairline}`,minHeight:40}}>
+                <I.PiggyBank size={14}/>Adjust Bills Reserve
+              </button>
+            </div>
+          </div>
+          {isMobile
+            ?<div style={{padding:"6px 24px 14px"}}>
+              <div style={railLine}><span>Total allocated</span>
+                <span className="tnum" style={{color:P.ink,fontWeight:500}}>{fmt(totalAllocated)}</span></div>
+              <div style={railLine}><span>Total paid</span>
+                <span className="tnum" style={{color:P.ink,fontWeight:500}}>{fmt(totalPaid)}</span></div>
+              <div style={railLine}><span>Difference</span>
+                <span className="tnum" style={{color:monthDiff<0?P.wine:P.success,fontWeight:500}}>{signed(monthDiff)}</span></div>
+            </div>
+            :<MetricStrip>
+              <MetricBlock label="Total allocated" value={fmt(totalAllocated)}/>
+              <MetricBlock label="Total paid" value={fmt(totalPaid)}/>
+              <MetricBlock label="Difference" value={signed(monthDiff)}
+                valueColor={monthDiff<0?P.wine:P.success}/>
+            </MetricStrip>}
+        </GridSection>
 
-      {/* ── Reserve history ── */}
-      <button onClick={()=>setShowHistory(v=>!v)}
-        style={{display:"flex",alignItems:"center",gap:6,width:"100%",justifyContent:"space-between",padding:"10px 4px",
-          fontSize:13,fontWeight:600,color:P.sub,background:"transparent",border:"none",minHeight:44}}>
-        <span>Bills Reserve history {billAdjustments.length>0?`(${billAdjustments.length})`:""}</span>
-        <I.Chevron size={14} style={{transform:showHistory?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
-      </button>
-      {showHistory&&(
-        billAdjustments.length===0?(
-          <div className="sans" style={{fontSize:12,color:P.faint,padding:"4px 4px 8px"}}>No manual adjustments yet.</div>
-        ):(
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:4}}>
-            {[...billAdjustments].sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||"")).map(a=>(
-              <div key={a.id} style={{...card,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                <div style={{minWidth:0}}>
-                  <div style={{fontSize:13,color:P.ink}}>{fmt(a.prevBalance)} → {fmt(a.newBalance)}</div>
-                  <div style={{fontSize:11,color:P.faint}}>{a.date}{a.note?` · ${a.note}`:""}</div>
+        {/* ── Bills — row-expand ledger ── */}
+        <div style={{marginBottom:24}}>
+          {secLabel(`Bills · ${monthKeyLabel(viewMonth)}`)}
+          {monthBills.length===0
+            ?<div className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.6,padding:"12px 0",borderTop:`1px solid ${P.hairline}`}}>
+               {viewMonth===currentMonthKey
+                 ?"No bills tracked yet. Turn on “Track in Bills” for a Household item to see it here."
+                 :"No bills recorded for this month."}
+             </div>
+            :monthBills.map(b=>{
+              const remaining=(Number(b.allocated)||0)-(Number(b.paid)||0);
+              const isPaid=b.status==="paid";
+              const openS=openBills.has(b.id);
+              const pct=(Number(b.allocated)||0)>0?Math.min(100,(Number(b.paid)||0)/(Number(b.allocated)||0)*100):(isPaid?100:0);
+              const sq=isPaid?P.success:(remaining<0?P.danger:P.muted);
+              return(
+                <div key={b.id} style={{borderTop:`1px solid ${P.hairline}`,padding:"12px 0"}}>
+                  <button onClick={()=>setOpenBills(s=>{const n=new Set(s);n.has(b.id)?n.delete(b.id):n.add(b.id);return n;})}
+                    aria-expanded={openS}
+                    style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"transparent",
+                      border:"none",padding:0,textAlign:"left",cursor:"pointer"}}>
+                    <span style={{width:8,height:8,background:sq,flexShrink:0}}/>
+                    <span style={{flex:1,minWidth:0,fontSize:14,fontWeight:500,color:P.ink,overflow:"hidden",
+                      textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.itemName}</span>
+                    <span className="tnum" style={{fontSize:13,color:P.sub,flexShrink:0}}>
+                      {fmt(b.allocated)} · {isPaid?"paid":`${fmt(remaining)} left`}</span>
+                    <I.Chevron size={13} style={{flexShrink:0,color:P.faint,
+                      transform:openS?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+                  </button>
+                  <div style={{marginTop:8,marginLeft:18}}>
+                    <ProgressMeter pct={pct} color={isPaid?P.success:P.info}/>
+                  </div>
+                  {openS&&
+                    <div style={{marginLeft:18,marginTop:12}}>
+                      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:12}}>
+                        <div style={{flex:"1 1 90px"}}>
+                          <div className="t-label" style={{color:P.faint}}>Allocated</div>
+                          <div className="tnum" style={{fontSize:14,fontWeight:500,color:P.ink}}>{fmt(b.allocated)}</div>
+                        </div>
+                        <div style={{flex:"1 1 90px"}}>
+                          <div className="t-label" style={{color:P.faint}}>Paid</div>
+                          <NumField value={b.paid} onCommit={v=>updateBill(b.id,{paid:v})} min={0}
+                            className="bare tnum" style={{fontSize:14,fontWeight:500,color:P.ink,width:"100%"}}/>
+                        </div>
+                        <div style={{flex:"1 1 90px"}}>
+                          <div className="t-label" style={{color:P.faint}}>Remaining</div>
+                          <div className="tnum" style={{fontSize:14,fontWeight:500,color:remaining<0?P.wine:P.ink}}>{fmt(remaining)}</div>
+                        </div>
+                        <div style={{flex:"1 1 130px"}}>
+                          <div className="t-label" style={{color:P.faint}}>Payment date</div>
+                          <input type="date" value={b.paymentDate||""} onChange={e=>updateBill(b.id,{paymentDate:e.target.value})}
+                            className="bare" style={{fontSize:13,fontFamily:"inherit",color:P.ink,width:"100%"}}/>
+                        </div>
+                      </div>
+                      <button onClick={()=>updateBill(b.id,{status:isPaid?"unpaid":"paid",paymentDate:!isPaid&&!b.paymentDate?new Date().toISOString().slice(0,10):b.paymentDate})}
+                        aria-pressed={isPaid}
+                        style={{display:"flex",alignItems:"center",gap:6,borderRadius:2,padding:"8px 14px",fontSize:12,fontWeight:500,minHeight:40,
+                          border:`1px solid ${isPaid?P.gr:P.hairline}`,background:isPaid?P.grS:"transparent",color:isPaid?P.grD:P.sub}}>
+                        {isPaid?<I.Check size={13}/>:<I.Calendar size={13}/>}{isPaid?"Paid — tap to reopen":"Mark paid"}
+                      </button>
+                    </div>}
                 </div>
-                <div className="tnum" style={{fontSize:13,fontWeight:600,color:a.amount>=0?P.gr:P.wine,flexShrink:0}}>{a.amount>=0?"+":""}{fmt(a.amount)}</div>
+              );
+            })}
+        </div>
+
+        {/* ── Reserve history (open disclosure) ── */}
+        <button onClick={()=>setShowHistory(v=>!v)}
+          style={{display:"flex",alignItems:"center",gap:6,width:"100%",justifyContent:"space-between",padding:"10px 0",
+            background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,minHeight:44}}>
+          <span className="t-section" style={{color:P.muted}}>Reserve history {billAdjustments.length>0?`(${billAdjustments.length})`:""}</span>
+          <I.Chevron size={14} style={{color:P.faint,transform:showHistory?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+        </button>
+        {showHistory&&(
+          billAdjustments.length===0?(
+            <div className="sans" style={{fontSize:12,color:P.faint,padding:"4px 0 8px"}}>No manual adjustments yet.</div>
+          ):(
+            <div>
+              {recentAdj.map(a=>(
+                <div key={a.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,
+                  borderTop:`1px solid ${P.hairline}`,padding:"10px 0"}}>
+                  <div style={{minWidth:0}}>
+                    <div className="tnum" style={{fontSize:13,color:P.ink}}>{fmt(a.prevBalance)} → {fmt(a.newBalance)}</div>
+                    <div style={{fontSize:11,color:P.faint}}>{a.date}{a.note?` · ${a.note}`:""}</div>
+                  </div>
+                  <div className="tnum" style={{fontSize:13,fontWeight:500,color:a.amount>=0?P.gr:P.wine,flexShrink:0}}>{signed(a.amount)}</div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+      </div>{/* end .split-pad-r */}
+
+      {/* ── RIGHT RAIL — read-only derived modules; stacks below on mobile ── */}
+      <div className="split-pad-l" style={{paddingTop:8}}>
+        {/* Reserve breakdown — how the hero figure is built */}
+        <div style={{marginBottom:28}}>
+          {secLabel("Reserve breakdown")}
+          <div style={railLine}><span>Opening reserve</span>
+            <span className="tnum" style={{color:P.ink}}>{fmt(openingReserve)}</span></div>
+          <div style={railLine}><span>Allocated − paid</span>
+            <span className="tnum" style={{color:reserveNet<0?P.wine:P.ink}}>{signed(reserveNet)}</span></div>
+          <div style={railLine}><span>Manual adjustments</span>
+            <span className="tnum" style={{color:adjTotal<0?P.wine:P.ink}}>{signed(adjTotal)}</span></div>
+          <div style={{...railLine,borderTop:`1px solid ${P.hairline}`}}>
+            <span style={{color:P.ink,fontWeight:500}}>Reserve balance</span>
+            <span className="tnum" style={{color:billsReserve<0?P.wine:P.ink,fontWeight:500}}>{fmt(billsReserve)}</span></div>
+        </div>
+
+        {/* Payment progress — this month */}
+        {monthBills.length>0&&
+          <div style={{marginBottom:28}}>
+            {secLabel("Payment progress")}
+            <div style={{marginBottom:8}}>
+              <ProgressMeter pct={paidPct} color={paidCount===monthBills.length?P.success:P.info}/>
+            </div>
+            <div style={railLine}><span>Bills paid</span>
+              <span className="tnum" style={{color:P.ink}}>{paidCount} of {monthBills.length}</span></div>
+            <div style={railLine}><span>Paid</span>
+              <span className="tnum" style={{color:P.ink}}>{fmt(totalPaid)}</span></div>
+            <div style={railLine}><span>Remaining</span>
+              <span className="tnum" style={{color:monthDiff>0?P.ink:P.success}}>{fmt(monthDiff)}</span></div>
+          </div>}
+
+        {/* Recent adjustments — the correction log at a glance */}
+        <div>
+          {secLabel("Recent adjustments")}
+          {recentAdj.length===0
+            ?<div className="sans" style={{fontSize:12,color:P.faint,lineHeight:1.5}}>No manual adjustments yet.</div>
+            :recentAdj.slice(0,4).map(a=>(
+              <div key={a.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,
+                borderTop:`1px solid ${P.hairline}`,padding:"9px 0"}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:11,color:P.faint}}>{a.date}</div>
+                  {a.note&&<div className="sans" style={{fontSize:11,color:P.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.note}</div>}
+                </div>
+                <span className="tnum" style={{fontSize:12,fontWeight:500,color:a.amount>=0?P.gr:P.wine,flexShrink:0}}>{signed(a.amount)}</span>
               </div>
             ))}
-          </div>
-        )
-      )}
+        </div>
+      </div>{/* end rail */}
+
+     </div>{/* end .split-8-4 */}
 
       {showAdjust&&
         <AdjustReserveSheet currentReserve={billsReserve} fmt={fmt} onClose={()=>setShowAdjust(false)}

@@ -62,20 +62,24 @@ hero, `InstallmentCard`→row-expand `InstallmentRow`, open status groups, deskt
 8/4 rail (Debt-free horizon · Upcoming schedule · Provider exposure). Presentation-
 only; `installmenttest` 41/41; all 26 runners + parse green.
 
-**IN THE WORKING TREE — NOT committed / NOT deployed (verify+hold): Purchase
-Advisor recompose (Category C, 2026-08-28).** Presentation-only
-(`PurchaseAdvisorView` render + a flat-token sweep of its 3 sheets); all 26 runners
-+ parse green (`purchasetest` 85/85, S3 asserts intact); browser-verified
-390/320/430/1600 both themes + expanded row + empty state (shots in
-`artifacts/ui-verification/advisor/`; harness `scratchpad/advisorshots.cjs`).
-User-chosen shape: **hero = the buy-form itself** (the one screen whose bordered
-card is an input surface), **3 scenarios = row-expand rows**, **rail = all four
-modules** (Path comparison · Earliest affordable · Cash availability · Budget
-headroom). Detail: `stitch-redesign-progress` memory + "Purchase Advisor —
-recomposition" in `docs/ui-verification.md`. **To ship:** bump `APP_VERSION`/
-`BUILD_ID` (index.html) + `sw.js` + `version.json` to 1.58.0, `node stage.cjs`, then
-`npx wrangler pages deploy site --project-name=whered-it-go --branch=main`.
-**Next C screens: Bills → Household → Currency → More → Settings → Forecast.**
+**COMMITTED to `main`, NOT yet deployed (held): Purchase Advisor recompose**
+(commit `6fffd04`, 2026-08-28) — form-hero + row-expand scenarios + four-module
+rail. Presentation-only; `purchasetest` 85/85. Detail: `stitch-redesign-progress`
+memory + "Purchase Advisor — recomposition" in `docs/ui-verification.md`.
+
+**IN THE WORKING TREE — NOT committed / NOT deployed (verify+hold): Bills recompose**
+(Category C, 2026-08-28). Presentation-only (`BillsView` render + `AdjustReserveSheet`
+flat-token sweep); all 26 runners + parse green (`billstest` 23/23); browser-verified
+390/320/430/1600 both themes + expanded row (shots `artifacts/ui-verification/bills/`;
+harness `scratchpad/billsshots.cjs`). User-chosen shape: **hero = Reserve + this-month
+strip** (month nav above), **rows = row-expand**, **rail = Reserve breakdown ·
+Payment progress · Recent adjustments**. Household-level, **no scope toggle**. Detail:
+memory + "Bills — recomposition" in `docs/ui-verification.md`.
+
+**To ship both (one release):** bump `APP_VERSION`/`BUILD_ID` (index.html) + `sw.js`
++ `version.json` to **1.58.0**, `node stage.cjs`, then `npx wrangler pages deploy
+site --project-name=whered-it-go --branch=main`.
+**Next C screens: Household → Currency → More → Settings → Forecast.**
 
 ---
 
@@ -114,12 +118,12 @@ density, editable inputs; NOT fixed (a Budget-row-layout question, not typograph
 Category A (direct Stitch reference) — **shipped v1.52.0**:
 Home ✅ · Budget ✅ · Expenses ✅ · Add/Edit Transaction ✅ · Investments ✅
 Category B/C (derived, no direct mockup):
-Banks ✅ · Net Worth ✅ · Goals ✅ · Installments ✅ (v1.57.0) · **Purchase Advisor ✅**
-(working tree, held) · Bills ⬜ **(NEXT)** · Household ⬜ · Currency ⬜ · More sheet ⬜ ·
-Settings ⬜ · Forecast (hidden) ⬜ · system overlays (Conflict / PendingChanges /
-RecentlyDeleted / ProfilePicker / FirstConnect) ⬜
+Banks ✅ · Net Worth ✅ · Goals ✅ · Installments ✅ (v1.57.0) · Purchase Advisor ✅
+(committed `6fffd04`, held) · **Bills ✅** (working tree, held) · Household ⬜ **(NEXT)** ·
+Currency ⬜ · More sheet ⬜ · Settings ⬜ · Forecast (hidden) ⬜ · system overlays
+(Conflict / PendingChanges / RecentlyDeleted / ProfilePicker / FirstConnect) ⬜
 
-**Next session — Bills** (once Purchase Advisor is committed/deployed). Carry-forward
+**Next session — Household** (once Purchase Advisor + Bills are deployed). Carry-forward
 redesign preferences (see
 `redesign-relayout-principles` memory + `stitch-workflow.md`): (1) **only the
 hero/summary is a bordered card; everything else is an open section** — count
