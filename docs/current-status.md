@@ -1,9 +1,9 @@
 # Current Status
 
-_Last updated: 2026-08-28 — **v1.57.0 shipped** (Installments recompose, commit
-`b791cc7`, live on apex). **In the working tree, not yet committed/deployed:** the
-Purchase Advisor recompose (Category C, presentation-only). See "State of play"
-below. Feature/logic baseline unchanged._
+_Last updated: 2026-08-28 — **v1.58.3 shipped** (Household folded into Bills +
+Budget/Expenses group cards, commit `bef1655`, live on apex). See "State of play"
+below. Feature/logic baseline unchanged except one UX-only addition (Bills
+Reserve history footer line — no data model change)._
 
 ## Technical Ledger redesign — read this FIRST (2026-08-26, DEPLOYED)
 
@@ -40,9 +40,10 @@ Approved refs: `stitch-reference/*/screen.png`.
 **NEXT SESSION — Category B/C screens (partial/no direct Stitch reference).**
 Not yet recomposed; they inherit the flat/mono system but keep older
 Inter-600 `h3`/card-title patterns: Banks, standalone Net Worth,
-Forecast (hidden), Goals, Installments, Purchase Advisor, Bills, Household,
-Currency, More, Settings, and system overlays. Extrapolate from the proven
-primitives above. Minor polish still open (see `docs/ui-verification.md`
+Forecast (hidden), Currency, More, Settings, and system overlays. (Goals,
+Installments, Purchase Advisor and Bills are done; Household is no longer a
+separate screen — folded into Bills, see "State of play".) Extrapolate from
+the proven primitives above. Minor polish still open (see `docs/ui-verification.md`
 "remaining differences"): Budget income `NumField` shows the raw ungrouped
 value; a few sample-data empty/`$0` states.
 - Test tooling lives in this session's `scratchpad/` (NOT committed; recreate
@@ -55,31 +56,31 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
-**LATEST SHIPPED: v1.57.0 / build `2026.08.27.0008`** — commit `b791cc7` on `main`
-(pushed), deployed to Cloudflare Pages, **confirmed live on the apex** — the
-**Installments** open-ledger recompose (Category C, cousin of Goals): one bordered
-hero, `InstallmentCard`→row-expand `InstallmentRow`, open status groups, desktop
-8/4 rail (Debt-free horizon · Upcoming schedule · Provider exposure). Presentation-
-only; `installmenttest` 41/41; all 26 runners + parse green.
+**LATEST SHIPPED: v1.58.3 / build `2026.08.28.0004`** — commit `bef1655` on
+`main` (pushed), deployed to Cloudflare Pages, **confirmed live on the apex**
+(`version.json` = 1.58.3/`2026.08.28.0004`). Presentation + one UX-only addition;
+all 26 runners + parse green; browser-verified (light+dark) via a local static
+server. Changes:
+- **Household folded into Bills**, removed as a standalone tab (`MORE_TABS`,
+  `TAB_META`). `HouseholdView` now renders inside `BillsView` — a collapsible
+  section in the main column on mobile, always-visible in the desktop rail
+  (`isMobile` branch, one live instance). Its delete-confirm dialog was lifted
+  out to a sibling of `.split-8-4` (matches `AdjustReserveSheet`'s placement —
+  no dialog inside a collapsible body). Restyled off the old `neu(16)` card look
+  to flat/hairline; slider thumb flattened to a square (`.flat-range`, the last
+  round control in the app).
+- **Bills Reserve history** gets a "Current reserve (today)" footer line so old
+  adjustment deltas don't read as still-held money — `computeBillsReserve` itself
+  is untouched (confirmed correct, cumulative-by-design, not a bug).
+- **Bills month nav** no longer limited to months with existing rows — `monthKeys`
+  builds a fixed 24-back/6-forward window (`shiftMonthKey`). Reconciler still only
+  ever writes the true current month (viewing a past month materializes nothing).
+- **Budget + Expenses category groups** now render as a bordered card
+  (`.budget-group`, radius 0) with a white header strip (`var(--surface)`, same
+  token as hero cards) — Expenses envelopes gained `groupId` and a per-group
+  wrapper to match Budget's existing grouping exactly.
 
-**COMMITTED to `main`, NOT yet deployed (held): Purchase Advisor recompose**
-(commit `6fffd04`, 2026-08-28) — form-hero + row-expand scenarios + four-module
-rail. Presentation-only; `purchasetest` 85/85. Detail: `stitch-redesign-progress`
-memory + "Purchase Advisor — recomposition" in `docs/ui-verification.md`.
-
-**IN THE WORKING TREE — NOT committed / NOT deployed (verify+hold): Bills recompose**
-(Category C, 2026-08-28). Presentation-only (`BillsView` render + `AdjustReserveSheet`
-flat-token sweep); all 26 runners + parse green (`billstest` 23/23); browser-verified
-390/320/430/1600 both themes + expanded row (shots `artifacts/ui-verification/bills/`;
-harness `scratchpad/billsshots.cjs`). User-chosen shape: **hero = Reserve + this-month
-strip** (month nav above), **rows = row-expand**, **rail = Reserve breakdown ·
-Payment progress · Recent adjustments**. Household-level, **no scope toggle**. Detail:
-memory + "Bills — recomposition" in `docs/ui-verification.md`.
-
-**To ship both (one release):** bump `APP_VERSION`/`BUILD_ID` (index.html) + `sw.js`
-+ `version.json` to **1.58.0**, `node stage.cjs`, then `npx wrangler pages deploy
-site --project-name=whered-it-go --branch=main`.
-**Next C screens: Household → Currency → More → Settings → Forecast.**
+**Next C screens: Currency → More → Settings → Forecast.**
 
 ---
 
