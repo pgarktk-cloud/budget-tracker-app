@@ -264,6 +264,29 @@ select{font:inherit;}
   border-radius:4px 4px 0 0;
 }
 
+/* ── Settings: single accordion on mobile, two-pane on desktop ──
+   The section list (`.settings-nav`) is hidden below 1024 (the accordion is the
+   navigation there); at ≥1024 it becomes a persistent left rail and the right
+   pane shows only the active section's body. The 1024 breakpoint matches the
+   `useMinWidth(1024)` the component uses to drive `activeSec`. */
+.settings-nav{display:none;}
+.settings-nav-btn{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  background:transparent;border:none;cursor:pointer;min-height:40px;padding:10px 12px 10px 10px;
+  color:var(--muted);font-family:'JetBrains Mono',ui-monospace,monospace;
+  font-size:12px;font-weight:400;letter-spacing:.04em;
+}
+.settings-nav-btn.is-active{
+  color:var(--ink);background:var(--surface-subtle);box-shadow:inset 2px 0 0 var(--ink);
+}
+@media(min-width:1024px){
+  .sheet.settings-sheet{max-width:900px;}
+  .settings-sheet .set-2pane{display:grid;grid-template-columns:216px 1fr;align-items:start;}
+  .settings-sheet .settings-nav{display:flex;flex-direction:column;
+    border-right:1px solid var(--hairline);margin-right:22px;position:sticky;top:34px;}
+  .settings-sheet .set-pane-body{min-width:0;}
+}
+
 
 .spin{animation:spin .9s linear infinite;}
 :focus-visible{outline:2px solid var(--gr);outline-offset:1px;}
@@ -646,15 +669,19 @@ select{transition:background .22s;}
    a bar you tap constantly; the color change is enough feedback. */
 .bottom-nav-btn:active{transform:none;}
 
-/* More sheet: destinations as a two-column grid of tappable rows. */
-.more-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
-.more-item{
-  display:flex;align-items:center;gap:10px;
-  padding:14px 12px;min-height:56px;border:1px solid var(--hairline);border-radius:0;
-  background:var(--surface);
-  font-size:14px;font-weight:600;text-align:left;cursor:pointer;min-width:0;
+/* More sheet: destinations as full-width hairline ledger rows (mobile nav
+   sheet; desktop already exposes every destination in the sidebar). */
+.more-list{display:flex;flex-direction:column;}
+.more-row{
+  display:flex;align-items:center;gap:12px;width:100%;
+  padding:14px 4px;min-height:52px;border:none;border-top:1px solid var(--hairline);
+  background:transparent;text-align:left;cursor:pointer;min-width:0;color:var(--ink);
+  font-size:14px;font-weight:500;
 }
-.more-item>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.more-row:last-child{border-bottom:1px solid var(--hairline);}
+.more-row.is-active{background:var(--surface-subtle);box-shadow:inset 2px 0 0 var(--ink);padding-left:10px;}
+.more-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.more-row .more-chev{color:var(--muted);flex-shrink:0;}
 
 /* ── Status pill (Tracked / Not tracked, etc.) ──
    One shape for every on/off status badge: same height, padding, icon gap,
@@ -781,6 +808,22 @@ const{ResponsiveContainer,LineChart,Line,AreaChart,Area,XAxis,YAxis,CartesianGri
    media query for pure style tweaks. */
 function useIsMobile(){
   const q="(max-width:768px)";
+  const[m,setM]=useState(()=>(typeof window!=="undefined"&&window.matchMedia)?window.matchMedia(q).matches:false);
+  useEffect(()=>{
+    if(typeof window==="undefined"||!window.matchMedia)return;
+    const mq=window.matchMedia(q);
+    const on=()=>setM(mq.matches);
+    on();
+    if(mq.addEventListener)mq.addEventListener("change",on);else mq.addListener(on);
+    return()=>{if(mq.removeEventListener)mq.removeEventListener("change",on);else mq.removeListener(on);};
+  },[]);
+  return m;
+}
+/* Matches a min-width media query. Used where a component needs a JS breakpoint
+   that must agree with a CSS one (e.g. Settings' two-pane layout at 1024, where
+   useIsMobile's 768 would leave a dead zone with no visible section switcher). */
+function useMinWidth(px){
+  const q=`(min-width:${px}px)`;
   const[m,setM]=useState(()=>(typeof window!=="undefined"&&window.matchMedia)?window.matchMedia(q).matches:false);
   useEffect(()=>{
     if(typeof window==="undefined"||!window.matchMedia)return;
@@ -1156,16 +1199,16 @@ function ConfirmDialog({open,title,message,confirmLabel="Delete",danger=true,onC
     <div className="sheet-bg" onClick={onCancel}>
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:340,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
         <h3 style={{margin:"0 0 8px",fontWeight:600,fontSize:16,color:P.ink}}>{title}</h3>
-        {message&&<p className="sans" style={{fontSize:13,color:P.sub,margin:"0 0 18px",lineHeight:1.5}}>{message}</p>}
+        {message&&<p className="sans" style={{fontSize:13,color:P.muted,margin:"0 0 18px",lineHeight:1.5}}>{message}</p>}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onConfirm}
-            style={{width:"100%",borderRadius:12,padding:"12px 0",fontSize:14,fontWeight:600,border:"none",
-              background:danger?P.wineS:P.grS,color:danger?P.wine:P.grD}}>
+            style={{width:"100%",borderRadius:2,padding:"12px 0",fontSize:14,fontWeight:500,border:"none",
+              background:danger?P.danger:P.ink,color:P.onInk}}>
             {confirmLabel}
           </button>
           <button onClick={onCancel}
-            style={{width:"100%",borderRadius:12,padding:"12px 0",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,
-              background:"transparent",color:P.sub}}>
+            style={{width:"100%",borderRadius:2,padding:"12px 0",fontSize:14,fontWeight:500,border:`1px solid ${P.hairline}`,
+              background:"transparent",color:P.muted}}>
             Cancel
           </button>
         </div>
@@ -3765,8 +3808,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.59.2";
-const BUILD_ID="2026.08.28.0007";
+const APP_VERSION="1.60.0";
+const BUILD_ID="2026.08.28.0008";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -6105,19 +6148,20 @@ function MoreSheet({tab,moreTabs,onPick,onClose}){
       <div className="sheet-bg" onClick={onClose}>
         <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" aria-label="More sections"
           tabIndex={-1} onClick={e=>e.stopPropagation()}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-            <h3 style={{margin:0,fontSize:16,fontWeight:600,color:P.ink}}>More</h3>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+            <span className="t-section" style={{color:P.ink}}>More</span>
             <IconButton icon={I.X} label="Close" onClick={onClose} size={18}
-              style={{color:P.sub,padding:0,minWidth:0,minHeight:0}}/>
+              style={{color:P.muted,padding:0,minWidth:0,minHeight:0}}/>
           </div>
-          <div className="more-grid">
+          <div className="more-list">
             {moreTabs.map(id=>{
               const meta=TAB_META[id],Icon=meta.icon,on=tab===id;
               return(
-                <button key={id} className="more-item" onClick={()=>onPick(id)}
-                  aria-current={on?"page":undefined}
-                  style={on?{background:P.ink,color:P.onInk,border:`1px solid ${P.ink}`}:{...neu(14),color:P.ink}}>
-                  <Icon size={17}/><span>{meta.label}</span>
+                <button key={id} className={"more-row"+(on?" is-active":"")} onClick={()=>onPick(id)}
+                  aria-current={on?"page":undefined}>
+                  <Icon size={17}/>
+                  <span className="more-row-name">{meta.label}</span>
+                  <I.Chevron size={14} className="more-chev" style={{transform:"rotate(-90deg)"}}/>
                 </button>
               );
             })}
@@ -9014,8 +9058,8 @@ function App(){
           saying so. A line, not a dialog: nothing was lost that a record. */}
       {adoptedSettingsNote&&
         <div style={{position:"fixed",left:16,right:16,bottom:88,maxWidth:420,margin:"0 auto",zIndex:80,
-          background:P.neuBg,border:`1px solid ${P.line}`,borderRadius:12,padding:"10px 14px",
-          display:"flex",alignItems:"center",gap:10,fontSize:12,color:P.sub,boxShadow:"0 6px 18px rgba(0,0,0,.14)"}}>
+          background:P.surface,border:`1px solid ${P.hairline}`,borderRadius:2,padding:"10px 14px",
+          display:"flex",alignItems:"center",gap:10,fontSize:12,color:P.muted,boxShadow:"0 6px 18px rgba(0,0,0,.14)"}}>
           <span className="sans" style={{flex:1,lineHeight:1.5}}>Cloud settings applied — this device's own preferences were replaced.</span>
           <button onClick={()=>setAdoptedSettingsNote(false)}
             style={{border:"none",background:"transparent",color:P.jade,fontWeight:600,fontSize:12,padding:"4px 2px"}}>Got it</button>
@@ -9042,10 +9086,10 @@ function App(){
         <div style={{position:"fixed",left:16,right:16,maxWidth:420,margin:"0 auto",
           bottom:"calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 24px)",zIndex:80,
           display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,
-          background:P.heroBg,color:P.heroFg,borderRadius:12,padding:"12px 14px",
+          background:P.heroBg,color:P.heroFg,borderRadius:2,padding:"12px 14px",
           boxShadow:"0 8px 24px rgba(12,22,40,.32)"}}>
           <span style={{fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{undoAction.label}</span>
-          <button onClick={performUndo} style={{flexShrink:0,background:"transparent",border:"none",color:P.grD,fontWeight:700,fontSize:13,letterSpacing:.3}}>
+          <button onClick={performUndo} style={{flexShrink:0,background:"transparent",border:"none",color:"#34D399",fontWeight:700,fontSize:13,letterSpacing:.3}}>
             UNDO
           </button>
         </div>}
@@ -18719,46 +18763,52 @@ function ConflictModal({conflict,onUseCloud,onSaveLocalToCloud}){
     ?rawWriter.replace(/\s*\([^)]*\)\s*$/,"")||rawWriter
     :"";
   const savedByLine=writerLabel?`saved by ${writerLabel}`:"last saved";
-  const choiceBtn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",display:"block"};
+  const choiceBtn={borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,border:`1px solid ${P.hairline}`,background:P.surface,color:P.ink,textAlign:"left",display:"block",width:"100%"};
   const diff=useMemo(()=>buildConflictDiff(conflict.local,conflict.remote),[conflict]);
   const totalOnlyLocal=diff.reduce((s,c)=>s+c.onlyLocal.length,0);
   const totalOnlyRemote=diff.reduce((s,c)=>s+c.onlyRemote.length,0);
   const totalChanged=diff.reduce((s,c)=>s+c.changed.length,0);
   const buckets=[
-    {field:"onlyLocal",title:"Only on this device",color:P.gr,bg:P.grS},
-    {field:"onlyRemote",title:"Only on cloud",color:P.br,bg:P.brS},
+    {field:"onlyLocal",title:"Only on this device",color:P.success,bg:P.grS},
+    {field:"onlyRemote",title:"Only on cloud",color:P.info,bg:P.brS},
     {field:"changed",title:"Changed on both",color:P.amber,bg:P.amberS},
   ];
   return(
-    <div className="sheet-bg">
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <h3 style={{margin:"0 0 8px",fontWeight:600}}>Cloud and local data differ</h3>
-        <p className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:10}}>
-          This device has changes that haven't been saved to the cloud, and the cloud copy — {savedByLine} {remoteWhen} — is different. Choose which one to keep.
-          {totalOnlyLocal>0&&totalOnlyRemote>0&&totalChanged===0&&
-            <><br/><span style={{color:P.faint}}>You each added different things — nothing was edited on both sides, so whichever you pick, the other side's additions are the only thing at stake.</span></>}
-        </p>
-        {diff.length>0?(
-          <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
-            <div style={{fontSize:11,fontWeight:700,color:P.faint,textTransform:"uppercase",letterSpacing:.4,marginBottom:6}}>What's different</div>
-            <DiffCollectionsList diff={diff} buckets={buckets}/>
-            <div style={{fontSize:11,color:P.faint,marginTop:4}}>
-              "Use Cloud" would drop the {totalOnlyLocal} item{totalOnlyLocal===1?"":"s"} only on this device. "Save Local to Cloud" would drop the {totalOnlyRemote} item{totalOnlyRemote===1?"":"s"} only on cloud{totalChanged?`, and pick this device's version for the ${totalChanged} changed item${totalChanged===1?"":"s"}`:""}.
+    <Portal>
+    <div className="sheet-bg task-bg">
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}>
+        <div className="sheet-task-head">
+          <span className="t-section" style={{color:P.ink}}>Cloud &amp; local differ</span>
+        </div>
+        <div className="sheet-task-body" style={{padding:"16px 20px"}}>
+          <p className="sans" style={{fontSize:13,color:P.muted,lineHeight:1.5,margin:"0 0 12px"}}>
+            This device has changes that haven't been saved to the cloud, and the cloud copy — {savedByLine} {remoteWhen} — is different. Choose which one to keep.
+            {totalOnlyLocal>0&&totalOnlyRemote>0&&totalChanged===0&&
+              <><br/><span style={{color:P.faint}}>You each added different things — nothing was edited on both sides, so whichever you pick, the other side's additions are the only thing at stake.</span></>}
+          </p>
+          {diff.length>0?(
+            <div style={{background:P.surfaceSubtle,border:`1px solid ${P.hairline}`,borderRadius:2,padding:"10px 12px",marginBottom:4}}>
+              <div className="t-label" style={{marginBottom:6}}>What's different</div>
+              <DiffCollectionsList diff={diff} buckets={buckets}/>
+              <div style={{fontSize:11,color:P.faint,marginTop:4}}>
+                "Use Cloud" would drop the {totalOnlyLocal} item{totalOnlyLocal===1?"":"s"} only on this device. "Save Local to Cloud" would drop the {totalOnlyRemote} item{totalOnlyRemote===1?"":"s"} only on cloud{totalChanged?`, and pick this device's version for the ${totalChanged} changed item${totalChanged===1?"":"s"}`:""}.
+              </div>
             </div>
-          </div>
-        ):(
-          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>No record-level differences found — this is likely just a settings/timestamp mismatch.</p>
-        )}
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          ):(
+            <p style={{fontSize:12,color:P.faint}}>No record-level differences found — this is likely just a settings/timestamp mismatch.</p>
+          )}
+        </div>
+        <div className="sheet-task-foot" style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onUseCloud} style={choiceBtn}>
-            Use Cloud<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Replace this device's data with the cloud copy. A backup of your local data is kept.</div>
+            Use Cloud<div className="sans" style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Replace this device's data with the cloud copy. A backup of your local data is kept.</div>
           </button>
-          <button onClick={onSaveLocalToCloud} style={{...choiceBtn,border:"none",background:P.gr,color:"#fff"}}>
-            Save Local to Cloud<div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Overwrite the cloud copy with this device's data.</div>
+          <button onClick={onSaveLocalToCloud} style={{...choiceBtn,border:"none",background:P.ink,color:P.onInk}}>
+            Save Local to Cloud<div className="sans" style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Overwrite the cloud copy with this device's data.</div>
           </button>
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -18777,7 +18827,7 @@ function ConflictModal({conflict,onUseCloud,onSaveLocalToCloud}){
 function FirstConnectSheet({info,onUseCloud,onMerge,onLater}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onLater);
-  const choiceBtn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",display:"block",width:"100%"};
+  const choiceBtn={borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,border:`1px solid ${P.hairline}`,background:P.surface,color:P.ink,textAlign:"left",display:"block",width:"100%"};
   /* Counts from the existing validator summary rather than a bespoke reduce,
      so it can't drift from what the rest of the app calls a record. */
   const mine=useMemo(()=>{
@@ -18795,29 +18845,38 @@ function FirstConnectSheet({info,onUseCloud,onMerge,onLater}){
     return parts.slice(0,3).join(", ")+(parts.length>3?"…":"");
   };
   return(
-    <div className="sheet-bg">
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <h3 style={{margin:"0 0 8px",fontWeight:600}}>This device has data of its own</h3>
-        <p className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>
-          You've just connected, and there's already a document in the cloud. This device has never synced before, so nothing has been sent or changed yet — choose what should happen.
-        </p>
-        <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,lineHeight:1.7}}>
-          <div><span style={{color:P.faint}}>On this device: </span><strong>{phrase(mine)}</strong></div>
-          <div><span style={{color:P.faint}}>In the cloud: </span><strong>{phrase(theirs)}</strong></div>
+    <Portal>
+    <div className="sheet-bg task-bg">
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}>
+        <div className="sheet-task-head">
+          <button onClick={onLater} aria-label="Decide later" className="task-head-btn"><I.X size={18}/></button>
+          <span className="t-section" style={{color:P.ink}}>Connect this device</span>
+          <span style={{width:40}}/>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <div className="sheet-task-body" style={{padding:"16px 20px"}}>
+          <div style={{fontSize:15,fontWeight:500,color:P.ink,marginBottom:8}}>This device has data of its own</div>
+          <p className="sans" style={{fontSize:13,color:P.muted,lineHeight:1.5,marginBottom:14}}>
+            You've just connected, and there's already a document in the cloud. This device has never synced before, so nothing has been sent or changed yet — choose what should happen.
+          </p>
+          <div style={{background:P.surfaceSubtle,border:`1px solid ${P.hairline}`,borderRadius:2,padding:"10px 12px",fontSize:12,lineHeight:1.7}}>
+            <div><span style={{color:P.faint}}>On this device: </span><strong>{phrase(mine)}</strong></div>
+            <div><span style={{color:P.faint}}>In the cloud: </span><strong>{phrase(theirs)}</strong></div>
+          </div>
+        </div>
+        <div className="sheet-task-foot" style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={onUseCloud} style={choiceBtn}>
-            Use the cloud copy<div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Take the cloud document exactly. A backup of this device's data is kept, so this is undoable.</div>
+            Use the cloud copy<div className="sans" style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Take the cloud document exactly. A backup of this device's data is kept, so this is undoable.</div>
           </button>
-          <button onClick={onMerge} style={{...choiceBtn,border:"none",background:P.gr,color:"#fff"}}>
-            Merge and upload<div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Adds this device's {phrase(mine)} to the cloud. Nothing already in the cloud is removed.</div>
+          <button onClick={onMerge} style={{...choiceBtn,border:"none",background:P.ink,color:P.onInk}}>
+            Merge and upload<div className="sans" style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Adds this device's {phrase(mine)} to the cloud. Nothing already in the cloud is removed.</div>
           </button>
-          <button onClick={onLater} style={{...choiceBtn,background:"transparent",border:"none",color:P.faint,fontWeight:500,fontSize:13,textAlign:"center"}}>
+          <button onClick={onLater} style={{background:"transparent",border:"none",color:P.faint,fontWeight:500,fontSize:13,textAlign:"center",padding:"6px 0",minHeight:40}}>
             Decide later — keep this device offline for now
           </button>
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -18839,8 +18898,8 @@ function SyncSheet({onClose,kvReady,isOnline,syncOp,syncStatus,syncMsg,lastSyncE
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
   const time=d=>d?d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
-  const row={borderRadius:10,padding:"12px 14px",fontSize:14,fontWeight:600,minHeight:44,
-    border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,textAlign:"left",width:"100%",display:"block"};
+  const row={borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,minHeight:44,
+    border:`1px solid ${P.hairline}`,background:P.surface,color:P.ink,textAlign:"left",width:"100%",display:"block"};
   const busy=!!syncOp;
   /* One sentence saying where the document actually is. The header pill says
      the state in two words; this says what it means. */
@@ -18850,17 +18909,25 @@ function SyncSheet({onClose,kvReady,isOnline,syncOp,syncStatus,syncMsg,lastSyncE
     :syncStatus==="stale"?"The other device has saved since this one last pulled. Pulling now brings its changes in; nothing of yours is lost either way."
     :hasUnsyncedChanges?"Saved on this device and syncing automatically. You don't have to press anything — this is here for when you'd rather not wait."
     :"Everything on this device is in the cloud.";
+  const vTone=!kvReady?"flat":!isOnline?"warn":syncStatus==="failed"?"bad":syncStatus==="stale"?"warn":hasUnsyncedChanges?"flat":"good";
+  const vText=!kvReady?"Not connected":!isOnline?"Offline — will sync later":syncStatus==="failed"?"Last sync failed":syncStatus==="stale"?"Cloud is newer":hasUnsyncedChanges?"Saving automatically":"Everything is in the cloud";
   return(
-    <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
-        style={{maxWidth:380,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <h3 style={{margin:"0 0 8px",fontWeight:600}}>Sync</h3>
-        <p className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5,marginBottom:12}}>{explain}</p>
-        {syncMsg&&<p style={{fontSize:12,color:P.gr,fontWeight:600,marginBottom:12}}>{syncMsg}</p>}
+    <Portal>
+    <div className="sheet-bg task-bg" onClick={onClose}>
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+        <div className="sheet-task-head">
+          <button onClick={onClose} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+          <span className="t-section" style={{color:P.ink}}>Sync</span>
+          <span style={{width:40}}/>
+        </div>
+        <div className="sheet-task-body" style={{padding:"16px 20px"}}>
+        <Verdict tone={vTone}>{vText}</Verdict>
+        <p className="sans" style={{fontSize:13,color:P.muted,lineHeight:1.5,marginBottom:12}}>{explain}</p>
+        {syncMsg&&<p style={{fontSize:12,color:P.success,fontWeight:500,marginBottom:12}}>{syncMsg}</p>}
         {syncStatus==="failed"&&lastSyncError&&
           <p style={{fontSize:11,color:P.amber,marginBottom:12,wordBreak:"break-word"}}>{lastSyncError}</p>}
 
-        <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,lineHeight:1.8}}>
+        <div style={{background:P.surfaceSubtle,border:`1px solid ${P.hairline}`,borderRadius:2,padding:"10px 12px",fontSize:12,lineHeight:1.8}}>
           <div><span style={{color:P.faint}}>Last saved to cloud: </span>
             <strong>{time(lastCloudSavedAt)||"never from this device"}</strong></div>
           <div><span style={{color:P.faint}}>Last pulled: </span>
@@ -18871,41 +18938,39 @@ function SyncSheet({onClose,kvReady,isOnline,syncOp,syncStatus,syncMsg,lastSyncE
             <div><span style={{color:P.faint}}>Revision: </span>
               <strong className="tnum">{localRev}{cloudRev>localRev?` (cloud ${cloudRev})`:""}</strong></div>:null}
         </div>
-
+        </div>
+        <div className="sheet-task-foot" style={{display:"flex",flexDirection:"column",gap:8}}>
         {kvReady?
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <>
             <button onClick={onSave} disabled={busy}
-              style={{...row,border:"none",background:P.gr,color:"#fff",opacity:busy?.6:1}}>
+              style={{...row,border:"none",background:P.ink,color:P.onInk,opacity:busy?.6:1}}>
               {syncOp==="push"?"Saving…":"Save now"}
-              <div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Upload straight away instead of waiting for the automatic save.</div>
+              <div className="sans" style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Upload straight away instead of waiting for the automatic save.</div>
             </button>
             <button onClick={onPull} disabled={busy} style={{...row,opacity:busy?.6:1}}>
               {syncOp==="pull"?"Pulling…":"Pull now"}
-              <div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Fetch the latest copy from the other device.</div>
+              <div className="sans" style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Fetch the latest copy from the other device.</div>
             </button>
             {hasUnsyncedChanges&&
               <button onClick={onViewPending} style={row}>
                 See what's waiting
-                <div style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Exactly what would go up on the next save.</div>
+                <div className="sans" style={{fontWeight:400,fontSize:12,color:P.faint,marginTop:2}}>Exactly what would go up on the next save.</div>
               </button>}
-          </div>
+          </>
         :
-          <button onClick={onOpenSettings} style={{...row,border:"none",background:P.gr,color:"#fff"}}>
+          <button onClick={onOpenSettings} style={{...row,border:"none",background:P.ink,color:P.onInk}}>
             Connect this device
-            <div style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Enter the sync passphrase in Settings.</div>
+            <div className="sans" style={{fontWeight:400,fontSize:12,opacity:.85,marginTop:2}}>Enter the sync passphrase in Settings.</div>
           </button>}
-
-        <div style={{display:"flex",gap:12,marginTop:14,justifyContent:"space-between",alignItems:"center"}}>
-          {kvReady?
-            <button onClick={onOpenSettings}
-              style={{background:"none",border:"none",padding:"10px 0",fontSize:12,fontWeight:600,color:P.gr,minHeight:44}}>
-              Sync settings &amp; recovery
-            </button>:<span/>}
-          <button onClick={onClose}
-            style={{background:"none",border:"none",padding:"10px 0",fontSize:13,color:P.faint,minHeight:44}}>Close</button>
+        {kvReady&&
+          <button onClick={onOpenSettings}
+            style={{background:"none",border:"none",padding:"8px 0",fontSize:12,fontWeight:500,color:P.success,minHeight:40,textAlign:"left"}}>
+            Sync settings &amp; recovery
+          </button>}
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -18925,43 +18990,50 @@ function PendingChangesModal({data,onClose,onSaveToCloud}){
   // number, because this data was invisible to the diff.
   const{derived}=useMemo(()=>countPendingChanges(data,snapshot),[data,snapshot]);
   const buckets=[
-    {field:"onlyLocal",title:"Added since last sync",color:P.gr,bg:P.grS},
+    {field:"onlyLocal",title:"Added since last sync",color:P.success,bg:P.grS},
     {field:"onlyRemote",title:"Removed since last sync",color:P.wine,bg:P.wineS},
     {field:"changed",title:"Edited since last sync",color:P.amber,bg:P.amberS},
   ];
   const derivedNote=derived>0&&(
-    <p className="sans" style={{fontSize:11,color:P.faint,marginBottom:14,lineHeight:1.5}}>
+    <p className="sans" style={{fontSize:11,color:P.faint,marginBottom:0,marginTop:10,lineHeight:1.5}}>
       Plus {derived} automatic {derived===1?"entry":"entries"} (net-worth / portfolio history recomputed from the latest prices). These don't trigger a cloud save on their own — they ride along the next time you save something you actually changed.
     </p>
   );
-  const btn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
+  const btn={borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,border:`1px solid ${P.hairline}`,background:P.surface,color:P.ink,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
   return(
-    <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <h3 style={{margin:"0 0 8px",fontWeight:600}}>What's pending</h3>
+    <Portal>
+    <div className="sheet-bg task-bg" onClick={onClose}>
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+        <div className="sheet-task-head">
+          <button onClick={onClose} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+          <span className="t-section" style={{color:P.ink}}>What's pending</span>
+          <span style={{width:40}}/>
+        </div>
+        <div className="sheet-task-body" style={{padding:"16px 20px"}}>
         {!snapshot?(
-          <p className="sans" style={{fontSize:12,color:P.faint,marginBottom:14}}>No cached copy of the last synced state yet on this device — this'll be available after the next successful sync.</p>
+          <p className="sans" style={{fontSize:12,color:P.faint}}>No cached copy of the last synced state yet on this device — this'll be available after the next successful sync.</p>
         ):diff.length>0?(
           <React.Fragment>
-            <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:derived>0?8:14}}>
+            <div style={{background:P.surfaceSubtle,border:`1px solid ${P.hairline}`,borderRadius:2,padding:"10px 12px"}}>
               <DiffCollectionsList diff={diff} buckets={buckets}/>
             </div>
             {derivedNote}
           </React.Fragment>
         ):(
           <React.Fragment>
-            <p style={{fontSize:12,color:P.faint,marginBottom:derived>0?8:14}}>Nothing you've edited is waiting to be saved.</p>
+            <p style={{fontSize:12,color:P.faint}}>Nothing you've edited is waiting to be saved.</p>
             {derivedNote}
           </React.Fragment>
         )}
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <button onClick={onSaveToCloud} style={{...btn,border:"none",background:P.gr,color:"#fff"}}>
+        </div>
+        <div className="sheet-task-foot" style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={onSaveToCloud} style={{...btn,border:"none",background:P.ink,color:P.onInk}}>
             <I.Cloud size={14}/>Save to Cloud
           </button>
-          <button onClick={onClose} style={btn}>Close</button>
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -18977,29 +19049,34 @@ function RecentlyDeletedModal({data,restoreRecord,retentionDays,onClose}){
     key:c.key,label:c.label,
     items:conflictArr(c,data).filter(x=>x.deletedAt).sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt)).map(x=>({id:x.id,label:c.nameOf(x),deletedAt:x.deletedAt})),
   })).filter(g=>g.items.length),[data]);
-  const btn={borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink};
   return(
-    <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:380,maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <h3 style={{margin:"0 0 4px",fontWeight:600}}>Recently Deleted</h3>
+    <Portal>
+    <div className="sheet-bg task-bg" onClick={onClose}>
+      <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+        <div className="sheet-task-head">
+          <button onClick={onClose} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+          <span className="t-section" style={{color:P.ink}}>Recently Deleted</span>
+          <span style={{width:40}}/>
+        </div>
+        <div className="sheet-task-body" style={{padding:"16px 20px"}}>
         <p style={{fontSize:11,color:P.faint,marginBottom:14}}>
           Kept for {retentionDays} days before being permanently removed.
         </p>
         {groups.length===0?(
-          <p style={{fontSize:12,color:P.faint,marginBottom:14}}>Nothing here right now.</p>
+          <p style={{fontSize:12,color:P.faint}}>Nothing here right now.</p>
         ):(
-          <div style={{marginBottom:14}}>
+          <div>
             {groups.map(g=>(
               <div key={g.key} style={{marginBottom:14}}>
-                <div style={{fontSize:11,fontWeight:700,color:P.faint,textTransform:"uppercase",letterSpacing:.4,marginBottom:6}}>{g.label}</div>
+                <div className="t-label" style={{marginBottom:6}}>{g.label}</div>
                 {g.items.map(it=>(
-                  <div key={it.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:`1px solid ${P.line}`}}>
+                  <div key={it.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 0",borderBottom:`1px solid ${P.hairline}`}}>
                     <div style={{minWidth:0}}>
                       <div style={{fontSize:13,color:P.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.label}</div>
                       <div style={{fontSize:11,color:P.faint}}>Deleted {new Date(it.deletedAt).toLocaleDateString()}</div>
                     </div>
                     <button onClick={()=>restoreRecord(g.key,it.id)}
-                      style={{flexShrink:0,borderRadius:8,padding:"6px 10px",fontSize:12,fontWeight:600,border:`1px solid ${P.grS}`,background:P.grS,color:P.grD}}>
+                      style={{flexShrink:0,borderRadius:2,padding:"6px 12px",fontSize:12,fontWeight:500,border:`1px solid ${P.success}`,background:"transparent",color:P.success}}>
                       Restore
                     </button>
                   </div>
@@ -19008,9 +19085,10 @@ function RecentlyDeletedModal({data,restoreRecord,retentionDays,onClose}){
             ))}
           </div>
         )}
-        <button onClick={onClose} style={{...btn,width:"100%"}}>Close</button>
+        </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -19022,22 +19100,22 @@ function ProfilePickerModal({owners,onChoose,dismissable,onClose}){
   return(
     <div className="sheet-bg" onClick={dismissable?onClose:undefined}>
       <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} style={{maxWidth:340,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
-        <div style={{color:P.gr,marginBottom:6,display:"flex",justifyContent:"center"}}><I.Users size={22}/></div>
-        <h3 style={{margin:"0 0 6px",fontWeight:600}}>Whose budget?</h3>
-        <p className="sans" style={{fontSize:13,color:P.sub,margin:"0 0 16px",lineHeight:1.5}}>
+        <div style={{color:P.success,marginBottom:6,display:"flex",justifyContent:"center"}}><I.Users size={22}/></div>
+        <div className="t-section" style={{color:P.ink,marginBottom:6,justifyContent:"center"}}>Whose budget?</div>
+        <p className="sans" style={{fontSize:13,color:P.muted,margin:"0 0 16px",lineHeight:1.5}}>
           Pick which profile this device should show by default in Budget and Expenses. You can still switch anytime with the in-app toggle — this just sets what loads first.
         </p>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {["me","wife"].map(ok=>(
             <button key={ok} onClick={()=>onChoose(ok)}
-              style={{borderRadius:10,padding:"10px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,
-                background:ok==="me"?P.grS:P.brS,color:ok==="me"?P.grD:P.br}}>
+              style={{borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,border:`1px solid ${P.hairline}`,
+                background:P.surface,color:P.ink}}>
               {owners?.[ok]||(ok==="me"?"Me":"Wife")}
             </button>
           ))}
         </div>
         {dismissable&&
-          <button onClick={onClose} style={{marginTop:14,background:"transparent",border:"none",color:P.faint,fontSize:12}}>Cancel</button>}
+          <button onClick={onClose} style={{marginTop:14,background:"transparent",border:"none",color:P.faint,fontSize:12,minHeight:40}}>Cancel</button>}
       </div>
     </div>
   );
@@ -19070,14 +19148,19 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
   ].filter(([,n])=>n>0):[];
   return(
     <Portal>
-      <div className="sheet-bg" onClick={onCancel}>
-        <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1}
-          style={{maxWidth:400,maxHeight:"85dvh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-          <h3 style={{margin:"0 0 4px",fontWeight:600}}>{ok?"Import this backup?":"That file can't be imported"}</h3>
+      <div className="sheet-bg task-bg" onClick={onCancel}>
+        <div className="sheet sheet-task" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+          <div className="sheet-task-head">
+            <button onClick={onCancel} aria-label="Close" className="task-head-btn"><I.X size={18}/></button>
+            <span className="t-section" style={{color:P.ink}}>{ok?"Import backup":"Can't import"}</span>
+            <span style={{width:40}}/>
+          </div>
+          <div className="sheet-task-body" style={{padding:"16px 20px"}}>
+          <div style={{fontSize:15,fontWeight:500,color:P.ink,marginBottom:4}}>{ok?"Import this backup?":"That file can't be imported"}</div>
           <div style={{fontSize:11,color:P.faint,marginBottom:12,wordBreak:"break-all"}}>{fileName}</div>
 
           {!ok&&
-            <div style={{background:P.amberS,borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+            <div style={{background:P.amberS,borderRadius:2,padding:"10px 12px",marginBottom:14}}>
               <div style={{fontSize:12,color:P.amber,fontWeight:600,marginBottom:6}}>What's wrong with it</div>
               {errors.slice(0,6).map((e,i)=><div key={i} className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.5}}>• {e}</div>)}
               {errors.length>6&&<div style={{fontSize:11,color:P.faint,marginTop:4}}>…and {errors.length-6} more.</div>}
@@ -19085,7 +19168,7 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
             </div>}
 
           {ok&&summary&&
-            <div style={{background:P.sf,borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+            <div style={{background:P.sf,borderRadius:2,padding:"10px 12px",marginBottom:12}}>
               <div style={row}><span style={{color:P.faint}}>Backed up</span>
                 <b>{summary.savedAt?new Date(summary.savedAt).toLocaleString():"date not recorded"}</b></div>
               {summary.owners&&(summary.owners.me||summary.owners.wife)&&
@@ -19106,7 +19189,7 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
             </div>}
 
           {ok&&
-            <div style={{background:P.amberS,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,color:P.sub,lineHeight:1.6}}>
+            <div style={{background:P.amberS,borderRadius:2,padding:"10px 12px",marginBottom:14,fontSize:12,color:P.sub,lineHeight:1.6}}>
               <b style={{color:P.amber}}>This replaces everything on this device</b> — every transaction, budget, goal and account is swapped for what's in the file.
               <br/><br/>
               It stays on this device until you tap <b>Save to Cloud</b>, so {partnerName||"your partner"} won't see it before you've had a look.
@@ -19114,12 +19197,13 @@ function ImportPreviewSheet({report,fileName,onConfirm,onCancel,partnerName}){
               Your current data is kept as a restorable copy in Settings. The last <b>two</b> are kept, so importing twice by mistake still leaves you a way back.
             </div>}
 
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          </div>
+          <div className="sheet-task-foot" style={{display:"flex",flexDirection:"column",gap:8}}>
             {ok&&
-              <button onClick={onConfirm} style={{borderRadius:10,padding:"11px 14px",fontSize:14,fontWeight:600,border:"none",background:P.red,color:"#fff"}}>
+              <button onClick={onConfirm} style={{borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,border:"none",background:P.danger,color:"#fff"}}>
                 Replace all data on this device
               </button>}
-            <button onClick={onCancel} style={{borderRadius:10,padding:"11px 14px",fontSize:14,fontWeight:600,border:`1px solid ${P.line}`,background:P.sfA,color:P.ink}}>
+            <button onClick={onCancel} style={{borderRadius:2,padding:"12px 14px",fontSize:14,fontWeight:500,border:`1px solid ${P.hairline}`,background:P.surface,color:P.ink}}>
               {ok?"Cancel":"Close"}
             </button>
           </div>
@@ -19263,7 +19347,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
     setImportPreview(null);
     flash(err||"Backup imported — saved on this device only ✓");
   };
-  const btn={background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
+  const btn={background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,borderRadius:2,padding:"8px 12px",fontSize:14,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:6};
   /* ── Accordion (v1.46.0) ───────────────────────────────────────────────
      Eleven flat headings made this the longest scroller in the app; it now
      opens as six collapsed sections and fits one screen.
@@ -19277,6 +19361,14 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
      section you left open is about this screen, not about the household. All
      closed by default, so the sheet opens short. */
   const[openSec,setOpenSec]=useState({});
+  /* Desktop (≥1024) shows the sections as a two-pane layout: a persistent left
+     list drives `activeSec`, the right pane renders only that section's body.
+     Mobile ignores both and behaves as the accordion above. The breakpoint
+     matches the `.settings-sheet` CSS so there is no zone with a hidden nav. */
+  const isTwoPane=useMinWidth(1024);
+  const[activeSec,setActiveSec]=useState("people");
+  const SEC_NAV=[["people","People & payday"],["home","Home & display"],["nav","Navigation"],
+    ["investments","Investments"],["cloud","Cloud sync"],["backup","Backup & restore"],["advanced","Advanced"]];
   /* Navigation editor (Phase 7). Which owner's bar you're editing defaults to
      this device's default person, but either can be edited from here — each
      person's layout syncs under its own key. Chosen tabs render first in their
@@ -19295,52 +19387,65 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
     else if(navChosen.length<NAV_BAR_SIZE)setNavTabs(navOwner,[...navChosen,id]);
   };
   const section=(id,title,children)=>{
-    const isOpen=!!openSec[id];
+    const isOpen=isTwoPane?activeSec===id:!!openSec[id];
+    // Two-pane desktop: only the active section occupies the right pane; the
+    // left rail is the navigation, so its own header row is redundant.
+    if(isTwoPane&&!isOpen)return null;
     return(
-      <div style={{marginBottom:isOpen?16:2,borderBottom:`1px solid ${P.line}`}}>
-        <button onClick={()=>setOpenSec(s=>({...s,[id]:!s[id]}))} aria-expanded={isOpen}
-          style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:44,
-            background:"transparent",border:"none",padding:"4px 2px",
-            color:P.ink,fontSize:14,fontWeight:600,textAlign:"left"}}>
-          <I.Chevron size={13} style={{flexShrink:0,transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
-          {title}
-        </button>
-        {isOpen&&<div style={{paddingTop:6}}>{children}</div>}
+      <div style={{marginBottom:isTwoPane?0:(isOpen?16:2),borderBottom:isTwoPane?"none":`1px solid ${P.hairline}`}}>
+        {!isTwoPane&&
+          <button onClick={()=>setOpenSec(s=>({...s,[id]:!s[id]}))} aria-expanded={isOpen}
+            className="t-section"
+            style={{display:"flex",alignItems:"center",gap:8,width:"100%",minHeight:44,
+              background:"transparent",border:"none",padding:"4px 2px",
+              color:P.ink,textAlign:"left"}}>
+            <I.Chevron size={13} style={{flexShrink:0,transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+            {title}
+          </button>}
+        {isOpen&&<div style={{paddingTop:isTwoPane?0:6}}>{children}</div>}
       </div>
     );
   };
   return(
     <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
+      <div className="sheet settings-sheet" ref={dlgRef} role="dialog" aria-modal="true" tabIndex={-1} onClick={e=>e.stopPropagation()}>
         {/* Sticky, so Close is reachable from the bottom of a long sheet
             without scrolling back up. The IconButton keeps its 40×40 default
             here on purpose — this used to override it to an 18px glyph with
             no padding, the smallest tap target in the app, at the top of the
             longest scroller in the app. */}
         <div className="sheet-head">
-          <h3 style={{margin:0,fontWeight:600}}>Settings</h3>
-          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.sub}}/>
+          <span className="t-section" style={{color:P.ink}}>Settings</span>
+          <IconButton icon={I.X} label="Close" onClick={onClose} size={18} style={{color:P.muted}}/>
         </div>
         {/* Outside every section on purpose. A flash message confirming a
             download or an import, and a sync failure, are the two things that
             must never be behind a closed accordion — a person who cannot see
             the error cannot know which section to open to fix it. */}
-        {msg&&<div style={{fontSize:12,color:P.gr,marginBottom:12}}>{msg}</div>}
+        {msg&&<div style={{fontSize:12,color:P.success,marginBottom:12}}>{msg}</div>}
         {lastSyncError&&
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12,
-            borderRadius:10,padding:"9px 12px",background:P.amberS,border:`1px solid ${P.amber}33`}}>
+            borderRadius:2,padding:"9px 12px",background:P.amberS,border:`1px solid ${P.amber}33`}}>
             <span className="sans" style={{flex:1,minWidth:0,fontSize:12,color:P.amber,lineHeight:1.5}}>Last sync failed: {lastSyncError}</span>
-            <button onClick={()=>setOpenSec(s=>({...s,cloud:true}))}
+            <button onClick={()=>{setOpenSec(s=>({...s,cloud:true}));setActiveSec("cloud");}}
               style={{background:"none",border:"none",padding:"6px 0",fontSize:12,fontWeight:600,color:P.amber,minHeight:44}}>Open cloud sync</button>
           </div>}
+        <div className="set-2pane">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {SEC_NAV.map(([id,title])=>(
+            <button key={id} type="button" className={"settings-nav-btn"+(activeSec===id?" is-active":"")}
+              aria-current={activeSec===id?"true":undefined} onClick={()=>setActiveSec(id)}>{title}</button>
+          ))}
+        </nav>
+        <div className="set-pane-body">
         {section("people","People & payday",<>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Who's who</div>
         <div style={{display:"flex",gap:8,marginBottom:16}}>
-          <input value={owners.me} onChange={e=>setOwnerName("me",e.target.value)} placeholder="Your name" style={{flex:1,minWidth:0,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
-          <input value={owners.wife} onChange={e=>setOwnerName("wife",e.target.value)} placeholder="Wife's name" style={{flex:1,minWidth:0,borderRadius:10,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          <input value={owners.me} onChange={e=>setOwnerName("me",e.target.value)} placeholder="Your name" style={{flex:1,minWidth:0,borderRadius:2,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+          <input value={owners.wife} onChange={e=>setOwnerName("wife",e.target.value)} placeholder="Wife's name" style={{flex:1,minWidth:0,borderRadius:2,padding:"8px 10px",fontSize:14,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
         </div>
         <button onClick={openProfilePicker}
-          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",borderRadius:10,padding:"8px 12px",fontSize:13,fontWeight:500,marginBottom:16,
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",borderRadius:2,padding:"8px 12px",fontSize:13,fontWeight:500,marginBottom:16,
             background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
           <I.Users size={14}/>Change default profile for this device
         </button>
@@ -19392,7 +19497,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               </div>
             );
             return(
-              <div key={ok} style={{borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+              <div key={ok} style={{borderRadius:2,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:cfg.enabled?8:0}}>
                   <span style={{fontSize:13,fontWeight:600,color:P.ink}}>{owners[ok]}</span>
                   <button onClick={()=>{
@@ -19405,8 +19510,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                     if(n>0)setPpConfirm({owner:ok,count:n,turningOn:!cfg.enabled,apply:()=>setPayPeriod(ok,{enabled:!cfg.enabled})});
                     else setPayPeriod(ok,{enabled:!cfg.enabled});
                   }}
-                    style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
-                      background:cfg.enabled?P.gr:P.sf,color:cfg.enabled?"#fff":P.sub,border:`1px solid ${cfg.enabled?P.gr:P.line}`}}>
+                    style={{borderRadius:2,padding:"4px 10px",fontSize:12,fontWeight:600,
+                      background:cfg.enabled?P.gr:P.sf,color:cfg.enabled?P.onInk:P.sub,border:`1px solid ${cfg.enabled?P.gr:P.line}`}}>
                     {cfg.enabled?"On":"Off"}
                   </button>
                 </div>
@@ -19425,7 +19530,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                       else setPayPeriod(ok,{payday:v});
                     }}
                       integer min={1} max={31} inputMode="numeric"
-                      className="tnum" style={{width:56,borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
+                      className="tnum" style={{width:56,borderRadius:2,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
                     <span style={{fontSize:11,color:P.faint,flexBasis:"100%"}}>of each month{cfg.payday>28?" (clamped to last day in short months)":""}</span>
                   </div>
                   {periodRow(current,"This period","change")}
@@ -19457,7 +19562,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         {section("home","Home & display",<>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Appearance</div>
         <button onClick={toggleTheme}
-          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:14,fontWeight:500,marginBottom:16,
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:2,padding:"9px 12px",fontSize:14,fontWeight:500,marginBottom:16,
             background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
           <span style={{display:"flex",alignItems:"center",gap:8}}>
             {theme==="dark"?<I.Moon size={15}/>:<I.Sun size={15}/>}
@@ -19469,16 +19574,16 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           The benchmark Home judges your savings rate against. Display only — it never changes a stored figure.
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,borderRadius:10,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,borderRadius:2,padding:"10px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
           <span style={{fontSize:13,color:P.ink,flex:1}}>Save at least</span>
           <NumField value={(data.settings&&data.settings.savingsTargetPct)??20}
             onCommit={v=>setData(d=>({...d,settings:{...(d.settings||{}),savingsTargetPct:v}}))}
             min={0} max={100}
-            className="tnum" style={{width:56,borderRadius:8,padding:"5px 8px",fontSize:13,textAlign:"right",background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
+            className="tnum" style={{width:56,borderRadius:2,padding:"5px 8px",fontSize:13,textAlign:"right",background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
           <span style={{fontSize:13,color:P.sub}}>% of income</span>
         </div>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Currency label</div>
-        <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:10,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
+        <input value={data.currency} onChange={e=>setData(d=>({...d,currency:e.target.value}))} style={{width:"100%",borderRadius:2,padding:"8px 10px",fontSize:14,marginBottom:16,background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}/>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Home Display</div>
         <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:8,lineHeight:1.5}}>
           Which currency each Home card shows its figure in. Presentation only — never affects any stored balance or calculation.
@@ -19487,15 +19592,15 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
           {(()=>{
             const hd=data.homeDisplay||{};
             const setHD=(card,patch)=>setData(d=>({...d,homeDisplay:{...(d.homeDisplay||{}),[card]:{...((d.homeDisplay||{})[card]||{}),...patch}}}));
-            const selStyle={borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink};
+            const selStyle={borderRadius:2,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink};
             return(<>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <span style={{fontSize:13,color:P.ink}}>Net Worth card</span>
                 <select value={(hd.netWorth&&hd.netWorth.primary)||"PHP"} onChange={e=>setHD("netWorth",{primary:e.target.value})} style={selStyle}>
                   {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div style={{borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+              <div style={{borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <div style={{fontSize:12,color:P.sub,marginBottom:6}}>Net Worth card — secondary currencies</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                   {BANK_CCY.map(c=>{
@@ -19504,7 +19609,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                     return(
                       <button key={c} onClick={()=>setHD("netWorth",{secondary:active?list.filter(x=>x!==c):[...list,c]})}
                         aria-pressed={active}
-                        style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
+                        style={{borderRadius:2,padding:"4px 10px",fontSize:12,fontWeight:600,
                           background:active?P.grS:P.sf,color:active?P.grD:P.sub,border:`1px solid ${active?P.grS:P.line}`}}>
                         {c}
                       </button>
@@ -19512,19 +19617,19 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                   })}
                 </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <span style={{fontSize:13,color:P.ink}}>Portfolio card</span>
                 <select value={(hd.portfolio&&hd.portfolio.primary)||"USD"} onChange={e=>setHD("portfolio",{primary:e.target.value})} style={selStyle}>
                   {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <span style={{fontSize:13,color:P.ink}}>Savings &amp; Investing card</span>
                 <select value={(hd.savingsInvesting&&hd.savingsInvesting.primary)||"PHP"} onChange={e=>setHD("savingsInvesting",{primary:e.target.value})} style={selStyle}>
                   {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                 <span style={{fontSize:13,color:P.ink}}>Tracked Spending card</span>
                 <select value={(hd.budget&&hd.budget.primary)||"PHP"} onChange={e=>setHD("budget",{primary:e.target.value})} style={selStyle}>
                   {BANK_CCY.map(c=><option key={c} value={c}>{c}</option>)}
@@ -19550,7 +19655,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             const picker=(label,field)=>{
               const sel=hs[field]||[];
               return(
-                <div style={{borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <div style={{borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                   <div style={{fontSize:12,color:P.sub,marginBottom:6}}>{label}</div>
                   {allNames.length===0?
                     <div style={{fontSize:12,color:P.faint}}>Add categories in Budget first.</div>
@@ -19560,7 +19665,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                         const active=sel.includes(name);
                         return(
                           <button key={name} onClick={()=>toggleName(field,name)} aria-pressed={active}
-                            style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
+                            style={{borderRadius:2,padding:"4px 10px",fontSize:12,fontWeight:600,
                               background:active?P.grS:P.sf,color:active?P.grD:P.sub,border:`1px solid ${active?P.grS:P.line}`}}>
                             {name}
                           </button>
@@ -19587,11 +19692,11 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             return cards.map(([key,label])=>{
               const on=vis[key]!==false;
               return(
-                <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
+                <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:2,padding:"8px 12px",background:P.sfA,border:`1px solid ${P.line}`}}>
                   <span style={{fontSize:13,color:P.ink}}>{label}</span>
                   <button onClick={()=>toggleCard(key)} aria-pressed={on}
-                    style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,
-                      background:on?P.gr:P.sf,color:on?"#fff":P.sub,border:`1px solid ${on?P.gr:P.line}`}}>
+                    style={{borderRadius:2,padding:"4px 10px",fontSize:12,fontWeight:600,
+                      background:on?P.gr:P.sf,color:on?P.onInk:P.sub,border:`1px solid ${on?P.gr:P.line}`}}>
                     {on?"Shown":"Hidden"}
                   </button>
                 </div>
@@ -19608,8 +19713,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         <div style={{display:"flex",gap:6,marginBottom:12}}>
           {["me","wife"].map(o=>(
             <button key={o} onClick={()=>setNavOwner(o)} aria-pressed={navOwner===o}
-              style={{flex:1,borderRadius:10,padding:"7px 10px",fontSize:13,fontWeight:600,
-                background:navOwner===o?P.jade:P.sfA,color:navOwner===o?"#fff":P.sub,
+              style={{flex:1,borderRadius:2,padding:"7px 10px",fontSize:13,fontWeight:600,
+                background:navOwner===o?P.jade:P.sfA,color:navOwner===o?P.onInk:P.sub,
                 border:`1px solid ${navOwner===o?P.jade:P.line}`}}>
               {owners[o]||(o==="me"?"Me":"Wife")}
             </button>
@@ -19621,12 +19726,12 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             const idx=navChosen.indexOf(id),chosen=idx!==-1,meta=TAB_META[id],Icon=meta.icon;
             const full=!chosen&&navChosen.length>=NAV_BAR_SIZE;
             return(
-              <div key={id} style={{display:"flex",alignItems:"center",gap:10,borderRadius:10,padding:"7px 10px",
+              <div key={id} style={{display:"flex",alignItems:"center",gap:10,borderRadius:2,padding:"7px 10px",
                 background:chosen?P.grS:P.sfA,border:`1px solid ${chosen?P.grS:P.line}`,opacity:full?.5:1}}>
                 <button onClick={()=>navToggle(id)} disabled={full} aria-pressed={chosen}
                   aria-label={`${chosen?"Remove":"Add"} ${meta.label}`}
-                  style={{width:22,height:22,flexShrink:0,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",
-                    background:chosen?P.jade:"transparent",border:`1px solid ${chosen?P.jade:P.line}`,color:"#fff",padding:0}}>
+                  style={{width:22,height:22,flexShrink:0,borderRadius:2,display:"flex",alignItems:"center",justifyContent:"center",
+                    background:chosen?P.jade:"transparent",border:`1px solid ${chosen?P.jade:P.line}`,color:P.onInk,padding:0}}>
                   {chosen&&<I.Check size={14}/>}
                 </button>
                 <Icon size={16} style={{flexShrink:0,color:chosen?P.grD:P.sub}}/>
@@ -19645,37 +19750,37 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
         {section("investments","Investments",<>
         <div style={{fontSize:12,fontWeight:600,color:P.sub,marginBottom:6}}>Investments</div>
         <button onClick={()=>setData(d=>({...d,settings:{...(d.settings||{}),includeMp2EstimateInNetWorth:!(d.settings&&d.settings.includeMp2EstimateInNetWorth)}}))}
-          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:13,marginBottom:16,
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:2,padding:"9px 12px",fontSize:13,marginBottom:16,
             background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,textAlign:"left"}}>
           <span>Include estimated MP2 earnings in Net Worth<br/>
             <span style={{fontSize:11,color:P.faint,fontWeight:400}}>Off by default — Net Worth and Portfolio use MP2's confirmed value only</span>
           </span>
-          <span style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,flexShrink:0,marginLeft:8,
-            background:(data.settings&&data.settings.includeMp2EstimateInNetWorth)?P.gr:P.sf,color:(data.settings&&data.settings.includeMp2EstimateInNetWorth)?"#fff":P.sub,
+          <span style={{borderRadius:2,padding:"4px 10px",fontSize:12,fontWeight:600,flexShrink:0,marginLeft:8,
+            background:(data.settings&&data.settings.includeMp2EstimateInNetWorth)?P.gr:P.sf,color:(data.settings&&data.settings.includeMp2EstimateInNetWorth)?P.onInk:P.sub,
             border:`1px solid ${(data.settings&&data.settings.includeMp2EstimateInNetWorth)?P.gr:P.line}`}}>
             {(data.settings&&data.settings.includeMp2EstimateInNetWorth)?"On":"Off"}
           </span>
         </button>
         <button onClick={()=>setData(d=>({...d,settings:{...(d.settings||{}),goldAutoRefresh:!(d.settings?d.settings.goldAutoRefresh!==false:true)}}))}
-          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:10,padding:"9px 12px",fontSize:13,marginBottom:16,
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",borderRadius:2,padding:"9px 12px",fontSize:13,marginBottom:16,
             background:P.sfA,border:`1px solid ${P.line}`,color:P.ink,textAlign:"left"}}>
           <span>Automatically refresh gold price<br/>
             <span style={{fontSize:11,color:P.faint,fontWeight:400}}>On by default — gold rides the same background refresh as stock quotes. Turn off to only update it with the manual "Refresh prices" button in Investments.</span>
           </span>
-          <span style={{borderRadius:999,padding:"4px 10px",fontSize:12,fontWeight:600,flexShrink:0,marginLeft:8,
-            background:(data.settings?data.settings.goldAutoRefresh!==false:true)?P.gr:P.sf,color:(data.settings?data.settings.goldAutoRefresh!==false:true)?"#fff":P.sub,
+          <span style={{borderRadius:2,padding:"4px 10px",fontSize:12,fontWeight:600,flexShrink:0,marginLeft:8,
+            background:(data.settings?data.settings.goldAutoRefresh!==false:true)?P.gr:P.sf,color:(data.settings?data.settings.goldAutoRefresh!==false:true)?P.onInk:P.sub,
             border:`1px solid ${(data.settings?data.settings.goldAutoRefresh!==false:true)?P.gr:P.line}`}}>
             {(data.settings?data.settings.goldAutoRefresh!==false:true)?"On":"Off"}
           </span>
         </button>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:10,padding:"9px 12px",fontSize:13,marginBottom:16,
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderRadius:2,padding:"9px 12px",fontSize:13,marginBottom:16,
           background:P.sfA,border:`1px solid ${P.line}`,color:P.ink}}>
           <span>Detailed (daily) snapshot history<br/>
             <span style={{fontSize:11,color:P.faint,fontWeight:400}}>How many recent days keep day-by-day resolution before older history compresses to weekly, then monthly</span>
           </span>
           <select value={(data.settings&&data.settings.snapshotRetention&&data.settings.snapshotRetention.dailyDays)||35}
             onChange={e=>setData(d=>({...d,settings:{...(d.settings||{}),snapshotRetention:{...((d.settings&&d.settings.snapshotRetention)||{weeklyDays:365}),dailyDays:Number(e.target.value)}}}))}
-            style={{borderRadius:8,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink,flexShrink:0}}>
+            style={{borderRadius:2,padding:"5px 8px",fontSize:13,background:P.sf,border:`1px solid ${P.line}`,color:P.ink,flexShrink:0}}>
             <option value={14}>14 days</option>
             <option value={35}>35 days</option>
             <option value={60}>60 days</option>
@@ -19704,7 +19809,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                  ordinary sync failure, and the fix is completely different —
                  so it gets its own row rather than "Sync failed". */
               if(KVSync.lastStatus===401)return(
-                <div style={{fontSize:12,color:P.amber,marginBottom:8,padding:"8px 10px",background:P.amberS,borderRadius:10,lineHeight:1.6}}>
+                <div style={{fontSize:12,color:P.amber,marginBottom:8,padding:"8px 10px",background:P.amberS,borderRadius:2,lineHeight:1.6}}>
                   <span style={{display:"inline-flex",alignItems:"center",gap:6}}><I.X size={13}/>Passphrase rejected</span>
                   <div style={{fontSize:11,color:P.faint,marginTop:4}}>
                     The cloud didn't accept this device's passphrase — it was probably changed. Forget it below and enter the new one. Your data on this device is untouched.
@@ -19725,10 +19830,10 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 ?`${lastSyncError||"unknown error"}${KVSync.lastStatus?` · HTTP ${KVSync.lastStatus}`:""}`
                 :"";
               return(
-                <div style={{fontSize:12,color:s.color,marginBottom:8,padding:"8px 10px",background:s.bg,borderRadius:10,lineHeight:1.6}}>
+                <div style={{fontSize:12,color:s.color,marginBottom:8,padding:"8px 10px",background:s.bg,borderRadius:2,lineHeight:1.6}}>
                   <span style={{display:"inline-flex",alignItems:"center",gap:6}}><s.icon size={13}/>{s.label}</span>
                   {failDetail&&
-                    <div style={{fontSize:11,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",color:P.sub,marginTop:5,padding:"5px 7px",background:P.sf,borderRadius:6,wordBreak:"break-word"}}>
+                    <div style={{fontSize:11,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",color:P.sub,marginTop:5,padding:"5px 7px",background:P.sf,borderRadius:2,wordBreak:"break-word"}}>
                       {failDetail}
                     </div>}
                   <div style={{fontSize:11,color:P.faint,marginTop:4}}>
@@ -19743,7 +19848,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               );
             })()}
             {importPending&&
-              <div style={{fontSize:12,color:P.sub,marginBottom:8,padding:"10px 12px",background:P.amberS,borderRadius:10,lineHeight:1.6}}>
+              <div style={{fontSize:12,color:P.sub,marginBottom:8,padding:"10px 12px",background:P.amberS,borderRadius:2,lineHeight:1.6}}>
                 <b style={{color:P.amber}}>Imported data is on this device only.</b>
                 <div style={{marginTop:4}}>
                   Nothing has been uploaded — {owners.wife||"your partner"} is still on the old copy. Tap <b>Save to Cloud</b> to share it, or restore one of the saved copies below to undo the import. Pulling is paused until you choose.
@@ -19751,7 +19856,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
               <button onClick={()=>saveToCloud()} disabled={syncOp==="push"}
-                style={importPending?{...btn,background:P.gr,color:"#fff",border:"none"}:btn}>
+                style={importPending?{...btn,background:P.gr,color:P.onInk,border:"none"}:btn}>
                 <I.Cloud size={14}/>{syncOp==="push"?"Saving…":"Save to Cloud"}
               </button>
               <button onClick={()=>pullFromCloud()} disabled={syncOp==="pull"||importPending}
@@ -19763,7 +19868,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             <label style={{display:"block",fontSize:11,color:P.faint,marginBottom:4}}>Name this device</label>
             <input value={devLabel} onChange={e=>{setDevLabel(e.target.value);setDeviceLabel(e.target.value);}}
               placeholder="e.g. My phone"
-              style={{width:"100%",boxSizing:"border-box",borderRadius:10,padding:"9px 12px",fontSize:14,marginBottom:6,
+              style={{width:"100%",boxSizing:"border-box",borderRadius:2,padding:"9px 12px",fontSize:14,marginBottom:6,
                 background:P.sf,border:`1px solid ${P.line}`,color:P.ink}}/>
             <div style={{fontSize:11,color:P.faint,lineHeight:1.6,marginBottom:10}}>
               Only used to say which device saved last if you and {owners.wife||"your partner"} ever change the same thing at once. Stored on this device, never uploaded as part of your data.
@@ -19778,13 +19883,13 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
               <br/><br/>
               <b style={{color:P.sub}}>The buttons are shortcuts, not requirements.</b> Save now uploads right away instead of waiting; Pull now fetches the latest copy from the other device. Both live behind the sync pill at the top of the screen, along with what's waiting to go up. Opening the app already checks for you, and pull-to-sync on mobile does whichever of the two is needed.
             </div>
-            <div style={{fontSize:11,color:P.sub,padding:"8px 10px",background:P.sfA,borderRadius:10,lineHeight:1.6}}>
+            <div style={{fontSize:11,color:P.sub,padding:"8px 10px",background:P.sfA,borderRadius:2,lineHeight:1.6}}>
               You and {owners.wife||"your partner"} share one dataset. If you both change different things, they're combined automatically. If you both change the <i>same</i> thing, the app stops and asks you which to keep rather than picking one silently.
             </div>
             <SyncDiagnostics {...{localRev,cloudRev,lastCloudSavedAt,lastCloudPulledAt,hasUnsyncedChanges,changesSinceSave,syncStatus,isOnline,lastSyncError}}/>
           </div>
           :<div style={{marginBottom:16}}>
-            <div style={{fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:10,lineHeight:1.6,marginBottom:10}}>
+            <div style={{fontSize:12,color:P.sub,padding:"10px 12px",background:P.sfA,borderRadius:2,lineHeight:1.6,marginBottom:10}}>
               This device isn't connected to the cloud yet. Everything still works and saves here — enter your sync passphrase to share data with your other devices and turn on live prices.
             </div>
             <label style={{display:"block",fontSize:11,color:P.faint,marginBottom:4}}>Sync passphrase</label>
@@ -19793,7 +19898,7 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
                 onChange={e=>{setPass(e.target.value);if(passState!=="idle")setPassState("idle");}}
                 onKeyDown={e=>{if(e.key==="Enter")connectPass();}}
                 placeholder="Type your passphrase"
-                style={{flex:1,minWidth:0,borderRadius:10,padding:"10px 12px",fontSize:14,
+                style={{flex:1,minWidth:0,borderRadius:2,padding:"10px 12px",fontSize:14,
                   background:P.sf,border:`1px solid ${passState==="bad"?P.amber:P.line}`,color:P.ink}}/>
               <button onClick={connectPass} disabled={!pass.trim()||passState==="checking"}
                 style={{...btn,flexShrink:0,opacity:(!pass.trim()||passState==="checking")?.5:1}}>
@@ -19846,8 +19951,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             ?(()=>{setData(d=>migrate(resetToEmptyDoc(d)));markResetData();setConfirm(false);
                    flash(kvReady?"This device is now empty — the cloud still has your data":"This device is now empty");})()
             :setConfirm(true)}
-          style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:10,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
-            background:confirm?P.red:P.sfA,color:confirm?"#fff":P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
+          style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"center",gap:8,borderRadius:2,padding:"8px 12px",fontSize:14,fontWeight:500,marginTop:4,
+            background:confirm?P.red:P.sfA,color:confirm?P.onInk:P.red,border:`1px solid ${confirm?P.red:P.line}`}}>
           <I.Reset size={14}/>{confirm?"Tap again to confirm reset":"Reset to empty"}
         </button>
         {kvReady&&
@@ -19878,6 +19983,8 @@ function SettingsModal({data,setData,onClose,theme,pullFromCloud,saveToCloud,kvR
             </button>}
         </div>
         </>)}
+        </div>{/* /set-pane-body */}
+        </div>{/* /set-2pane */}
       </div>
       {/* The import preview is a sheet, so it lives out here with the other
           nested dialogs rather than inside the Backup section: collapsing a
@@ -19935,7 +20042,7 @@ class ErrorBoundary extends React.Component{
             Where'dItGo hit an unexpected error and couldn't continue. Your saved data on this device hasn't been touched — reloading usually fixes it.
           </div>
           <button onClick={()=>window.location.reload()}
-            style={{padding:"10px 20px",borderRadius:10,border:"none",background:P.gr,color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            style={{padding:"10px 20px",borderRadius:2,border:"none",background:P.gr,color:P.onInk,fontSize:14,fontWeight:600,cursor:"pointer"}}>
             Reload app
           </button>
         </div>
