@@ -1,9 +1,46 @@
 # Current Status
 
-_Last updated: 2026-08-28 — **v1.59.2 shipped** (Currency retired as a tab —
-now a header quick-tool sheet; Bills desktop rail collapsed to a read-only
-share summary + modal). See "State of play" below. Presentation + nav-registry
-only; no data model change._
+_Last updated: 2026-08-28 — **v1.60.0 shipped & DEPLOYED** (More/Settings/system
+overlays recomposed to Technical Ledger — the final utility-surface pass; Forecast
+intentionally deferred). Commit `08d579b` on main (pushed), live on the apex
+`https://whered-it-go.pages.dev` (version.json returns 1.60.0 / build
+`2026.08.28.0008`). Presentation-only; no data/sync/domain change; all 26 runners +
+parse green. The Technical Ledger redesign is now effectively COMPLETE (only the
+hidden Forecast tab remains un-ported). See "State of play" below._
+
+**v1.60.0 — More / Settings / overlays (2026-08-28, DEPLOYED):**
+- **More** (`MoreSheet`): icon-tile grid → full-width hairline ledger rows
+  (`.more-list`/`.more-row`; icon · name · trailing chevron), active-row marker;
+  mono header. Filtering/nav/a11y preserved. No desktop shortcut dashboard (the
+  sidebar already lists every destination).
+- **Settings** (`SettingsModal`): **mobile accordion unchanged; desktop (≥1024) is
+  a two-pane** — new module-scope hook `useMinWidth(px)` (beside `useIsMobile`)
+  drives `isTwoPane` + `activeSec`; a `.settings-nav` left rail (the `SEC_NAV`
+  array of the 7 ids/titles) sets `activeSec`. The `section(id,title,children)`
+  helper now computes `isOpen = isTwoPane?activeSec===id:!!openSec[id]` and returns
+  null for non-active desktop sections. Sheet carries a `settings-sheet` class
+  (max-width 900 + `.set-2pane` grid at ≥1024). All `settingstest` invariants
+  intact. Interior sweep: `borderRadius:10/8/6/999→2`, `"#fff"→P.onInk` (dark-mode
+  pill contrast), mono section headers. Breakpoint is **1024, not 768** (768 would
+  leave a 769–1023 dead zone with the nav hidden AND the headers hidden).
+- **Overlays → `.sheet-task`** (full-screen mobile / bounded desktop, Portalled,
+  head/body/foot): `SyncSheet` (adds a `Verdict` state line; headertest slice +
+  props + trailing `/* ── Pending-changes viewer` marker kept), `ConflictModal`
+  (no dismiss → title-only head), `PendingChangesModal`, `RecentlyDeletedModal`,
+  `FirstConnectSheet`, `ImportPreviewSheet`. Kept compact + token-swept:
+  `ConfirmDialog` (confirm → solid `P.danger`/`P.ink` + onInk), `ProfilePickerModal`,
+  undo toast (radius 2; UNDO → fixed `#34D399` for legibility on the fixed-dark
+  `heroBg` in both themes), adopted-settings note.
+- Verified: 320/390/1600 light+dark for More, Settings (both layouts), Sync,
+  RecentlyDeleted; no console errors. Shots `artifacts/ui-verification/{more,
+  settings,overlays}/`; harness `scratchpad/overlayshots.cjs` (:8097).
+- **NOT pixel-verified live** (need injected state): Conflict / FirstConnect /
+  PendingChanges / ImportPreview — built from the same primitives, parse-clean,
+  structurally identical to the verified sheets. Drive them through
+  `sandboxworker.cjs` (divergent/pending/file states) as a post-ship check.
+
+_Prior: v1.59.2 — Currency retired as a tab (header quick-tool sheet); Bills
+desktop rail collapsed to a read-only share summary + modal._
 
 ## Technical Ledger redesign — read this FIRST (2026-08-26, DEPLOYED)
 

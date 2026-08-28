@@ -1,5 +1,39 @@
 # Architectural & Technical Decisions
 
+## Settings desktop two-pane must NOT disturb the accordion invariants (2026-08-28, v1.60.0)
+
+`settingstest.cjs` pins the accordion's *shape* — `section` is an arrow helper
+`(id,title,children)=>`, `openSec` is `useState({})` (all closed), exactly 7
+`section(...)` calls in a fixed id order, nested dialogs after the last section,
+errors in the preamble. The desktop two-pane had to be added *without touching any
+of that*, so it went in as a **parallel** mechanism, not a rewrite: a separate
+`activeSec` state + `useMinWidth(1024)` hook, and one line inside the helper
+(`isOpen = isTwoPane?activeSec===id:!!openSec[id]`; return null when a desktop
+section isn't active). The left rail is plain JSX (`.settings-nav` over the
+`SEC_NAV` array), never a component — a capitalised `Section` component would
+remount the subtree every render and drop focus, the exact bug the helper existed
+to avoid. The breakpoint is **1024, matching the CSS**, not `useIsMobile`'s 768:
+between 768–1023 the nav is `display:none` while the desktop branch would hide the
+headers too, stranding the user on one section. Same lesson as every prior
+Settings change — the test guards the *structure*, so new behaviour rides beside
+it rather than through it.
+
+## `.sheet-task` is a visual language, applied selectively — not "make every dialog full-screen" (2026-08-28, v1.60.0)
+
+The final overlay pass reused the `.sheet-task` skeleton (full-screen mobile /
+bounded desktop, Portalled head/body/foot) only for the **content-heavy or
+multi-step** overlays — Sync, Conflict, PendingChanges, RecentlyDeleted,
+FirstConnect, ImportPreview. `ConfirmDialog`, `ProfilePicker` and the undo toast
+deliberately stayed their compact/toast size: a two-button confirm blown up to a
+full screen reads as a failure, not a feature. All of them share the same
+*typography, hairlines, status language, headers and actions* regardless of
+physical size — that consistency, not one uniform shell, is what makes them read
+as one system. Two contrast fixes were folded in while sweeping: `"#fff"` on a
+coloured fill → `P.onInk` (dark theme flips it to dark text, restoring contrast on
+the light-green/red fills), and the undo toast's `UNDO` label → a **fixed**
+`#34D399` because its `heroBg` stays dark in *both* themes, so a theme-flipping
+green token would go dark-on-dark in light mode.
+
 ## A merge that never converges is worse than one that loses (2026-08-14, v1.44.0)
 
 `mergeTrimPolicy` breaks a stamp tie with `>=`, i.e. **local wins**. Copying

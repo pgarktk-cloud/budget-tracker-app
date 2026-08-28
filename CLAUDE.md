@@ -561,6 +561,15 @@ left open is about this screen, not about the household (same reasoning as
 `VIEW_PROFILE_KEY`). Default every section closed, or the sheet opens long and
 the reorganisation buys nothing.
 
+Since v1.60.0 Settings is **also a desktop two-pane** (≥1024): a `.settings-nav`
+left rail drives a separate `activeSec` state, and the `section` helper shows only
+the active section's body on desktop. This was added **beside** the accordion, not
+through it — `openSec`/`useState({})`, the 7 `section()` calls and the helper
+signature are untouched, so `settingstest` still passes. The breakpoint is
+**1024 (via `useMinWidth`), matching the CSS** — `useIsMobile`'s 768 would strand
+the user in a 769–1023 zone where the nav is hidden but the headers are too. Any
+future Settings edit must keep the two mechanisms parallel.
+
 **A big JSX move is done by asserted line ranges, not string matching.** Phase 5
 moved ~500 lines inside a 460-line component with a script that mapped each
 block, asserted every boundary line still contained its expected heading,
