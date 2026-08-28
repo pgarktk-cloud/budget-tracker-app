@@ -17076,7 +17076,7 @@ function defaultPurchaseDraft(owner){
 function PurchaseTrimSheet({categories,trims,setTrim,cur,fmt,onClose}){
   useScrollLock(true);
   const dlgRef=useDialogA11y(onClose);
-  const box={width:"100%",borderRadius:10,padding:"6px 8px",fontSize:13,fontFamily:"inherit",
+  const box={width:"100%",borderRadius:2,padding:"6px 8px",fontSize:13,fontFamily:"inherit",
     height:32,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink,textAlign:"right"};
   return(
     <Portal>
@@ -17183,11 +17183,11 @@ function PurchaseTrimApplySheet({spec,trimCats,fmt,noun,plural,label,product,onC
 
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose}
-            style={{flex:1,borderRadius:12,padding:"12px 0",fontSize:13,fontWeight:600,
-              border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub,minHeight:44}}>Cancel</button>
+            style={{flex:1,borderRadius:2,padding:"12px 0",fontSize:13,fontWeight:500,
+              border:`1px solid ${P.hairline}`,background:"transparent",color:P.sub,minHeight:44}}>Cancel</button>
           <button onClick={onConfirm}
-            style={{flex:2,borderRadius:12,padding:"12px 0",fontSize:13,fontWeight:700,
-              border:"none",background:P.gr,color:"#fff",minHeight:44}}>Trim these budgets</button>
+            style={{flex:2,borderRadius:2,padding:"12px 0",fontSize:13,fontWeight:600,
+              border:"none",background:P.gr,color:P.onInk,minHeight:44}}>Trim these budgets</button>
         </div>
       </div>
     </div>
@@ -17220,7 +17220,7 @@ function PurchaseCompareSheet({options,describe,sav,label,fmt,noun,plural,produc
       {k:"Total financed",v:fmt(o.financedTotal)}];
     return[{k:"Reachable price",v:fmt(o.price)},{k:"Less than you asked",v:fmt(o.saving)}];
   };
-  const btnBase={borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,minHeight:40};
+  const btnBase={borderRadius:2,padding:"8px 12px",fontSize:12,fontWeight:600,minHeight:40};
   return(
     <Portal>
     <div className="sheet-bg" onClick={onClose}>
@@ -17243,8 +17243,8 @@ function PurchaseCompareSheet({options,describe,sav,label,fmt,noun,plural,produc
                 style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"transparent",
                   border:"none",padding:0,textAlign:"left"}}>
                 <div style={{minWidth:0,flex:1}}>
-                  <div style={{fontSize:13,fontWeight:700,color:P.neuInk}}>{line.head}</div>
-                  <div className="sans" style={{fontSize:11,color:P.neuSub,lineHeight:1.5}}>{line.sub}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:P.ink}}>{line.head}</div>
+                  <div className="sans" style={{fontSize:11,color:P.sub,lineHeight:1.5}}>{line.sub}</div>
                 </div>
                 <I.Chevron size={13} style={{flexShrink:0,color:P.faint,
                   transform:isOpen?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
@@ -17299,6 +17299,10 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      sheet, waiting/spend-less just accept the already-loaded draft. */
   const[previewOpt,setPreviewOpt]=useState(null);
   const[trimApply,setTrimApply]=useState(null);   // the trim confirmation spec, or null
+  /* Which scenario rows are expanded (open-ledger row-expand). A plain Set in
+     view state — the rows carry no inputs, so a remount is harmless, but the
+     open state still belongs here, not in a per-render component. */
+  const[openScenarios,setOpenScenarios]=useState(()=>new Set());
 
   const financedMode=draft.method!=="cash";
   const trims=draft.trims||{};
@@ -17369,20 +17373,44 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
      width:100% and spills over the neighbour). The two-up rows wrap so they
      stack on a narrow phone rather than colliding. */
   const lab={fontSize:12,color:P.sub,marginBottom:4};
-  const box={width:"100%",borderRadius:10,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
+  const box={width:"100%",borderRadius:2,padding:"9px 10px",fontSize:14,fontFamily:"inherit",
     height:38,background:"var(--surface)",border:"1px solid var(--hairline)",color:P.ink};
   const dateBox={...box,minWidth:0,WebkitAppearance:"none",MozAppearance:"none",appearance:"none"};
   const twoUp={display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"};
   const cell={flex:"1 1 150px",minWidth:0};
-  const card={...neu(16),padding:14,marginBottom:16};
   const rowLine={display:"flex",justifyContent:"space-between",gap:10,fontSize:12,
-    color:P.neuSub,padding:"4px 0"};
+    color:P.sub,padding:"4px 0"};
+  const railLine={display:"flex",justifyContent:"space-between",gap:8,fontSize:12,
+    color:P.sub,borderTop:`1px solid ${P.hairline}`,padding:"9px 0"};
+  /* Open-section label (mono uppercase) and a scenario tone→square colour. */
+  const secLabel=t=>(<div className="t-section" style={{color:P.muted,margin:"0 0 12px"}}>{t}</div>);
+  const toneCol=t=>({good:P.success,warn:"#E07B2A",bad:P.danger,flat:P.muted}[t]||P.muted);
+  /* One expandable option row: collapsed = tone square + name + key figure;
+     expanded reveals the full detail node. Open state is view-level. */
+  const pathRow=(key,name,tone,figure,detail)=>{
+    const openS=openScenarios.has(key);
+    return(
+      <div style={{borderTop:`1px solid ${P.hairline}`}}>
+        <button onClick={()=>setOpenScenarios(s=>{const n=new Set(s);n.has(key)?n.delete(key):n.add(key);return n;})}
+          aria-expanded={openS}
+          style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"transparent",
+            border:"none",padding:"14px 0",textAlign:"left",cursor:"pointer"}}>
+          <span style={{width:8,height:8,background:toneCol(tone),flexShrink:0}}/>
+          <span style={{flex:1,minWidth:0,fontSize:14,fontWeight:500,color:P.ink}}>{name}</span>
+          <span className="tnum" style={{fontSize:13,color:P.sub,flexShrink:0,textAlign:"right"}}>{figure}</span>
+          <I.Chevron size={13} style={{flexShrink:0,color:P.faint,
+            transform:openS?"rotate(180deg)":"rotate(-90deg)",transition:"transform .2s"}}/>
+        </button>
+        {openS&&<div style={{padding:"0 0 16px 18px"}}>{detail}</div>}
+      </div>
+    );
+  };
 
   const stackRow=(name,value,tone)=>(
     <div style={rowLine}>
-      <span style={{color:tone==="muted"?P.faint:P.neuSub}}>{name}</span>
-      <span className="tnum" style={{fontWeight:600,
-        color:tone==="muted"?P.faint:(tone==="minus"?P.wine:P.neuInk)}}>
+      <span style={{color:tone==="muted"?P.faint:P.sub}}>{name}</span>
+      <span className="tnum" style={{fontWeight:500,
+        color:tone==="muted"?P.faint:(tone==="minus"?P.wine:P.ink)}}>
         {tone==="minus"?`− ${fmt(value)}`:fmt(value)}
       </span>
     </div>
@@ -17545,32 +17573,47 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
     clearPreview();   // waiting / spend-less / finance: the draft is already the plan
   };
 
+  /* Collapsed summaries for the three row-expand option rows. Placed here, after
+     every value they read (sav/savSchedule/scenarios/*Verdict), so no TDZ. */
+  const financedName=financedMode?`Buy now, on ${installmentProvider(draft.method).label}`:"Buy now, on a payment plan";
+  const financedFigure=scenarios.financed?`${scenarios.financed.count}×${fmt(scenarios.financed.perPayment)}`:"Set details";
+  const saveName=(sav&&sav.mode==="plan")?`Save up by ${instShortDate(draft.desiredDate)}`:"Save up for it";
+  const saveTone=sav?savingsVerdict:earliestVerdict;
+  const saveFigure=(sav&&sav.mode==="plan"&&sav.shortfall>0)
+    ?(savSchedule&&savSchedule.even?`${fmt(sav.requiredPerBucket)}/${noun}`:`${sav.n} ${plural(sav.n,noun)}`)
+    :(((sav&&sav.shortfall<=0)||(!sav&&scenarios.earliest&&scenarios.earliest.n===0))?"Already covered"
+      :(!sav&&scenarios.earliest)?`by ${label(scenarios.earliest.bucketKey)}`
+      :(!sav&&!scenarios.earliest)?"Not in 2 yrs":"—");
+
   return(
     <div>
-      <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+     <div className="split-8-4">
+      <div className="split-pad-r">
+      <div style={{marginBottom:14}}>
+        <OwnerToggle owner={budgetOwner} setOwner={setBudgetOwner} owners={owners}/>
+      </div>
 
       {/* Preview banner (9b) — persistent while an explored option is loaded
           into the scratchpad. "Use this plan" accepts it; "Cancel preview"
           restores the exact draft from before the preview. */}
       {previewBackup&&
-        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14,
-          borderRadius:12,padding:"11px 13px",background:P.grS,border:`1px solid ${P.jade}44`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:16,
+          borderRadius:2,padding:"11px 13px",background:P.grS,border:`1px solid ${P.gr}`}}>
           <div style={{flex:"1 1 160px",minWidth:0}}>
-            <div style={{fontSize:11,fontWeight:600,color:P.grD,textTransform:"uppercase",letterSpacing:".06em"}}>Previewing</div>
-            <div style={{fontSize:13,fontWeight:600,color:P.neuInk,lineHeight:1.4}}>{previewLabel||"an alternative plan"}</div>
+            <div className="t-label" style={{color:P.grD}}>Previewing</div>
+            <div style={{fontSize:13,fontWeight:500,color:P.ink,lineHeight:1.4}}>{previewLabel||"an alternative plan"}</div>
           </div>
           <button onClick={cancelPreview}
-            style={{flexShrink:0,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:600,
-              border:`1px solid ${P.line}`,background:"transparent",color:P.neuSub,minHeight:40}}>Cancel preview</button>
+            style={{flexShrink:0,borderRadius:2,padding:"8px 12px",fontSize:12,fontWeight:500,
+              border:`1px solid ${P.hairline}`,background:"transparent",color:P.sub,minHeight:40}}>Cancel preview</button>
           <button onClick={usePreviewedPlan}
-            style={{flexShrink:0,borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:700,
-              border:"none",background:P.gr,color:"#fff",minHeight:40}}>Use this plan</button>
+            style={{flexShrink:0,borderRadius:2,padding:"8px 14px",fontSize:12,fontWeight:600,
+              border:"none",background:P.gr,color:P.onInk,minHeight:40}}>Use this plan</button>
         </div>}
 
-      {/* ── What are you buying? ── */}
-      <section style={card}>
-        <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:12}}>What are you thinking of buying?</div>
-
+      {/* ── HERO — the buy-form IS the one bordered surface (a control panel).
+          The verdict at its foot resolves the whole decision once a price is in. */}
+      <GridSection title="What are you buying?" style={{marginBottom:24}}>
         <div style={{marginBottom:12}}>
           <div style={lab}>Product</div>
           <input value={draft.product} onChange={e=>set({product:e.target.value})}
@@ -17634,172 +17677,66 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                 allowEmpty min={0} live className="tnum" style={box}/>
             </div>
           </div>}
-      </section>
 
-      {/* Income of zero is the fresh-device skeleton, not a budget. Every
-          scenario would divide a purchase into a plan with no money in it. */}
-      {noIncome&&
-        <section style={card}>
-          <Verdict tone="flat">Nothing to project against yet</Verdict>
-          <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
-            The plan {owners[budgetOwner]} has for {label(bucket)} carries no income, so there is
-            no headroom to project against. Set an income in Budget and this tab will
-            work from it.
-          </div>
-        </section>}
-
-      {!noIncome&&<>
-        {/* ── Available cash, itemised ── */}
-        <section style={card}>
-          <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>Cash you could actually use</div>
-          {/* "Accounts · Me" rather than a possessive — the default owner
-              label is literally "Me", and "Me's accounts" is not a sentence. */}
-          {stackRow(`Accounts · ${owners[budgetOwner]}`,stack.banks)}
-          {/* One line per reserved account, naming it. A single "withheld"
-              total would be the bare number this card exists to avoid. */}
-          {stack.reserved.map(r=>
-            <div key={r.id} style={{...rowLine,alignItems:"flex-start"}}>
-              <span style={{flex:1,minWidth:0}}>
-                {r.name} — emergency fund
-                {/* Releasable, because "won't spend it" is a policy, not a
-                    capability. This is what the two-concept split is FOR: you
-                    can ask what raiding it would cost without changing the
-                    account. Releasing does not release a protected goal living
-                    in the same account — that has its own toggle below. */}
-                <button onClick={()=>setDraft(d=>{
-                    const next=new Set(d.releasedBankIds||[]);
-                    if(next.has(r.id))next.delete(r.id);else next.add(r.id);
-                    return{...d,releasedBankIds:[...next]};
-                  })}
-                  style={{display:"block",background:"transparent",border:"none",padding:"4px 0",
-                    minHeight:32,color:r.released?"#E07B2A":P.jade,fontSize:11,fontWeight:600,
-                    textAlign:"left"}}>
-                  {r.released
-                    ?"✓ released for this purchase — tap to protect again"
-                    :"Spend it on this purchase"}
-                </button>
-                {r.released&&r.held>0&&
-                  <span style={{display:"block",fontSize:11,color:P.faint}}>
-                    {fmt(r.held)} still held back by a goal kept in this account.
-                  </span>}
-              </span>
-              <span className="tnum" style={{fontWeight:600,flexShrink:0,
-                color:r.held>0?P.wine:P.faint}}>
-                {r.held>0?`− ${fmt(r.held)}`:`(${fmt(r.value)} freed)`}
-              </span>
-            </div>)}
-          {stack.protectedGoals>0&&
-            stackRow(stack.unlinkedProtectedCount===1?"1 protected goal"
-              :`${stack.unlinkedProtectedCount} protected goals`,stack.protectedGoals,"minus")}
-          <div style={{...rowLine,borderTop:`1px solid ${P.line}`,marginTop:6,paddingTop:8,
-            fontSize:14,color:P.neuInk}}>
-            <span style={{fontWeight:600}}>Available</span>
-            <span className="tnum" style={{fontWeight:700,
-              color:stack.available>=0?P.neuInk:P.wine}}>{fmt(stack.available)}</span>
-          </div>
-
-          {/* ── Excluded, and said so ──
-              An account silently missing from a total is the surprise these
-              lines exist to prevent. The unreachable ones are tappable: a
-              purchase you would genuinely make in that country can count that
-              money, for this purchase only. */}
-          {stack.inaccessible.map(a=>{
-            const on=includedBankIds.indexOf(a.id)>=0;
-            return(
-              <div key={a.id} style={{...rowLine,alignItems:"flex-start",color:P.faint,fontSize:11}}>
-                <span style={{flex:1,minWidth:0}}>
-                  {a.name} — can't reach
-                  {a.value==null
-                    ?<span style={{display:"block"}}>
-                       Can't convert {a.currency} right now, so it can't be included.
-                     </span>
-                    :<button onClick={()=>setDraft(d=>{
-                        const next=new Set(d.includedBankIds||[]);
-                        if(next.has(a.id))next.delete(a.id);else next.add(a.id);
-                        return{...d,includedBankIds:[...next]};
-                      })}
-                      style={{display:"block",background:"transparent",border:"none",padding:"4px 0",
-                        minHeight:32,color:on?P.grD:P.jade,fontSize:11,fontWeight:600,textAlign:"left"}}>
-                      {on?"✓ counted for this purchase — tap to exclude":"Include for this purchase"}
-                    </button>}
-                </span>
-                <span className="tnum" style={{flexShrink:0}}>
-                  {a.currency} {(Number(a.rawValue)||0).toLocaleString("en-US",{maximumFractionDigits:0})}
-                  {a.value!=null&&a.currency!==cur&&
-                    <span style={{display:"block"}}>≈ {fmt(a.value)}</span>}
-                </span>
+        {/* The decision, resolved in one line inside the hero. */}
+        <div style={{borderTop:`1px solid ${P.hairline}`,marginTop:6,paddingTop:12}}>
+          {noIncome
+            ?<>
+              <Verdict tone="flat">Nothing to project against yet</Verdict>
+              <div className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.6}}>
+                The plan {owners[budgetOwner]} has for {label(bucket)} carries no income, so there is
+                no headroom to project against. Set an income in Budget and this tab will work from it.
               </div>
-            );
-          })}
-          {/* The stale-rate caveat the cached FX makes possible — a converted
-              figure has to say how old the rate behind it is. */}
-          {stack.inaccessible.some(a=>a.value!=null&&a.currency!==cur)&&ratesStaleDays!=null&&ratesStaleDays>0&&
-            <div style={{fontSize:11,color:P.faint,marginTop:2}}>
-              Converted at the last exchange rate this device fetched
-              ({ratesStaleDays} day{ratesStaleDays===1?"":"s"} ago).
-            </div>}
-          {stack.joint>0&&
-            <div style={{...rowLine,color:P.faint,fontSize:11}}>
-              <span>Joint accounts — not counted</span>
-              <span className="tnum">{fmt(stack.joint)}</span>
-            </div>}
-          {stack.notCountedGoals>0&&
-            <div className="sans" style={{fontSize:11,color:P.faint,marginTop:6,lineHeight:1.5}}>
-              {stack.notCountedGoals} protected goal{stack.notCountedGoals===1?"":"s"} sit
-              {stack.notCountedGoals===1?"s":""} in an account not counted above, so
-              {stack.notCountedGoals===1?" it is":" they are"} not subtracted again.
-            </div>}
-          {stack.unconverted>0&&
-            <div style={{fontSize:11,color:P.faint,marginTop:6}}>
-              {stack.unconverted} account{stack.unconverted===1?"":"s"} in another currency
-              couldn't be converted and {stack.unconverted===1?"is":"are"} excluded.
-            </div>}
-          <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
-            Goal balances sit inside these accounts, so protecting a goal subtracts it here —
-            once, even when the goal names the account it lives in. Money set aside for bills
-            isn't taken off automatically: mark the account it sits in on the Banks tab.
-          </div>
-        </section>
+            </>
+            :!ready
+              ?<div className="sans" style={{fontSize:13,color:P.sub,lineHeight:1.5}}>
+                 Enter a price and your options appear below.
+               </div>
+              :<Verdict tone={scenarios.cash.feasible?cashVerdict:(scenarios.earliest?earliestVerdict:"bad")}>
+                 {scenarios.cash.feasible
+                   ?(cashVerdict==="warn"
+                       ?"Affordable now in cash, but it leaves little behind"
+                       :`Affordable now in cash — ${fmt(scenarios.cash.remainingAfter)} left afterwards`)
+                   :scenarios.earliest
+                     ?`Not affordable now — reachable by ${label(scenarios.earliest.bucketKey)}`
+                     :"Not affordable now, and not reachable within two years"}
+               </Verdict>}
+        </div>
+      </GridSection>
 
-        {!ready&&
-          <section style={card}>
-            <div style={{fontSize:12,color:P.neuSub}}>Enter a price above and the three
-              scenarios appear here.</div>
-          </section>}
+      {!noIncome&&ready&&<>
+        {historyWarning&&
+          <div className="sans" style={{fontSize:12,color:"#E07B2A",lineHeight:1.6,marginBottom:16}}>{historyWarning}</div>}
 
-        {ready&&<>
-          {historyWarning&&
-            <section style={{...card,padding:"12px 14px"}}>
-              <div style={{fontSize:12,color:"#E07B2A",lineHeight:1.6}}>{historyWarning}</div>
-            </section>}
+        {/* ── Your options — three row-expand paths ── */}
+        <div style={{marginBottom:24}}>
+          {secLabel("Your options")}
 
-          {/* ── 1 · Cash ── */}
-          <section style={card}>
-            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>Buy it now, in cash</div>
-            <Verdict tone={cashVerdict}>
-              {!scenarios.cash.feasible
-                ?`Short by ${fmt(price-stack.available)}`
-                :cashVerdict==="warn"
-                  ?`Affordable, but it leaves less than one period's spending behind`
-                  :`Affordable — ${fmt(scenarios.cash.remainingAfter)} still available afterwards`}
-            </Verdict>
-            <div style={rowLine}><span>Price</span>
-              <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(price)}</span></div>
-            <div style={rowLine}><span>Available now</span>
-              <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(stack.available)}</span></div>
-            <div style={rowLine}><span>Left afterwards</span>
-              <span className="tnum" style={{fontWeight:600,
-                color:scenarios.cash.remainingAfter>=0?P.neuInk:P.wine}}>
-                {fmt(scenarios.cash.remainingAfter)}</span></div>
-          </section>
+          {/* 1 · Cash */}
+          {pathRow("cash","Buy it now, in cash",cashVerdict,
+            scenarios.cash.feasible?`${fmt(scenarios.cash.remainingAfter)} left`:`Short ${fmt(price-stack.available)}`,
+            <>
+              <Verdict tone={cashVerdict}>
+                {!scenarios.cash.feasible
+                  ?`Short by ${fmt(price-stack.available)}`
+                  :cashVerdict==="warn"
+                    ?`Affordable, but it leaves less than one period's spending behind`
+                    :`Affordable — ${fmt(scenarios.cash.remainingAfter)} still available afterwards`}
+              </Verdict>
+              <div style={rowLine}><span>Price</span>
+                <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(price)}</span></div>
+              <div style={rowLine}><span>Available now</span>
+                <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(stack.available)}</span></div>
+              <div style={rowLine}><span>Left afterwards</span>
+                <span className="tnum" style={{fontWeight:500,
+                  color:scenarios.cash.remainingAfter>=0?P.ink:P.wine}}>
+                  {fmt(scenarios.cash.remainingAfter)}</span></div>
+            </>)}
 
-          {/* ── 2 · The entered plan ── */}
-          <section style={card}>
-            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>
-              Buy it now, on {financedMode?installmentProvider(draft.method).label:"a payment plan"}
-            </div>
-            {!scenarios.financed
-              ?<div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
+          {/* 2 · The entered payment plan */}
+          {pathRow("financed",financedName,scenarios.financed?financedVerdict:"flat",financedFigure,
+            (!scenarios.financed
+              ?<div className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.6}}>
                  Pick a provider, a number of payments and a first due date above to see what
                  the instalments would do to each period.
                </div>
@@ -17814,229 +17751,378 @@ function PurchaseAdvisorView({monthlyPlans,plans,activePlanId,installments,insta
                         :"Every affected period still balances"}
                 </Verdict>
                 <div style={rowLine}><span>Up front today</span>
-                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.financed.upfront)}</span></div>
+                  <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(scenarios.financed.upfront)}</span></div>
                 <div style={rowLine}><span>{scenarios.financed.count} payments of about</span>
-                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.financed.perPayment)}</span></div>
+                  <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(scenarios.financed.perPayment)}</span></div>
                 {scenarios.financed.fees>0&&
                   <div style={rowLine}><span>Fees or interest</span>
-                    <span className="tnum" style={{fontWeight:600,color:P.wine}}>{fmt(scenarios.financed.fees)}</span></div>}
-                <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".08em",
-                  margin:"12px 0 4px"}}>Each affected period</div>
+                    <span className="tnum" style={{fontWeight:500,color:P.wine}}>{fmt(scenarios.financed.fees)}</span></div>}
+                <div className="t-label" style={{color:P.faint,margin:"12px 0 4px"}}>Each affected period</div>
                 <div style={{...neuInset(12),padding:"4px 0"}}>
                   {scenarios.financed.buckets.map(b=>(
                     <div key={b.key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
-                      <span style={{flex:1,minWidth:0,fontSize:12,color:P.neuSub,overflow:"hidden",
+                      <span style={{flex:1,minWidth:0,fontSize:12,color:P.sub,overflow:"hidden",
                         textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label(b.key)}</span>
                       <span className="tnum" style={{fontSize:11,color:P.faint,flexShrink:0}}>
                         −{fmt(b.obligation)}</span>
-                      <span className="tnum" style={{fontSize:13,fontWeight:600,flexShrink:0,minWidth:88,
+                      <span className="tnum" style={{fontSize:13,fontWeight:500,flexShrink:0,minWidth:88,
                         textAlign:"right",color:b.headroom<0?P.wine
-                          :(b.income>0&&b.headroom<b.income*(PURCHASE_THIN_PCT/100)?"#E07B2A":P.neuInk)}}>
+                          :(b.income>0&&b.headroom<b.income*(PURCHASE_THIN_PCT/100)?"#E07B2A":P.ink)}}>
                         {fmt(b.headroom)}</span>
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+                <div className="sans" style={{fontSize:11,color:P.faint,marginTop:6,lineHeight:1.5}}>
                   Headroom left in each period after the plan, existing instalments and this one.
                 </div>
-              </>}
-          </section>
+              </>))}
 
-          {/* ── 3 · Save up for it ──
-              ONE card with two modes. With a date it answers "can I make it,
-              and what per period?"; without one it falls back to the
-              earliest-possible answer. Two separate cards would say nearly the
-              same thing twice in different words. */}
-          <section style={card}>
-            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:8}}>
-              {sav&&sav.mode==="plan"?`Save up for it by ${instShortDate(draft.desiredDate)}`:"Save up for it instead"}
-            </div>
-
-            {sav&&sav.mode==="plan"&&<>
-              <Verdict tone={savingsVerdict}>
-                {sav.shortfall<=0
-                  ?"You can already afford it out of cash"
-                  :!sav.feasible
-                    ?`Not affordable by ${label(sav.targetBucket)} on this plan`
-                    :savingsVerdict==="warn"
-                      ?"Possible, but tight"
-                      :"Comfortable"}
-              </Verdict>
-              {sav.shortfall>0&&<>
-                {/* One plain sentence — the whole answer in a line. */}
-                <div className="sans" style={{fontSize:13,color:P.neuInk,fontWeight:600,lineHeight:1.5,margin:"2px 0 10px"}}>
-                  {savSchedule&&savSchedule.even
-                    ?`Save ${fmt(sav.requiredPerBucket)} for ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}.`
-                    :`Save across ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}`
-                       +(sav.feasible?" — leaner periods carry less.":", but the leanest periods can't quite cover it.")}
-                </div>
-                {/* The arithmetic under it — the count and the divisor always agree. */}
-                <div style={rowLine}><span>Still needed</span>
-                  <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.shortfall)}</span></div>
-                <div style={rowLine}><span>Purchase is</span>
-                  <span style={{fontWeight:600,color:P.neuInk}}>{sav.n} {plural(sav.n,noun)} away</span></div>
-                {savSchedule&&savSchedule.even&&
-                  <div style={rowLine}><span>{fmt(sav.shortfall)} ÷ {sav.n} {plural(sav.n,noun)}</span>
-                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(sav.requiredPerBucket)} each</span></div>}
-                {sav.tightest&&
-                  <div style={rowLine}><span>Lowest budget room</span>
-                    <span className="tnum" style={{fontWeight:600,
-                      color:sav.tightest.headroom>=sav.requiredPerBucket?P.neuInk:"#E07B2A"}}>
-                      {fmt(sav.tightest.headroom)} in {label(sav.tightest.key)}</span></div>}
-                {/* The concrete schedule — one row per period, what to set aside. */}
-                {savSchedule&&<>
-                  <div style={{fontSize:11,color:P.faint,textTransform:"uppercase",letterSpacing:".08em",
-                    margin:"12px 0 4px"}}>Set aside each {noun}</div>
-                  <div style={{...neuInset(12),padding:"4px 0"}}>
-                    {savSchedule.rows.map(r=>(
-                      <div key={r.bucketKey} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
-                        <span style={{flex:1,minWidth:0,fontSize:12,color:r.isTarget?P.neuInk:P.neuSub,
-                          fontWeight:r.isTarget?600:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                          {label(r.bucketKey)}{r.isTarget?` · Buy ${product||"it"}`:""}</span>
-                        <span className="tnum" style={{fontSize:11,color:P.faint,flexShrink:0}}>room {fmt(r.roomAfter)}</span>
-                        <span className="tnum" style={{fontSize:13,fontWeight:600,flexShrink:0,minWidth:80,
-                          textAlign:"right",color:P.neuInk}}>{fmt(r.save)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {!savSchedule.feasible&&
-                    <div className="sans" style={{fontSize:11,color:"#E07B2A",marginTop:6,lineHeight:1.5}}>
-                      Even filling every {noun} to the brim, this plan is {fmt(savSchedule.gap)} short by {label(sav.targetBucket)}.
-                    </div>}
-                </>}
-              </>}
-            </>}
-
-            {sav&&sav.mode==="now"&&
-              <>
+          {/* 3 · Save up — two modes (dated plan / earliest-possible fallback) */}
+          {pathRow("save",saveName,saveTone,saveFigure,
+            <>
+              {sav&&sav.mode==="plan"&&<>
                 <Verdict tone={savingsVerdict}>
-                  {sav.shortfall<=0?"You can already afford it out of cash":"That date is already here"}
-                </Verdict>
-                <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
                   {sav.shortfall<=0
-                    ?"Nothing left to save for — see the cash answer above."
-                    :`There is no period left to spread ${fmt(sav.shortfall)} over. Either pick a later
-                      date or look at the cash and payment-plan answers above.`}
-                </div>
-              </>}
-
-            {sav&&sav.mode==="beyondHorizon"&&
-              <>
-                <Verdict tone="bad">That date is more than two years out</Verdict>
-                <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
-                  This tab projects {PURCHASE_HORIZON_BUCKETS} periods ahead and won't guess
-                  past that.
-                </div>
-              </>}
-
-            {/* No date given — the original earliest-possible answer. */}
-            {!sav&&(!scenarios.earliest
-              ?<>
-                <Verdict tone="bad">Not reachable within two years</Verdict>
-                <div style={{fontSize:12,color:P.neuSub,lineHeight:1.6}}>
-                  At the current plan, {PURCHASE_HORIZON_BUCKETS} periods of leftover money still
-                  don't reach {fmt(price)}. Trimming a category below, or a bigger change to the
-                  plan, is what would move this.
-                </div>
-              </>
-              :<>
-                <Verdict tone={earliestVerdict}>
-                  {scenarios.earliest.n===0
                     ?"You can already afford it out of cash"
-                    :`Affordable by ${label(scenarios.earliest.bucketKey)}`}
+                    :!sav.feasible
+                      ?`Not affordable by ${label(sav.targetBucket)} on this plan`
+                      :savingsVerdict==="warn"
+                        ?"Possible, but tight"
+                        :"Comfortable"}
                 </Verdict>
-                {scenarios.earliest.n>0&&<>
-                  <div style={rowLine}><span>Periods to wait</span>
-                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{scenarios.earliest.n}</span></div>
-                  <div style={rowLine}><span>Still to find</span>
-                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.earliest.shortfall)}</span></div>
-                  <div style={rowLine}><span>Per period</span>
-                    <span className="tnum" style={{fontWeight:600,color:P.neuInk}}>{fmt(scenarios.earliest.requiredPerBucket)}</span></div>
+                {sav.shortfall>0&&<>
+                  <div className="sans" style={{fontSize:13,color:P.ink,fontWeight:500,lineHeight:1.5,margin:"2px 0 10px"}}>
+                    {savSchedule&&savSchedule.even
+                      ?`Save ${fmt(sav.requiredPerBucket)} for ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}.`
+                      :`Save across ${sav.n} ${plural(sav.n,noun)} to have ${fmt(sav.shortfall)} by ${label(sav.targetBucket)}`
+                         +(sav.feasible?" — leaner periods carry less.":", but the leanest periods can't quite cover it.")}
+                  </div>
+                  <div style={rowLine}><span>Still needed</span>
+                    <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(sav.shortfall)}</span></div>
+                  <div style={rowLine}><span>Purchase is</span>
+                    <span style={{fontWeight:500,color:P.ink}}>{sav.n} {plural(sav.n,noun)} away</span></div>
+                  {savSchedule&&savSchedule.even&&
+                    <div style={rowLine}><span>{fmt(sav.shortfall)} ÷ {sav.n} {plural(sav.n,noun)}</span>
+                      <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(sav.requiredPerBucket)} each</span></div>}
+                  {sav.tightest&&
+                    <div style={rowLine}><span>Lowest budget room</span>
+                      <span className="tnum" style={{fontWeight:500,
+                        color:sav.tightest.headroom>=sav.requiredPerBucket?P.ink:"#E07B2A"}}>
+                        {fmt(sav.tightest.headroom)} in {label(sav.tightest.key)}</span></div>}
+                  {savSchedule&&<>
+                    <div className="t-label" style={{color:P.faint,margin:"12px 0 4px"}}>Set aside each {noun}</div>
+                    <div style={{...neuInset(12),padding:"4px 0"}}>
+                      {savSchedule.rows.map(r=>(
+                        <div key={r.bucketKey} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px"}}>
+                          <span style={{flex:1,minWidth:0,fontSize:12,color:r.isTarget?P.ink:P.sub,
+                            fontWeight:r.isTarget?500:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                            {label(r.bucketKey)}{r.isTarget?` · Buy ${product||"it"}`:""}</span>
+                          <span className="tnum" style={{fontSize:11,color:P.faint,flexShrink:0}}>room {fmt(r.roomAfter)}</span>
+                          <span className="tnum" style={{fontSize:13,fontWeight:500,flexShrink:0,minWidth:80,
+                            textAlign:"right",color:P.ink}}>{fmt(r.save)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {!savSchedule.feasible&&
+                      <div className="sans" style={{fontSize:11,color:"#E07B2A",marginTop:6,lineHeight:1.5}}>
+                        Even filling every {noun} to the brim, this plan is {fmt(savSchedule.gap)} short by {label(sav.targetBucket)}.
+                      </div>}
+                  </>}
                 </>}
-                <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
-                  Set a date above and this becomes "can I make it?" instead. Counts only what
-                  each period has left over — a plan that finishes along the way frees its money
-                  up automatically.
-                </div>
-              </>)}
+              </>}
 
-            {/* The savings mirror of "Create this plan in Installments". Goals
-                already ARE savings plans; the deadline is what they lacked. */}
-            {sav&&sav.mode==="plan"&&sav.shortfall>0&&
-              <button onClick={startSaving}
-                style={{width:"100%",borderRadius:12,padding:"12px 0",marginTop:12,
-                  fontSize:13,fontWeight:600,border:`1px solid ${P.line}`,
-                  background:"transparent",color:P.grD}}>
-                Start saving the {fmt(sav.shortfall)}
-              </button>}
-          </section>
+              {sav&&sav.mode==="now"&&
+                <>
+                  <Verdict tone={savingsVerdict}>
+                    {sav.shortfall<=0?"You can already afford it out of cash":"That date is already here"}
+                  </Verdict>
+                  <div className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.6}}>
+                    {sav.shortfall<=0
+                      ?"Nothing left to save for — see the cash answer above."
+                      :`There is no period left to spread ${fmt(sav.shortfall)} over. Either pick a later
+                        date or look at the cash and payment-plan answers above.`}
+                  </div>
+                </>}
 
-          {/* ── Levers ── */}
-          <section style={card}>
-            <div style={{fontSize:13,fontWeight:700,color:P.neuInk,marginBottom:4}}>What if…</div>
-            <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:12,lineHeight:1.5}}>
-              These change the projections only. Nothing here edits your budget or your goals.
+              {sav&&sav.mode==="beyondHorizon"&&
+                <>
+                  <Verdict tone="bad">That date is more than two years out</Verdict>
+                  <div className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.6}}>
+                    This tab projects {PURCHASE_HORIZON_BUCKETS} periods ahead and won't guess
+                    past that.
+                  </div>
+                </>}
+
+              {/* No date given — the original earliest-possible answer. */}
+              {!sav&&(!scenarios.earliest
+                ?<>
+                  <Verdict tone="bad">Not reachable within two years</Verdict>
+                  <div className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.6}}>
+                    At the current plan, {PURCHASE_HORIZON_BUCKETS} periods of leftover money still
+                    don't reach {fmt(price)}. Trimming a category below, or a bigger change to the
+                    plan, is what would move this.
+                  </div>
+                </>
+                :<>
+                  <Verdict tone={earliestVerdict}>
+                    {scenarios.earliest.n===0
+                      ?"You can already afford it out of cash"
+                      :`Affordable by ${label(scenarios.earliest.bucketKey)}`}
+                  </Verdict>
+                  {scenarios.earliest.n>0&&<>
+                    <div style={rowLine}><span>Periods to wait</span>
+                      <span className="tnum" style={{fontWeight:500,color:P.ink}}>{scenarios.earliest.n}</span></div>
+                    <div style={rowLine}><span>Still to find</span>
+                      <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(scenarios.earliest.shortfall)}</span></div>
+                    <div style={rowLine}><span>Per period</span>
+                      <span className="tnum" style={{fontWeight:500,color:P.ink}}>{fmt(scenarios.earliest.requiredPerBucket)}</span></div>
+                  </>}
+                  <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                    Set a date above and this becomes "can I make it?" instead. Counts only what
+                    each period has left over — a plan that finishes along the way frees its money
+                    up automatically.
+                  </div>
+                </>)}
+
+              {sav&&sav.mode==="plan"&&sav.shortfall>0&&
+                <button onClick={startSaving}
+                  style={{width:"100%",borderRadius:2,padding:"12px 0",marginTop:12,
+                    fontSize:13,fontWeight:500,border:`1px solid ${P.hairline}`,
+                    background:"transparent",color:P.grD}}>
+                  Start saving the {fmt(sav.shortfall)}
+                </button>}
+            </>)}
+        </div>
+
+        {/* ── What if… (levers) ── */}
+        <div style={{marginBottom:24}}>
+          {secLabel("What if…")}
+          <div className="sans" style={{fontSize:11,color:P.faint,marginBottom:12,lineHeight:1.5}}>
+            These change the projections only. Nothing here edits your budget or your goals.
+          </div>
+
+          {myGoals.length>0&&<>
+            <div style={{fontSize:12,color:P.sub,marginBottom:6}}>Goals available to spend</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+              {myGoals.map(g=>{
+                const on=!unprotected.has(g.id);
+                return(
+                  <button key={g.id} aria-pressed={!on} className="status-pill"
+                    onClick={()=>setDraft(d=>{
+                      const next=new Set(d.unprotectedGoalIds||[]);
+                      if(next.has(g.id))next.delete(g.id);else next.add(g.id);
+                      return{...d,unprotectedGoalIds:[...next]};
+                    })}
+                    style={{border:`1px solid ${on?P.hairline:P.gr}`,cursor:"pointer",
+                      background:on?"transparent":P.grS,color:on?P.sub:P.grD}}>
+                    {on?"Protected":"Spendable"} · {g.name||"Goal"}
+                  </button>
+                );
+              })}
             </div>
+          </>}
 
-            {myGoals.length>0&&<>
-              <div style={{fontSize:12,color:P.neuSub,marginBottom:6}}>Goals available to spend</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
-                {myGoals.map(g=>{
-                  const on=!unprotected.has(g.id);
-                  return(
-                    <button key={g.id} aria-pressed={!on} className="status-pill"
-                      onClick={()=>setDraft(d=>{
-                        const next=new Set(d.unprotectedGoalIds||[]);
-                        if(next.has(g.id))next.delete(g.id);else next.add(g.id);
-                        return{...d,unprotectedGoalIds:[...next]};
-                      })}
-                      style={{border:`1px solid ${on?P.line:P.gr}`,cursor:"pointer",
-                        background:on?"transparent":P.grS,color:on?P.sub:P.grD}}>
-                      {on?"Protected":"Spendable"} · {g.name||"Goal"}
-                    </button>
-                  );
-                })}
-              </div>
-            </>}
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <button onClick={()=>setShowTrims(true)}
+              style={{borderRadius:2,padding:"8px 14px",minHeight:40,fontSize:12,fontWeight:500,
+                border:`1px solid ${P.hairline}`,background:"transparent",color:P.sub}}>
+              Trim categories
+            </button>
+            {trimTotal>0&&
+              <span className="tnum" style={{fontSize:12,color:P.grD,fontWeight:500}}>
+                −{fmt(trimTotal)} per period assumed
+              </span>}
+            {trimTotal>0&&
+              <button onClick={()=>set({trims:{}})}
+                style={{background:"transparent",border:"none",color:P.wine,fontSize:12,
+                  fontWeight:500,padding:"8px 4px",minHeight:40}}>Clear</button>}
+          </div>
+        </div>
 
-            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setShowTrims(true)}
-                style={{borderRadius:999,padding:"8px 14px",minHeight:40,fontSize:12,fontWeight:600,
-                  border:`1px solid ${P.line}`,background:"transparent",color:P.sub}}>
-                Trim categories
-              </button>
-              {trimTotal>0&&
-                <span className="tnum" style={{fontSize:12,color:P.grD,fontWeight:600}}>
-                  −{fmt(trimTotal)} per period assumed
-                </span>}
-              {trimTotal>0&&
-                <button onClick={()=>set({trims:{}})}
-                  style={{background:"transparent",border:"none",color:P.wine,fontSize:12,
-                    fontWeight:600,padding:"8px 4px",minHeight:40}}>Clear</button>}
-            </div>
-          </section>
+        {/* ── Explore other ways (9b) — opens the compare sheet (preview-only) ── */}
+        {options.length>0&&
+          <button onClick={()=>setShowCompare(true)}
+            style={{width:"100%",borderRadius:2,padding:"13px 0",fontSize:14,fontWeight:500,
+              border:`1px solid ${P.hairline}`,background:"transparent",color:P.ink,
+              marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            <I.Layers size={15}/>Explore other ways to make this work
+          </button>}
 
-          {/* ── Explore other ways (9b) ──
-                 The options moved into a comparison sheet. This button opens it;
-                 the sheet only ever PREVIEWS an option into the scratchpad, and
-                 nothing here touches the budget. */}
-          {options.length>0&&
-            <button onClick={()=>setShowCompare(true)}
-              style={{width:"100%",borderRadius:14,padding:"13px 0",fontSize:14,fontWeight:600,
-                border:`1px solid ${P.line}`,background:"transparent",color:P.neuInk,
-                marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <I.Layers size={15}/>Explore other ways to make this work
-            </button>}
-
-          {/* ── The one durable exit ── */}
-          {financedMode&&
-            <button onClick={openCreate}
-              style={{width:"100%",borderRadius:14,padding:"14px 0",fontSize:14,fontWeight:600,
-                border:"none",background:P.gr,color:"#fff",marginBottom:24}}>
-              Create this plan in Installments
-            </button>}
-        </>}
+        {/* ── The one durable exit ── */}
+        {financedMode&&
+          <button onClick={openCreate}
+            style={{width:"100%",borderRadius:2,padding:"14px 0",fontSize:14,fontWeight:600,
+              border:"none",background:P.gr,color:P.onInk,marginBottom:24}}>
+            Create this plan in Installments
+          </button>}
       </>}
+      </div>{/* end .split-pad-r (left column) */}
+
+      {/* ── RIGHT RAIL — read-only derived modules; stacks below on mobile ── */}
+      <div className="split-pad-l" style={{paddingTop:8}}>
+        {noIncome
+          ?<div className="sans" style={{fontSize:12,color:P.faint,lineHeight:1.5}}>
+             Set an income in Budget and this tab works from it.
+           </div>
+          :<>
+            {/* Path comparison — the three answers at a glance */}
+            {ready&&
+              <div style={{marginBottom:28}}>
+                {secLabel("Path comparison")}
+                {[{k:"c",name:"Cash",tone:cashVerdict,
+                    fig:scenarios.cash.feasible?`${fmt(scenarios.cash.remainingAfter)} left`:"short"},
+                  ...(financedMode?[{k:"f",name:"Payment plan",tone:scenarios.financed?financedVerdict:"flat",
+                    fig:scenarios.financed?`${scenarios.financed.count}×${fmt(scenarios.financed.perPayment)}`:"set details"}]:[]),
+                  {k:"s",name:"Save up",tone:saveTone,fig:saveFigure}].map(p=>(
+                  <div key={p.k} style={{display:"flex",alignItems:"center",gap:8,
+                    borderTop:`1px solid ${P.hairline}`,padding:"10px 0"}}>
+                    <span style={{width:6,height:6,background:toneCol(p.tone),flexShrink:0}}/>
+                    <span style={{flex:1,minWidth:0,fontSize:12,fontWeight:500,color:P.ink}}>{p.name}</span>
+                    <span className="tnum" style={{fontSize:12,color:P.sub,flexShrink:0}}>{p.fig}</span>
+                  </div>
+                ))}
+              </div>}
+
+            {/* Earliest affordable in cash, with no other changes */}
+            {ready&&
+              <div style={{marginBottom:28}}>
+                {secLabel("Earliest affordable")}
+                {scenarios.earliest
+                  ?(scenarios.earliest.n===0
+                     ?<div className="sans" style={{fontSize:12,color:P.sub,lineHeight:1.5}}>Affordable now, out of cash.</div>
+                     :<>
+                        <div style={railLine}><span>By</span>
+                          <span className="tnum" style={{color:P.ink}}>{label(scenarios.earliest.bucketKey)}</span></div>
+                        <div style={railLine}><span>Periods to wait</span>
+                          <span className="tnum" style={{color:P.ink}}>{scenarios.earliest.n}</span></div>
+                        <div style={railLine}><span>Per {noun}</span>
+                          <span className="tnum" style={{color:P.ink}}>{fmt(scenarios.earliest.requiredPerBucket)}</span></div>
+                      </>)
+                  :<div className="sans" style={{fontSize:12,color:P.faint,lineHeight:1.5}}>
+                     Not reachable within two years at the current plan.
+                   </div>}
+              </div>}
+
+            {/* Cash availability — the itemised subtraction stack (interactive) */}
+            <div style={{marginBottom:28}}>
+              {secLabel("Cash availability")}
+              {stackRow(`Accounts · ${owners[budgetOwner]}`,stack.banks)}
+              {stack.reserved.map(r=>
+                <div key={r.id} style={{...rowLine,alignItems:"flex-start"}}>
+                  <span style={{flex:1,minWidth:0}}>
+                    {r.name} — emergency fund
+                    <button onClick={()=>setDraft(d=>{
+                        const next=new Set(d.releasedBankIds||[]);
+                        if(next.has(r.id))next.delete(r.id);else next.add(r.id);
+                        return{...d,releasedBankIds:[...next]};
+                      })}
+                      style={{display:"block",background:"transparent",border:"none",padding:"4px 0",
+                        minHeight:32,color:r.released?"#E07B2A":P.grD,fontSize:11,fontWeight:500,
+                        textAlign:"left"}}>
+                      {r.released
+                        ?"✓ released for this purchase — tap to protect again"
+                        :"Spend it on this purchase"}
+                    </button>
+                    {r.released&&r.held>0&&
+                      <span style={{display:"block",fontSize:11,color:P.faint}}>
+                        {fmt(r.held)} still held back by a goal kept in this account.
+                      </span>}
+                  </span>
+                  <span className="tnum" style={{fontWeight:500,flexShrink:0,
+                    color:r.held>0?P.wine:P.faint}}>
+                    {r.held>0?`− ${fmt(r.held)}`:`(${fmt(r.value)} freed)`}
+                  </span>
+                </div>)}
+              {stack.protectedGoals>0&&
+                stackRow(stack.unlinkedProtectedCount===1?"1 protected goal"
+                  :`${stack.unlinkedProtectedCount} protected goals`,stack.protectedGoals,"minus")}
+              <div style={{...rowLine,borderTop:`1px solid ${P.hairline}`,marginTop:6,paddingTop:8,
+                fontSize:14,color:P.ink}}>
+                <span style={{fontWeight:500}}>Available</span>
+                <span className="tnum" style={{fontWeight:600,
+                  color:stack.available>=0?P.ink:P.wine}}>{fmt(stack.available)}</span>
+              </div>
+
+              {stack.inaccessible.map(a=>{
+                const on=includedBankIds.indexOf(a.id)>=0;
+                return(
+                  <div key={a.id} style={{...rowLine,alignItems:"flex-start",color:P.faint,fontSize:11}}>
+                    <span style={{flex:1,minWidth:0}}>
+                      {a.name} — can't reach
+                      {a.value==null
+                        ?<span style={{display:"block"}}>
+                           Can't convert {a.currency} right now, so it can't be included.
+                         </span>
+                        :<button onClick={()=>setDraft(d=>{
+                            const next=new Set(d.includedBankIds||[]);
+                            if(next.has(a.id))next.delete(a.id);else next.add(a.id);
+                            return{...d,includedBankIds:[...next]};
+                          })}
+                          style={{display:"block",background:"transparent",border:"none",padding:"4px 0",
+                            minHeight:32,color:on?P.grD:P.grD,fontSize:11,fontWeight:500,textAlign:"left"}}>
+                          {on?"✓ counted for this purchase — tap to exclude":"Include for this purchase"}
+                        </button>}
+                    </span>
+                    <span className="tnum" style={{flexShrink:0}}>
+                      {a.currency} {(Number(a.rawValue)||0).toLocaleString("en-US",{maximumFractionDigits:0})}
+                      {a.value!=null&&a.currency!==cur&&
+                        <span style={{display:"block"}}>≈ {fmt(a.value)}</span>}
+                    </span>
+                  </div>
+                );
+              })}
+              {stack.inaccessible.some(a=>a.value!=null&&a.currency!==cur)&&ratesStaleDays!=null&&ratesStaleDays>0&&
+                <div style={{fontSize:11,color:P.faint,marginTop:2}}>
+                  Converted at the last exchange rate this device fetched
+                  ({ratesStaleDays} day{ratesStaleDays===1?"":"s"} ago).
+                </div>}
+              {stack.joint>0&&
+                <div style={{...rowLine,color:P.faint,fontSize:11}}>
+                  <span>Joint accounts — not counted</span>
+                  <span className="tnum">{fmt(stack.joint)}</span>
+                </div>}
+              {stack.notCountedGoals>0&&
+                <div className="sans" style={{fontSize:11,color:P.faint,marginTop:6,lineHeight:1.5}}>
+                  {stack.notCountedGoals} protected goal{stack.notCountedGoals===1?"":"s"} sit
+                  {stack.notCountedGoals===1?"s":""} in an account not counted above, so
+                  {stack.notCountedGoals===1?" it is":" they are"} not subtracted again.
+                </div>}
+              {stack.unconverted>0&&
+                <div style={{fontSize:11,color:P.faint,marginTop:6}}>
+                  {stack.unconverted} account{stack.unconverted===1?"":"s"} in another currency
+                  couldn't be converted and {stack.unconverted===1?"is":"are"} excluded.
+                </div>}
+              <div className="sans" style={{fontSize:11,color:P.faint,marginTop:8,lineHeight:1.5}}>
+                Goal balances sit inside these accounts, so protecting a goal subtracts it here —
+                once, even when the goal names the account it lives in. Money set aside for bills
+                isn't taken off automatically: mark the account it sits in on the Banks tab.
+              </div>
+            </div>
+
+            {/* Budget headroom — this period, the leanest ahead, trim potential */}
+            <div>
+              {secLabel("Budget headroom")}
+              <div style={railLine}><span>This {noun} income</span>
+                <span className="tnum" style={{color:P.ink}}>{fmt(thisBucket.income)}</span></div>
+              <div style={railLine}><span>Planned out</span>
+                <span className="tnum" style={{color:P.ink}}>{fmt(thisBucket.planned)}</span></div>
+              {thisBucket.installmentTotal>0&&
+                <div style={railLine}><span>Installments</span>
+                  <span className="tnum" style={{color:P.ink}}>{fmt(thisBucket.installmentTotal)}</span></div>}
+              <div style={railLine}><span>Headroom left</span>
+                <span className="tnum" style={{color:thisBucket.headroom>=0?P.success:P.wine,fontWeight:500}}>
+                  {fmt(thisBucket.headroom)}</span></div>
+              {sav&&sav.tightest&&
+                <div style={railLine}><span>Leanest ahead</span>
+                  <span className="tnum" style={{color:P.ink}}>{fmt(sav.tightest.headroom)}</span></div>}
+              {trimTotal>0&&
+                <div style={railLine}><span>Trim potential</span>
+                  <span className="tnum" style={{color:P.grD}}>−{fmt(trimTotal)}/{noun}</span></div>}
+            </div>
+          </>}
+      </div>{/* end rail */}
+
+     </div>{/* end .split-8-4 */}
 
       {showCompare&&
         <PurchaseCompareSheet options={options} describe={optionLine}

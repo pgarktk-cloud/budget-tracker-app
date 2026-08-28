@@ -1,8 +1,9 @@
 # Current Status
 
-_Last updated: 2026-08-27 — **v1.56.0 shipping**: Goals recompose + mono-primary
-typography flip + Expenses row declutter (all presentation-only). See "State of
-play" below. Feature/logic baseline unchanged._
+_Last updated: 2026-08-28 — **v1.57.0 shipped** (Installments recompose, commit
+`b791cc7`, live on apex). **In the working tree, not yet committed/deployed:** the
+Purchase Advisor recompose (Category C, presentation-only). See "State of play"
+below. Feature/logic baseline unchanged._
 
 ## Technical Ledger redesign — read this FIRST (2026-08-26, DEPLOYED)
 
@@ -54,6 +55,30 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
+**LATEST SHIPPED: v1.57.0 / build `2026.08.27.0008`** — commit `b791cc7` on `main`
+(pushed), deployed to Cloudflare Pages, **confirmed live on the apex** — the
+**Installments** open-ledger recompose (Category C, cousin of Goals): one bordered
+hero, `InstallmentCard`→row-expand `InstallmentRow`, open status groups, desktop
+8/4 rail (Debt-free horizon · Upcoming schedule · Provider exposure). Presentation-
+only; `installmenttest` 41/41; all 26 runners + parse green.
+
+**IN THE WORKING TREE — NOT committed / NOT deployed (verify+hold): Purchase
+Advisor recompose (Category C, 2026-08-28).** Presentation-only
+(`PurchaseAdvisorView` render + a flat-token sweep of its 3 sheets); all 26 runners
++ parse green (`purchasetest` 85/85, S3 asserts intact); browser-verified
+390/320/430/1600 both themes + expanded row + empty state (shots in
+`artifacts/ui-verification/advisor/`; harness `scratchpad/advisorshots.cjs`).
+User-chosen shape: **hero = the buy-form itself** (the one screen whose bordered
+card is an input surface), **3 scenarios = row-expand rows**, **rail = all four
+modules** (Path comparison · Earliest affordable · Cash availability · Budget
+headroom). Detail: `stitch-redesign-progress` memory + "Purchase Advisor —
+recomposition" in `docs/ui-verification.md`. **To ship:** bump `APP_VERSION`/
+`BUILD_ID` (index.html) + `sw.js` + `version.json` to 1.58.0, `node stage.cjs`, then
+`npx wrangler pages deploy site --project-name=whered-it-go --branch=main`.
+**Next C screens: Bills → Household → Currency → More → Settings → Forecast.**
+
+---
+
 **SHIPPED: v1.56.0 / build `2026.08.27.0007`** — commit `deab055` on `main`
 (pushed), deployed to Cloudflare Pages and **confirmed live on the apex**
 `https://whered-it-go.pages.dev` (version.json = 1.56.0; `jetbrains-mono-700.woff2`
@@ -89,13 +114,13 @@ density, editable inputs; NOT fixed (a Budget-row-layout question, not typograph
 Category A (direct Stitch reference) — **shipped v1.52.0**:
 Home ✅ · Budget ✅ · Expenses ✅ · Add/Edit Transaction ✅ · Investments ✅
 Category B/C (derived, no direct mockup):
-Banks ✅ · Net Worth ✅ · **Goals ✅** (this release) · Installments ⬜ **(NEXT)** ·
-Purchase Advisor ⬜ · Bills ⬜ · Household ⬜ · Currency ⬜ · More sheet ⬜ ·
+Banks ✅ · Net Worth ✅ · Goals ✅ · Installments ✅ (v1.57.0) · **Purchase Advisor ✅**
+(working tree, held) · Bills ⬜ **(NEXT)** · Household ⬜ · Currency ⬜ · More sheet ⬜ ·
 Settings ⬜ · Forecast (hidden) ⬜ · system overlays (Conflict / PendingChanges /
 RecentlyDeleted / ProfilePicker / FirstConnect) ⬜
 
-**Next session — Installments** (natural next: a "cousin of Goals", shares the
-`ProgressMeter`/ledger patterns). Carry-forward redesign preferences (see
+**Next session — Bills** (once Purchase Advisor is committed/deployed). Carry-forward
+redesign preferences (see
 `redesign-relayout-principles` memory + `stitch-workflow.md`): (1) **only the
 hero/summary is a bordered card; everything else is an open section** — count
 `GridSection`s, >1 is the bug; (2) **offer a MENU of candidate desktop-rail

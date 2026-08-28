@@ -604,6 +604,65 @@ matches AssetRow + the Expenses declutter). **Scope is 2-way, no Household** —
 unlike every other recomposed screen (installments can't be jointly owned).
 **Overdue is the hero `Verdict`**, not a separate red line or a rail module.
 
+## Purchase Advisor — recomposition (2026-08-28, Category C)
+
+**Status: Pass (working tree; not committed / not deployed).** The advisor — a
+form-driven *decision console* (enter a purchase → three paths + levers +
+compare/trim flow), previously a stack of `neu(16)` bordered cards — ported to the
+open-ledger language. Verified at **390 + 320 + 430 + 1600, both themes**, an
+**expanded scenario row**, and the **empty (no-price) state**. All 26 runners +
+parse green; **presentation-only** (`PurchaseAdvisorView` render + a flat-token
+sweep of the three sheets — no calc/data/mutator/sync/undo diff; `purchasetest.cjs`
+85/85, incl. the S3 "touches no synced data / never materialises a plan except via
+`applyPurchaseTrimPlan`" source asserts). Harness: `scratchpad/advisorshots.cjs`
+(seeds a priced+financed draft into `allocation:purchaseDraft` so every scenario +
+rail module populates). Shots in `artifacts/ui-verification/advisor/`.
+
+- **The hero is the buy-form itself** — a *control panel*, the tab's **single**
+  `GridSection`. Product / price / date / method / down-payment / count / first-due
+  / fees (every `NumField` + the three-corrected date inputs preserved, radii
+  flattened 10→2), then a hairline-topped **verdict line inside the hero** that
+  resolves the whole decision once priced (cash-feasible → "Affordable now in cash
+  — X left"; else earliest date; else "not reachable in two years"). Chosen over a
+  summary-figure hero *because for this tool the inputs are the summary* (user
+  decision). `noIncome` → flat verdict + guidance inside; `!ready` → "Enter a price
+  and your options appear below."
+- **The three scenarios → row-expand rows** ("Your options" open section). Each
+  collapses to `pathRow(key,name,tone,figure,detail)`: tone square (good jade / warn
+  amber / bad coral / flat) + name + one key figure (`5,050 left` / `4×1,637.50` /
+  `1,837/month`) + chevron; tap reveals **today's exact detail verbatim** — the cash
+  rows, the financed per-period headroom table, the savings sentence + water-fill
+  schedule + Start-saving button (every figure/verdict/handler unchanged; the
+  `neuInset` tables are already flat and kept). Open state is view-level
+  `useState` (`openScenarios` Set); `pathRow` is a helper, not a per-render
+  component.
+- **Levers → open "What if…" section** (goal protect/spend pills + Trim categories
+  + Clear), buttons flattened to radius 2 / weight ≤500, primary "Create this plan
+  in Installments" keeps the `P.gr`/`onInk` fill.
+- **Desktop `.split-8-4`** — LEFT = toggle + hero + options + levers + exits; RIGHT
+  rail carries **four read-only derived modules** (user picked all four), every one
+  a pure read over already-computed `scenarios`/`stack`/`thisBucket`/`trimTotal` (no
+  new engine calls): **Path comparison** (cash vs plan vs save at a glance, tone
+  squares), **Earliest affordable** (`scenarios.earliest` date / periods / per-period,
+  or "not reachable"), **Cash availability** (the itemised subtraction stack —
+  moved here in full, keeping its release-emergency-fund / include-unreachable
+  toggles), **Budget headroom** (this period income − planned − installments =
+  headroom, leanest-ahead, trim potential). Path comparison + Earliest gate on
+  `ready`; Cash + Headroom always show (so `!ready` still has a useful rail). Rail
+  stacks below on mobile.
+- **Sheets flat-token swept** (Trim / Trim-apply / Compare): explicit radii
+  10/12/14/999 → 0/2, weights 700 → ≤600, `#fff` → `P.onInk`; structure / Portal /
+  scroll-lock / `NumField` / `applyTrimPlan` / preview handlers untouched (the
+  `.sheet` shell kept — not a `.sheet-task` rebuild).
+
+**Intentional differences:** no direct Stitch mockup (Category C). **Hero is the
+form, not a summary figure** — the one recomposed screen where the bordered card is
+an input surface, because the advisor has no meaningful summary before you price a
+purchase. **The full interactive Cash stack lives in the rail** (Cash availability)
+rather than the left column — its account toggles are per-decision levers, and on
+mobile it stacks below the options. Scope stays the existing 2-way `budgetOwner`
+`OwnerToggle` (the advisor is never `household`); no mount-site prop change.
+
 ## Typography flip — monospace as primary (2026-08-27)
 
 **Status: Pass.** JetBrains Mono became the app-wide default (`body`); Inter is now
@@ -657,6 +716,7 @@ errors, parse + 26 runners green.
 | Net Worth | ✓ (390 · 320 · 430) | ✓ | Derived (B) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (the summary MetricStrip — Total in the display currency + secondary conversions + Combined delta as `Status`); Composition / trend / driving are **open sections**. Scope toggle **above**; flat composition bar + legend (%s total 100, liabilities signed coral); two existing range charts reused unchanged; `AssetRow` → **row-expand** hairline rows (name · owner + signed value → tap reveals edit fields, item keeps its own currency); "+ Add asset/liability" rows. **Display currency follows Home** (`homeDisplay.netWorth`, PHP in sample) for all derived totals; snapshot log stays SAR. Desktop **8/4 split** with a read-only rail: **Growth** · **Next milestone** (display-currency) · assets/liabilities ledger · monthly snapshot log. Growth/trend/composition-investments show empty/`0` offline (data-limited). See "Net Worth — recomposition" above. |
 | Goals | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-27) | Open-ledger: **one** bordered card (hero — funded-% `Verdict` + `MetricBlock hero` Total saved w/ remaining sub + 2-up Active/Completed strip). `GoalSquare` tiles/SVG rings → flat **two-line `GoalRow`s** (icon + name + saved/target; meter + type/deadline verdict + Add/Details), owner-grouped under Household via `.ledger-group`, flat under a single owner; collapsed **Completed** group. Scope toggle **above** (shared synced `profile`; Household = me∪wife union, adds write to a real person). Desktop **8/4 split** with a read-only rail: **Portfolio progress** · **Monthly commitment** · **On-track vs at-risk** (all reuse `goalSavedTotal`/`goalDeadlineStatus`; undated goals excluded from the two deadline modules + footnoted). Add-money + Details → `.sheet-task`; standalone type picker folded into Details (3 modals → 2). See "Goals — recomposition" above. |
 | Installments | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-27) | Open-ledger, cousin of Goals: **one** bordered card (hero — due-this-period `Verdict` + `MetricBlock hero` + Remaining balance / Active plans; desktop `MetricStrip`, mobile compact key/value rows to avoid the half-column money clip). `InstallmentCard` → **row-expand `InstallmentRow`** (collapsed name·provider + status square + meter + next-due + amount; tap reveals every action). Status groups → open `t-section` accordions; empty state = "+ Add your first installment" row. **Scope 2-way `OwnerToggle` (no Household — installments can't be joint).** Desktop **8/4 split** with a read-only rail: **Debt-free horizon** · **Upcoming schedule** · **Provider exposure** (%s total 100; all reuse existing installment helpers). Four sheets flat-token swept. Sample seeds no installments → populated shots use injected plans. See "Installments — recomposition" above. |
+| Purchase Advisor | ✓ (390 · 320 · 430) | ✓ | Derived (C) | **Pass** (recomposed 2026-08-28, working tree) | Form-driven decision console. **Hero = the buy-form itself** (the tab's **single** `GridSection`; a verdict line at its foot resolves the decision once priced) — the one screen where the bordered card is an input surface. Three scenarios (cash / payment plan / save up) → **row-expand rows** (`pathRow`: tone square + name + key figure; tap reveals today's full detail + per-period tables). Levers → open "What if…" section. Desktop **8/4 split** with a **four-module** read-only rail (user picked all): **Path comparison** · **Earliest affordable** · **Cash availability** (the full interactive stack, moved here) · **Budget headroom** — all pure reads over existing `scenarios`/`stack`/`thisBucket`/`trimTotal`. Three sheets flat-token swept. `purchasetest` 85/85 (S3 asserts intact). See "Purchase Advisor — recomposition" above. |
 | Investments | ✓ | ✓ | Investments (A) | **Pass** (recomposed 2026-08-26) | Rebuilt to the Stitch composition: desktop **6/6 split** (portfolio overview + asset allocation LEFT · **holdings ledger** RIGHT, one vertical rule — the previously-missing split now built); analysis charts (Portfolio trend · What's driving it · Growth projection) moved to a full-width strip below. Portfolio total in **Source Serif 4** (the one serif figure); labels/returns/market-cost/allocation/holdings all mono. Holdings groups (Stocks/ETF · MP2 · Time Deposits · Gold) are open-ledger rows under mono group labels; residual `neu()`/`glass` chrome flattened; filters/selects/buttons flat hairline. Values read $0 in sample (no live quotes offline). See "Investments — recomposition" below. |
 
 ## Per-screen typography detail (against the approved screenshots)
