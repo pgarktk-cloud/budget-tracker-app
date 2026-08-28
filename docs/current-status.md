@@ -39,13 +39,14 @@ Approved refs: `stitch-reference/*/screen.png`.
 
 **NEXT SESSION — Category B/C screens (partial/no direct Stitch reference).**
 Not yet recomposed; they inherit the flat/mono system but keep older
-Inter-600 `h3`/card-title patterns: Banks, standalone Net Worth,
-Forecast (hidden), More, Settings, and system overlays. (Goals, Installments,
-Purchase Advisor and Bills are done; Household is no longer a separate
-screen — folded into Bills; Currency is no longer a screen at all — it's a
-header-opened quick-tool sheet, already on the current `.sheet-task` pattern,
-see "State of play".) Extrapolate from the proven primitives above. Minor
-polish still open (see `docs/ui-verification.md`
+Inter-600 `h3`/card-title patterns: Forecast (hidden), More, Settings, and
+system overlays. (Goals, Installments, Purchase Advisor, Bills, Banks and
+Net Worth are all done — Banks/Net Worth shipped 2026-08-27, see
+`docs/ui-verification.md`; Household is no longer a separate screen — folded
+into Bills; Currency is no longer a screen at all — it's a header-opened
+quick-tool sheet, already on the current `.sheet-task` pattern, see "State of
+play".) Extrapolate from the proven primitives above. Minor polish still open
+(see `docs/ui-verification.md`
 "remaining differences"): Budget income `NumField` shows the raw ungrouped
 value; a few sample-data empty/`$0` states.
 - Test tooling lives in this session's `scratchpad/` (NOT committed; recreate
