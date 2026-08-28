@@ -140,6 +140,13 @@ input.bare:hover{background:rgba(127,143,168,.12);}
 input.bare:focus{background:rgba(91,143,217,.12);box-shadow:0 0 0 1px rgba(91,143,217,.4);}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
 input[type=number]{-moz-appearance:textfield;}
+/* Flat range slider — overrides the native round thumb (the one lingering
+   rounded control app-wide) with a square handle on a thin flat track. */
+input[type=range].flat-range{-webkit-appearance:none;appearance:none;width:100%;height:16px;background:transparent;margin:0;cursor:pointer;}
+input[type=range].flat-range::-webkit-slider-runnable-track{height:4px;background:var(--hairline);}
+input[type=range].flat-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:0;background:var(--ink);border:none;margin-top:-6px;}
+input[type=range].flat-range::-moz-range-track{height:4px;background:var(--hairline);border:none;}
+input[type=range].flat-range::-moz-range-thumb{width:16px;height:16px;border-radius:0;background:var(--ink);border:none;}
 button{cursor:pointer;font:inherit;}
 select{font:inherit;}
 
@@ -423,9 +430,21 @@ select{transition:background .22s;}
 @media(max-width:768px){.cat-row-bar{width:56px;}}
 @media(max-width:359px){.cat-row-bar{display:none;}}
 /* An open budget group: a muted mono label strip (the sticky group-head) over
-   hairline category rows — no card border, matching the Home ledger. */
-.budget-group{margin-bottom:0;overflow:clip;border-top:1px solid var(--hairline);}
-.budget-group .group-head{padding:14px 0 10px;}
+   hairline category rows, wrapped in a scoped flat card — thin border, square
+   corners, no shadow — so one group reads as visibly distinct from the next
+   without reviving the old neumorphism. overflow:clip (not hidden) keeps the
+   sticky header working; hidden would turn this into a scroll container.
+   Only the header strip carries a fill (the outline alone marks the group
+   body) — --surface, the same white/near-black used by hero cards
+   (GridSection), so a group header reads as the same "raised" surface as
+   the rest of the app rather than a bespoke tint. */
+.budget-group{margin-bottom:16px;overflow:clip;border:1px solid var(--hairline);border-radius:0;}
+.budget-group .group-head{padding:14px 12px 10px;background:var(--surface);}
+/* Expenses reuses .budget-group for its own group containers (env-item rows
+   normally have no horizontal padding — Budget's cat-row carries its own).
+   Scoped here rather than changing .env-item itself, which is also used
+   standalone. */
+.budget-group .env-item{padding-left:12px;padding-right:12px;}
 /* Left column of the 8/4 split gets right padding on desktop so its content
    never touches the vertical rule between it and the allocation rail. */
 @media(min-width:1024px){.split-pad-r{padding-right:24px;}}
@@ -919,7 +938,7 @@ function useDialogA11y(onClose,active=true){
    CONFLICT_COLLECTIONS for no user-visible gain. Note this does make the
    Forecast view unreachable from the UI; that was the explicit ask. */
 const PRIMARY_TABS=["home","budget","expenses","banks","investments"];
-const MORE_TABS=["networth","goals","installments","advisor","bills","household","currency"];
+const MORE_TABS=["networth","goals","installments","advisor","bills","currency"];
 const HIDDEN_TABS=["targets"];
 /* The tabs a person may put on the bottom bar (Phase 7). HIDDEN_TABS are
    reachable by code only and are deliberately not choosable. PRIMARY_TABS is
@@ -3739,8 +3758,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.57.0";
-const BUILD_ID="2026.08.27.0008";
+const APP_VERSION="1.58.3";
+const BUILD_ID="2026.08.28.0004";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -6065,7 +6084,6 @@ const TAB_META={
   installments:{label:"Installments",short:"Instal",icon:I.Layers},
   advisor:{label:"Purchase Advisor",short:"Advisor",icon:I.Cart},
   bills:{label:"Bills",short:"Bills",icon:I.PiggyBank},
-  household:{label:"Household",short:"Household",icon:I.Users},
   currency:{label:"Currency",short:"Currency",icon:I.Swap},
   targets:{label:"Forecast",short:"Forecast",icon:I.TrendUp},
 };
@@ -8940,8 +8958,8 @@ function App(){
             trimPolicy:data.trimPolicy,setTrimPolicy}}/>}
           {tab==="expenses"&&<ExpenseTrackerView {...{data,plans,planForMonth,planSourceForMonth,clonePlanForMonth,editPlanForMonth,assignPlanToMonth,removePlanForMonth,expenses,addExpenseTx,updateExpenseTx,removeExpenseTx,setExpenseDayOrder,quickTransfer,quickTransferLast,addExtraFunds,addCarryover,fmt:fmt2,cur,budgetOwner,setBudgetOwner:setBudgetOwnerSynced,owners:data.owners,payPeriods:data.payPeriods,goals,contributeToGoal,globalAddTrigger,setGlobalAddTrigger,filterRequest:expensesFilterRequest,
             installments,installmentPayments,updateInstallmentExpense,unlinkInstallmentExpense,triggerUndo,pinTxTemplate,removeTxTemplate,txTemplates:data.txTemplates}}/>}
-          {tab==="household"&&<HouseholdView {...{hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners:data.owners}}/>}
-          {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners}}/>}
+          {tab==="bills"&&<BillsView {...{bills:billsAll,billAdjustments:billAdjustmentsAll,billsReserve,openingReserve:(data.billsSettings||{}).openingReserve||0,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey:currentBillMonthKey,fmt,owners:data.owners,
+            hh,setSplit,addExpense,updateExpense,removeExpense}}/>}
           {tab==="banks"&&<BanksView {...{banks,addBank,updateBank,removeBank,convert,sarRate,profile,setProfile:setProfileSynced,owners:data.owners,syncNow:()=>pushImportantRef.current()}}/>}
           {tab==="investments"&&<InvestmentsView {...{profile,setProfile:setProfileSynced,invs,addInv,updateInv,removeInv,addTrade,removeTrade,livePrice,setLivePrice,sarRate,convert,projection:data.projection||{monthly:1500,years:20,rate:8},setProjection,portHistory,addPortSnap,snapshots,owners:data.owners,
             mp2Rates,mp2RatesByYear,addMp2Rate,updateMp2Rate,removeMp2Rate,
@@ -11615,7 +11633,7 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       (monthPlan.categories||[]).filter(c=>c.groupId===g.id).forEach(c=>{
         const effAmt=categoryEffectiveAmt(c);
         if(effAmt<=0)return;
-        const item={id:c.id,name:c.name,group:g.name,budget:effAmt,color:c.color};
+        const item={id:c.id,name:c.name,group:g.name,groupId:g.id,budget:effAmt,color:c.color};
         if(c.trackExpenses===false)untracked.push(item);
         else env.push(item);
       });
@@ -12222,7 +12240,17 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
           ?<div style={{padding:"18px 0",textAlign:"center",fontSize:13,color:P.muted}}>
               No tracked categories found. Add categories in the Budget tab, or check that they aren't marked "Untracked".
             </div>
-          :envelopes.map(env=>{
+          :(monthPlan.groups||[]).map(g=>{
+            const groupEnvs=envelopes.filter(env=>env.groupId===g.id);
+            if(groupEnvs.length===0)return null;
+            const groupTotal=groupEnvs.reduce((s,env)=>s+env.budget,0);
+            return(
+              <section key={g.id} className="budget-group">
+                <div className="group-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                  <span className="mono" style={{fontSize:11,fontWeight:500,letterSpacing:".08em",textTransform:"uppercase",color:P.muted}}>{g.name}</span>
+                  <span className="mono tnum" style={{fontSize:13,fontWeight:500,color:P.ink}}>{fmt(groupTotal)}</span>
+                </div>
+                {groupEnvs.map(env=>{
             const spent=spentMap[env.id]||0;
             const extra=extraFundsMap[env.id]||0;
             const carry=carryoverMap[env.id]||0;
@@ -12270,7 +12298,6 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                       avg {fmt(trend.avg)}
                     </span>
                   )}
-                  <span className="mono" style={{fontSize:10,color:P.faint,letterSpacing:".04em",textTransform:"uppercase"}}>{env.group}</span>
                   {extra>0&&(
                     <span title={`${fmt(extra)} extra funds added this month`} className="mono"
                       style={{fontSize:10,fontWeight:600,color:P.success,display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
@@ -12341,6 +12368,9 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                   </div>
                 )}
               </div>
+            );
+                })}
+              </section>
             );
           })
         }
@@ -13268,21 +13298,19 @@ function CarryoverSheet({carryoverModal,prevCats,prevBucketLabel,onClose,onConfi
 }
 
 /* ── HOUSEHOLD VIEW ── */
-function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners}){
-  const[confirmDeleteId,setConfirmDeleteId]=useState(null);
+function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners,onRequestDelete}){
   const total=hh.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
   const mine=total*(hh.splitMine/100),theirs=total-mine;
-  const card=neu(16);
   return(
     <div style={{background:"transparent",padding:0,margin:0}}>
-      <div style={{...card,padding:16,marginBottom:16}}>
+      <div style={{borderBottom:`1px solid ${P.hairline}`,paddingBottom:16,marginBottom:16}}>
         <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:12}}>
           <span style={{fontSize:13,fontWeight:600,color:P.sub}}>Shared monthly expenses</span>
           <span className="tnum" style={{fontSize:15,fontWeight:700,color:P.ink}}>{fmt(total)}</span>
         </div>
 
         {/* ── visual split bar ── */}
-        <div style={{height:22,borderRadius:999,overflow:"hidden",display:"flex",marginBottom:6}}>
+        <div style={{height:22,overflow:"hidden",display:"flex",marginBottom:6}}>
           <div style={{width:`${hh.splitMine}%`,background:P.gr,display:"flex",alignItems:"center",justifyContent:"center",transition:"width .3s"}}>
             {hh.splitMine>=14&&<span style={{fontSize:11,fontWeight:700,color:"#fff"}} className="tnum">{hh.splitMine}%</span>}
           </div>
@@ -13297,16 +13325,16 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
 
         {/* ── metric cards ── */}
         <div style={{display:"flex",gap:12,marginBottom:12}}>
-          <div style={{flex:1,background:P.grS,borderRadius:12,padding:12}}>
+          <div style={{flex:1,background:"transparent",border:`1px solid ${P.hairline}`,padding:12}}>
             <div style={{fontSize:11,color:P.grD}}>{owners.me}'s Share</div>
             <div className="mono tnum" style={{fontSize:22,fontWeight:600,color:P.grD}}>{fmt(mine)}</div>
           </div>
-          <div style={{flex:1,background:P.brS,borderRadius:12,padding:12}}>
+          <div style={{flex:1,background:"transparent",border:`1px solid ${P.hairline}`,padding:12}}>
             <div style={{fontSize:11,color:P.br}}>{owners.wife}'s Share</div>
             <div className="mono tnum" style={{fontSize:22,fontWeight:600,color:P.br}}>{fmt(theirs)}</div>
           </div>
         </div>
-        <input type="range" min="0" max="100" value={hh.splitMine} onChange={e=>setSplit(Number(e.target.value))} style={{width:"100%"}}/>
+        <input type="range" className="flat-range" min="0" max="100" value={hh.splitMine} onChange={e=>setSplit(Number(e.target.value))} style={{width:"100%"}}/>
       </div>
 
       {/* ── recurring expenses — 2-column grid on wider screens, tight card list on mobile ──
@@ -13315,7 +13343,7 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
           of the toggle (previously an X sat right next to the amount field). */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(240px,100%),1fr))",gap:10,marginBottom:10}}>
         {hh.expenses.map(e=>(
-          <div key={e.id} style={{...card,padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
+          <div key={e.id} style={{border:`1px solid ${P.hairline}`,padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{width:10,height:10,borderRadius:999,background:e.color,flexShrink:0}}/>
               <input value={e.name} onChange={ev=>updateExpense(e.id,{name:ev.target.value})} className="bare" style={{flex:1,minWidth:0,fontSize:14}}/>
@@ -13330,20 +13358,16 @@ function HouseholdView({hh,setSplit,addExpense,updateExpense,removeExpense,fmt,o
                   color:e.trackInBills?P.grD:P.faint}}>
                 <I.PiggyBank size={13}/>{e.trackInBills?"Tracked in Bills":"Track in Bills"}
               </button>
-              <IconButton icon={I.Trash} label={`Delete ${e.name||"recurring expense"}`} onClick={()=>setConfirmDeleteId(e.id)} size={15} style={{color:P.red,opacity:.5}}/>
+              <IconButton icon={I.Trash} label={`Delete ${e.name||"recurring expense"}`} onClick={()=>onRequestDelete(e.id)} size={15} style={{color:P.red,opacity:.5}}/>
             </div>
           </div>
         ))}
       </div>
       <button onClick={addExpense}
-        style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",borderRadius:14,padding:"10px 16px",
-          fontSize:14,fontWeight:500,color:P.gr,background:P.sf,border:`1px dashed ${P.line}`}}>
+        style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"12px 0",fontSize:13,fontWeight:500,
+          color:P.muted,background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`}}>
         <I.Plus size={14}/>Add shared expense
       </button>
-      <ConfirmDialog open={!!confirmDeleteId} title="Delete this expense?"
-        message="This removes it from the shared split and, if it was tracked in Bills, from future months' Bills lists. Past Bills history is kept."
-        onConfirm={()=>{removeExpense(confirmDeleteId);setConfirmDeleteId(null);}}
-        onCancel={()=>setConfirmDeleteId(null)}/>
     </div>
   );
 }
@@ -13359,6 +13383,16 @@ function monthKeyLabel(mk){
   if(!mk)return"";
   const[y,m]=mk.split("-").map(Number);
   return new Date(y,m-1,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+}
+/* Step a "YYYY-MM" bills monthKey by n calendar months. Used to build a fixed
+   navigable window independent of which months actually have bill rows —
+   viewing a month must not depend on data already existing for it, the same
+   as Budget/Expenses' month nav. */
+function shiftMonthKey(mk,n){
+  const[y,m]=mk.split("-").map(Number);
+  const total=y*12+(m-1)+(Number(n)||0);
+  const ny=Math.floor(total/12),nm=total-ny*12+1;
+  return`${String(ny).padStart(4,"0")}-${String(nm).padStart(2,"0")}`;
 }
 function AdjustReserveSheet({currentReserve,fmt,onClose,onConfirm}){
   useScrollLock(true);
@@ -13402,11 +13436,18 @@ function AdjustReserveSheet({currentReserve,fmt,onClose,onConfirm}){
     </Portal>
   );
 }
-function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey,fmt,owners}){
+function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpeningReserve,adjustBillsReserve,updateBill,currentMonthKey,fmt,owners,
+  hh,setSplit,addExpense,updateExpense,removeExpense}){
   const isMobile=useIsMobile();
+  /* Fixed navigable window (24 months back, 6 forward) rather than only the
+     months that already have bill rows — paging to a past month must not be
+     blocked just because nothing was generated for it yet. Any monthKey
+     actually present in `bills` is unioned in too, in case data ever exists
+     outside this window. */
   const monthKeys=useMemo(()=>{
     const set=new Set(bills.map(b=>b.monthKey));
     set.add(currentMonthKey);
+    for(let n=-24;n<=6;n++)set.add(shiftMonthKey(currentMonthKey,n));
     return[...set].sort();
   },[bills,currentMonthKey]);
   const[viewMonth,setViewMonth]=useState(currentMonthKey);
@@ -13419,7 +13460,10 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
   const monthDiff=totalAllocated-totalPaid;
   const[showAdjust,setShowAdjust]=useState(false);
   const[showHistory,setShowHistory]=useState(false);
+  const[showHousehold,setShowHousehold]=useState(false);
   const[openBills,setOpenBills]=useState(()=>new Set());
+  const[confirmDeleteExpId,setConfirmDeleteExpId]=useState(null);
+  const householdProps={hh,setSplit,addExpense,updateExpense,removeExpense,fmt,owners,onRequestDelete:setConfirmDeleteExpId};
 
   /* Rail derivations — all pure reads. The reserve breakdown reconciles to the
      hero figure the same way computeBillsReserve() builds it: opening + Σ over
@@ -13584,9 +13628,27 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
                   <div className="tnum" style={{fontSize:13,fontWeight:500,color:a.amount>=0?P.gr:P.wine,flexShrink:0}}>{signed(a.amount)}</div>
                 </div>
               ))}
+              {/* Each row above is a frozen point-in-time delta — it doesn't
+                  track what's happened to bills since. This closes the gap
+                  that made a nonzero-looking history sit next to a 0 hero. */}
+              <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${P.hairline}`,padding:"10px 0",marginTop:4}}>
+                <span style={{fontSize:12,color:P.faint}}>Current reserve (today)</span>
+                <span className="tnum" style={{fontSize:13,fontWeight:600,color:billsReserve<0?P.wine:P.ink}}>{fmt(billsReserve)}</span>
+              </div>
             </div>
           )
         )}
+
+        {/* ── Shared expenses (Household) — mobile only; promoted to the rail on desktop ── */}
+        {isMobile&&<div>
+          <button onClick={()=>setShowHousehold(v=>!v)}
+            style={{display:"flex",alignItems:"center",gap:6,width:"100%",justifyContent:"space-between",padding:"10px 0",marginTop:8,
+              background:"transparent",border:"none",borderTop:`1px solid ${P.hairline}`,minHeight:44}}>
+            <span className="t-section" style={{color:P.muted}}>Shared expenses (Household)</span>
+            <I.Chevron size={14} style={{color:P.faint,transform:showHousehold?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}/>
+          </button>
+          {showHousehold&&<div style={{marginTop:8}}><HouseholdView {...householdProps}/></div>}
+        </div>}
       </div>{/* end .split-pad-r */}
 
       {/* ── RIGHT RAIL — read-only derived modules; stacks below on mobile ── */}
@@ -13636,6 +13698,13 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
               </div>
             ))}
         </div>
+
+        {/* Shared expenses (Household) — always visible here on desktop, folded
+            into a mobile accordion in the main column instead (see above). */}
+        {!isMobile&&<div style={{marginTop:28}}>
+          {secLabel("Shared expenses (Household)")}
+          <HouseholdView {...householdProps}/>
+        </div>}
       </div>{/* end rail */}
 
      </div>{/* end .split-8-4 */}
@@ -13643,6 +13712,10 @@ function BillsView({bills,billAdjustments,billsReserve,openingReserve,setOpening
       {showAdjust&&
         <AdjustReserveSheet currentReserve={billsReserve} fmt={fmt} onClose={()=>setShowAdjust(false)}
           onConfirm={(newBalance,note)=>{adjustBillsReserve(newBalance,note);setShowAdjust(false);}}/>}
+      <ConfirmDialog open={!!confirmDeleteExpId} title="Delete this expense?"
+        message="This removes it from the shared split and, if it was tracked in Bills, from future months' Bills lists. Past Bills history is kept."
+        onConfirm={()=>{removeExpense(confirmDeleteExpId);setConfirmDeleteExpId(null);}}
+        onCancel={()=>setConfirmDeleteExpId(null)}/>
     </div>
   );
 }
