@@ -3808,8 +3808,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.60.0";
-const BUILD_ID="2026.08.28.0008";
+const APP_VERSION="1.60.1";
+const BUILD_ID="2026.09.02.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -9445,6 +9445,7 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
   const primary=nwSettings.primary||"PHP";
   const secondary=nwSettings.secondary||["SAR","USD","PHP"];
   const primaryVal=convert?convert(val,"SAR",primary):null;
+  const momAmtDisplay=momAmt!=null?(convert?convert(Math.abs(momAmt),"SAR",primary):null):null;
   const label=profile==="household"?"Household":(owners[profile]||profile);
   const trendPts=sorted.map(h=>({value:h.net}));
   /* Dominant Net Worth panel (Stitch Dashboard, left column): technical label,
@@ -9473,7 +9474,7 @@ function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDispl
       {momAmt!=null&&
         <div className="mono tnum" style={{display:"flex",alignItems:"center",gap:6,fontSize:12,marginTop:10,color:momAmt>=0?P.success:P.attention,fontWeight:500}}>
           {momAmt>=0?<I.ArrowUp size={13}/>:<I.ArrowDown size={13}/>}
-          <span>SAR {Math.round(Math.abs(momAmt)).toLocaleString("en-US")}{momPct!=null?` (${momPct.toFixed(1)}%)`:pctUnstable?" · new baseline":""} this month</span>
+          <span>{momAmtDisplay!=null?`${primary} ${Math.round(momAmtDisplay).toLocaleString("en-US")}`:`SAR ${Math.round(Math.abs(momAmt)).toLocaleString("en-US")}`}{momPct!=null?` (${momPct.toFixed(1)}%)`:pctUnstable?" · new baseline":""} this month</span>
         </div>}
       {convert&&
         <div style={{display:"flex",flexWrap:"wrap",gap:14,marginTop:10}}>
