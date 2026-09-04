@@ -5,7 +5,7 @@
 // index.html and with version.json — all three should be bumped together
 // on every deploy so the displayed build and the cached app release always
 // correspond.
-const BUILD_ID = '2026.09.02.0001';
+const BUILD_ID = '2026.09.04.0001';
 const CACHE_NAME = `allocation-shell-${BUILD_ID}`;
 
 const APP_SHELL = [
@@ -61,12 +61,18 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// The HTML shell is what actually changes on every deploy (features, bug
-// fixes). Serving it stale-while-revalidate means you're always looking at
-// last deploy's version and only catch up on the *next* load - which is how
-// the scroll-lock fix appeared to "not work" even after being pushed. Treat
-// it as network-first instead: try the network for the current bytes, and
-// only fall back to cache if you're offline.
+// The HTML shell is served stale-while-revalidate: serve the cached bytes
+// instantly (so the app opens immediately even on a slow-but-not-offline
+// connection, instead of hanging on a ~1.2 MB document download), and refresh
+// the cache in the background for the next open. This was network-first for a
+// while — to avoid ever being "one deploy behind" — but that traded away
+// exactly the instant-open behaviour a PWA exists for, and hung the app on poor
+// data. Freshness is preserved a different way: version.json is network-only
+// (below) and index.html compares it against the running BUILD_ID, so a newer
+// deploy surfaces as an in-app "Update available — reload" prompt, and the
+// next launch is current regardless because this revalidate already refreshed
+// the cache. skipWaiting + clients.claim (above) mean the new shell takes over
+// on that next load without a second refresh.
 function isAppShellRequest(request) {
   const url = new URL(request.url);
   return url.origin === self.location.origin &&
@@ -95,16 +101,23 @@ self.addEventListener('fetch', (event) => {
   if (isAppShellRequest(request)) {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
-        try {
-          const response = await fetch(request);
-          if (response && response.ok) cache.put(request, response.clone());
-          return response;
-        } catch (err) {
-          // Offline: fall back to whatever shell we have cached.
-          const cached = await cache.match(request);
-          if (cached) return cached;
-          throw err;
-        }
+        // A navigation may arrive as a request for /index.html even though the
+        // shell was precached under './' (Pages 308-redirects the two), so fall
+        // back to the './' entry when an exact match misses.
+        const cached =
+          (await cache.match(request)) ||
+          (await cache.match('./'));
+
+        const networkFetch = fetch(request)
+          .then((response) => {
+            if (response && response.ok) cache.put(request, response.clone());
+            return response;
+          })
+          .catch(() => cached); // offline and not cached: fall through below
+
+        // Serve the cached shell instantly if we have it, revalidate in the
+        // background; otherwise (first ever load) wait on the network.
+        return cached || networkFetch;
       })
     );
     return;

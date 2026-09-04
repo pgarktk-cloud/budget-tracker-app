@@ -3808,8 +3808,8 @@ function bucketHistoryCombined(profile,ctx,savingsNames,investNames,maxBuckets=1
    must also be copied into sw.js's BUILD_ID (used in the cache name) so
    the displayed build and the cached app release always correspond, and
    into version.json so the app can detect when a newer build is live.  */
-const APP_VERSION="1.60.1";
-const BUILD_ID="2026.09.02.0001";
+const APP_VERSION="1.61.0";
+const BUILD_ID="2026.09.04.0001";
 
 /* ── Cloudflare Worker URL ──
    Replace with YOUR worker URL after deploying (see SETUP-GUIDE.md)     */
@@ -8837,6 +8837,27 @@ function App(){
   const barList=navList.slice(0,MOBILE_BAR_MAX);
   const barMoreList=moreTabsFor(barList);
 
+  /* App-level update check — drives the global "Update available" banner.
+     Runs once on mount; version.json is network-only (see sw.js), so it reports
+     the newest deployed buildId regardless of the now cache-first shell. A
+     mismatch with the running BUILD_ID means a newer build is live: because the
+     shell is served stale-while-revalidate, the fresh copy is already warming
+     the cache for the next launch, and tapping the banner reloads to it now.
+     Dismissible, and it reappears on the next open until the running build
+     catches up. Mirrors the check inside SettingsModal, which only runs while
+     Settings is open — this one runs on every load, which the banner needs. */
+  const[updateInfo,setUpdateInfo]=useState(null);
+  const[updateDismissed,setUpdateDismissed]=useState(false);
+  useEffect(()=>{
+    let cancelled=false;
+    fetch(`./version.json?t=${Date.now()}`,{cache:"no-store"})
+      .then(r=>r.ok?r.json():Promise.reject(new Error("bad response")))
+      .then(j=>{if(!cancelled)setUpdateInfo(j);})
+      .catch(()=>{});
+    return()=>{cancelled=true;};
+  },[]);
+  const updateReady=!!updateInfo&&!!updateInfo.buildId&&updateInfo.buildId!==BUILD_ID;
+
   return(
     <div style={{background:P.bg,color:P.ink,minHeight:"100dvh"}}>
       {cloudWaiting&&(
@@ -8950,6 +8971,28 @@ function App(){
       <div className="app-main">
       <div className="app-content" style={{boxSizing:"border-box",
         padding:"0 calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + var(--bottom-nav-h) + 96px) calc(env(safe-area-inset-left) + 16px)"}}>
+
+        {/* Global update nudge — the cache-first shell means a returning user
+            can be a build behind; version.json (network-only) surfaces it here
+            so it's visible from any tab, not only buried in Settings. In flow
+            at the top of the content column (no fixed positioning, so no
+            z-index/containing-block traps), dismissible, tap to reload. */}
+        {updateReady&&!updateDismissed&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:12,marginBottom:-4,
+            padding:"10px 12px",borderRadius:2,background:P.surface,border:`1px solid ${P.hairline}`}}>
+            <I.Refresh size={15} style={{color:P.gr,flexShrink:0}}/>
+            <button onClick={()=>window.location.reload()} className="mono"
+              style={{flex:1,textAlign:"left",background:"transparent",border:"none",padding:0,color:P.ink,
+                fontSize:11,fontWeight:500,letterSpacing:".04em",textTransform:"uppercase",cursor:"pointer"}}>
+              Update available — tap to reload
+            </button>
+            <button onClick={()=>setUpdateDismissed(true)} aria-label="Dismiss update notice"
+              style={{background:"transparent",border:"none",padding:4,color:P.sub,opacity:.5,
+                display:"flex",alignItems:"center"}}>
+              <I.X size={13}/>
+            </button>
+          </div>
+        )}
 
         {/* header */}
         {/* The approved compact mono page header: the current destination NAMES
@@ -9419,28 +9462,43 @@ function HomeProfileToggle({profile,setProfile,owners}){
   );
 }
 
-/* a. Hero Card — net worth for the selected profile, MoM change from
-   data.history[] (reused, not recomputed), secondary currencies per
-   data.homeDisplay.netWorth, plus a trend sparkline off the same history[].
-   MoM-%-sanity guard: if the prior month's net is near-zero relative to the
-   current one, the percentage is mathematically unstable/misleading (a
-   near-zero denominator can turn an ordinary swing into "1500%"), most often
-   because a past month's auto-captured snapshot was saved before that
-   month's investment quotes had ever been fetched (invSar was still 0 that
-   month) — a data-staleness artifact, not a bug in the momPct formula
-   itself. In that case we still show the raw amount change but hide the %
-   rather than print something misleading. */
-function HeroCard({profile,setProfile,owners,netWorthByProfile,history,homeDisplay,convert,ratesErr,onOpen}){
+/* a. Hero Card — net worth for the selected profile. The "up this month"
+   change is per-profile: it compares the profile's live net worth against its
+   own month-start baseline drawn from data.snapshots[] (the daily per-owner
+   store). It used to read data.history[], which holds only a combined
+   household timeline with no owner field — which is why the change was
+   identical whether you viewed Me or Wife. Baseline = the profile's latest
+   snapshot dated on or before the 1st of the current calendar month; if none
+   exists yet the whole change line is hidden rather than invented. Secondary
+   currencies per data.homeDisplay.netWorth; the trend sparkline is still off
+   the combined history[] (a per-profile monthly series would need rebuilding
+   from daily snapshots — deliberately out of scope here).
+   MoM-%-sanity guard: if the baseline net is near-zero relative to the current
+   one, the percentage is mathematically unstable/misleading (a near-zero
+   denominator can turn an ordinary swing into "1500%"), most often because an
+   early snapshot was saved before that profile's investment quotes had ever
+   been fetched (invSar was still 0). In that case we still show the raw amount
+   change but hide the % rather than print something misleading. */
+function HeroCard({profile,setProfile,owners,netWorthByProfile,history,snapshots,homeDisplay,convert,ratesErr,onOpen}){
   const isMobile=useIsMobile();
   const ref=useRef(null);
   const val=netWorthByProfile(profile);
   useFlash(Math.round(val),ref);
   const sorted=[...(history||[])].sort((a,b)=>a.month.localeCompare(b.month));
-  const latest=sorted[sorted.length-1];
-  const prev=sorted[sorted.length-2];
-  const momAmt=(latest&&prev)?latest.net-prev.net:null;
-  const pctUnstable=prev&&(Math.abs(prev.net)<Math.abs(latest.net)*0.05);
-  const momPct=(momAmt!=null&&prev&&prev.net!==0&&!pctUnstable)?(momAmt/Math.abs(prev.net))*100:null;
+  /* Per-profile "up this month" (see block comment). Baseline is this
+     profile's latest snapshot dated on or before the 1st of the current
+     calendar month; `val` is its live net worth. Both are SAR, so the delta is
+     SAR and converts for display exactly like the value above. No baseline yet
+     ⇒ momAmt stays null and the whole change line is hidden. */
+  const monthStart=new Date().toISOString().slice(0,7)+"-01";
+  const baseSnap=[...(snapshots||[])]
+    .filter(s=>s.profile===profile&&typeof s.date==="string"&&s.date<=monthStart)
+    .sort((a,b)=>a.date.localeCompare(b.date))
+    .pop();
+  const baseNet=baseSnap?baseSnap.net:null;
+  const momAmt=(baseNet!=null)?val-baseNet:null;
+  const pctUnstable=baseNet!=null&&(Math.abs(baseNet)<Math.abs(val)*0.05);
+  const momPct=(momAmt!=null&&baseNet!=null&&baseNet!==0&&!pctUnstable)?(momAmt/Math.abs(baseNet))*100:null;
   const nwSettings=(homeDisplay&&homeDisplay.netWorth)||{primary:"PHP",secondary:["SAR","USD","PHP"]};
   const primary=nwSettings.primary||"PHP";
   const secondary=nwSettings.secondary||["SAR","USD","PHP"];
@@ -10338,7 +10396,7 @@ function HomeView({budgetOwner,setBudgetOwner,profile,setProfile,owners,netWorth
         {isVisible("hero")&&
           <div className="home-panel panel-networth">
             <HeroCard profile={profile} setProfile={setProfileSynced} owners={owners}
-              netWorthByProfile={netWorthByProfile} history={history} homeDisplay={homeDisplay} convert={convert} ratesErr={ratesErr}
+              netWorthByProfile={netWorthByProfile} history={history} snapshots={data.snapshots} homeDisplay={homeDisplay} convert={convert} ratesErr={ratesErr}
               onOpen={()=>setTab("networth")}/>
           </div>}
         {isVisible("portfolio")&&
@@ -11852,6 +11910,20 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
       .forEach(e=>{if(!seen.has(e.name))seen.set(e.name,e.catId);});
     return[...seen.keys()].slice(0,40);
   },[expenses,budgetOwner]);
+  /* name → most-recently-used catId, for the Title autocomplete: tapping a
+     remembered name pre-selects the category it was last logged under (still
+     editable). Same owner-scoped, transfer/extra-funds/carryover-excluded pool
+     as recentNames above — it just keeps the catId recentNames throws away.
+     The click validates this against live tracked options before applying it,
+     so a since-deleted or now-untracked category degrades to filling the name
+     alone rather than selecting an option the dropdown doesn't offer. */
+  const nameLastCat=useMemo(()=>{
+    const m=new Map();
+    [...expenses].filter(e=>(e.owner||'me')===budgetOwner&&e.name&&!e.isTransfer&&!e.isExtraFunds&&!e.isCarryover)
+      .sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .forEach(e=>{if(!m.has(e.name))m.set(e.name,e.catId);});
+    return m;
+  },[expenses,budgetOwner]);
   /* Candidate pool for the name suggestions: names used in the selected
      category first, then everything else this owner has typed. Deliberately
      unsliced — rankNameSuggestions does the filtering and capping at render
@@ -12645,11 +12717,15 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
             )}
 
             {/* ── Repeat: refill a whole past transaction in one tap ──
-                Deliberately a SEPARATE affordance from the name chips under
-                Title, which still fill the name only. Two controls with two
-                honest meanings beats one chip whose effect depends on where it
-                came from — and it leaves the name chips free to keep narrowing
-                as you type, which is their whole job.
+                Still a SEPARATE affordance from the name chips under Title.
+                The name chips fill the name AND pre-select the category that
+                name was last logged under (see nameLastCat) — but never the
+                amount. Repeat/Shortcut are the whole-transaction refill:
+                name + category + amount in one tap. So the split is now name+
+                category (varying cost, one field left to type) vs. the exact
+                past transaction, which is a clearer division of labour than
+                the old name-only-vs-everything one — and it leaves the name
+                chips free to keep narrowing as you type, which is their job.
                 Amount is prefilled and then selected, so a recurring-but-
                 varying cost (groceries) costs one keystroke rather than being
                 a reason not to prefill at all. */}
@@ -12760,7 +12836,17 @@ function ExpenseTrackerView({data,plans,planForMonth,planSourceForMonth,clonePla
                     <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                       {sugg.map(n=>(
                         <button key={n} onMouseDown={e=>e.preventDefault()}
-                          onClick={()=>setForm(f=>({...f,name:n}))}
+                          onClick={()=>setForm(f=>{
+                            /* Fill the name, and pre-select its last-used
+                               category when that category is still a live
+                               tracked option (overwriting any current pick —
+                               tapping the remembered name is explicit intent).
+                               If it's since been deleted or untracked, leave
+                               the category field as-is and fill the name only. */
+                            const cat=nameLastCat.get(n);
+                            const valid=cat&&allCatOptions.some(c=>c.id===cat&&c.tracked);
+                            return valid?{...f,name:n,catId:cat}:{...f,name:n};
+                          })}
                           style={{fontSize:11,borderRadius:2,padding:"3px 9px",background:"var(--surface)",border:"1px solid var(--hairline)",color:P.sub}}>
                           {n}
                         </button>
