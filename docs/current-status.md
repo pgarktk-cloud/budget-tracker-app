@@ -1,12 +1,69 @@
 # Current Status
 
-_Last updated: 2026-08-28 — **v1.60.0 shipped & DEPLOYED** (More/Settings/system
-overlays recomposed to Technical Ledger — the final utility-surface pass; Forecast
-intentionally deferred). Commit `08d579b` on main (pushed), live on the apex
-`https://whered-it-go.pages.dev` (version.json returns 1.60.0 / build
-`2026.08.28.0008`). Presentation-only; no data/sync/domain change; all 26 runners +
-parse green. The Technical Ledger redesign is now effectively COMPLETE (only the
-hidden Forecast tab remains un-ported). See "State of play" below._
+_Last updated: 2026-09-04 — **v1.61.0** (four functional changes: transaction
+category memory, per-owner Net Worth month delta, PWA rename to Where'dItGo,
+instant offline-first load). Commit `b2e70da` on `main`. Version 1.61.0 / build
+`2026.09.04.0001` (all three spots agree). This is the first FUNCTIONAL change
+since the Technical Ledger redesign completed — it touches domain / display /
+PWA / service-worker code, not just presentation. All 26 runners + parse green,
+plus a pure logic harness and a live Chrome drive-through that confirmed all
+four. **DEPLOYED & confirmed on the production apex** `https://whered-it-go.pages.dev`
+(served version.json 1.61.0 / build `2026.09.04.0001`, index BUILD_ID matches,
+manifest name `Where'dItGo`, sw.js carries the SWR shell). Redesign remains
+COMPLETE bar the hidden Forecast tab._
+
+**v1.61.0 — category memory · per-owner NW delta · PWA name · instant load (2026-09-04):**
+- **Transaction category memory.** The Title-field name autocomplete
+  (`ExpenseTrackerView`) now pre-selects the category a remembered name was
+  **last logged under**, still editable. A new `nameLastCat` memo (sits right
+  after `recentNames`, same owner-scoped / transfer-&-extra-funds-excluded pool)
+  keeps the `catId` `recentNames` throws away. The chip handler applies it only
+  when that category is a **live tracked option** (`allCatOptions.some(c=>c.id===cat&&c.tracked)`),
+  overwriting a current pick when valid and falling back to **name-only** (pick
+  untouched) when the category is since-deleted or untracked. Repeat/Shortcut
+  chips are unchanged — they remain the whole-transaction (incl. amount) refill;
+  the design note above the Repeat row was updated to reflect the new split
+  (name+category vs. the exact past transaction).
+- **Net Worth "up this month" is per-profile.** `HeroCard`'s delta read the
+  household-only `data.history` (no owner field), so it was identical for Me and
+  Wife — the reported bug. It now derives from the per-owner `data.snapshots`
+  store: baseline = that profile's latest snapshot dated **on or before the 1st
+  of the current calendar month**, delta = live `netWorthByProfile(profile)` −
+  baseline (both SAR, converted for display like the value above). No baseline
+  yet ⇒ the change line is **hidden**, not invented. All three profiles use the
+  one path. The trend **sparkline** still runs off the combined `history[]`
+  (a per-profile monthly series would need rebuilding from daily snapshots —
+  deliberately out of scope). `HeroCard` gained a `snapshots` prop, passed
+  `snapshots={data.snapshots}` from `HomeView` (same as `PortfolioCard`).
+- **PWA name.** `manifest.webmanifest` `name`/`short_name`: `Allocation` →
+  `Where'dItGo` (the `<title>`/apple title were already `Where'dItGo`). Internal
+  `allocation-shell-` cache prefix and the worker header comment left as-is
+  (not user-facing). Manifest is in `APP_SHELL`, so this needed the build bump.
+- **Instant offline-first load.** `sw.js` served the app shell **network-first**,
+  so on a slow-but-not-offline connection it hung on the ~1.2 MB document before
+  painting. Switched to **stale-while-revalidate** (serve cache instantly,
+  refresh in background). Freshness preserved differently: `version.json` stays
+  network-only and a new **App-level check** drives a dismissible global
+  **"Update available — tap to reload"** banner at the top of every screen
+  (reusing the exact `versionCheck.buildId !== BUILD_ID` compare + `reload()`
+  that previously lived only inside `SettingsModal`). `skipWaiting`/`clients.claim`
+  already make the next launch pick up the fresh shell.
+- **Verified live (Chrome, seeded data on a sandbox origin):** delta differs
+  Me/Wife/Household; autocomplete auto-selects a valid tracked last-category and
+  falls back to name-only for an untracked one without clobbering an existing
+  pick; manifest serves `Where'dItGo`; the update banner appears on a build
+  mismatch and dismisses. App mounts clean (no TDZ/blank screen). **NOT verified
+  live:** the SW cache-first behaviour itself (needs the SW controlling a real
+  origin across two throttled opens) — standard SWR pattern, parse-clean.
+- **No new runner** was added — the two behavioural changes are inline JSX
+  handlers, not sliceable module functions; they're covered by a `scratchpad`
+  logic harness (mirrors the expressions) + the live drive-through. If either
+  gets refactored to a module-scope pure fn later, add a committed runner then.
+
+_Prior:_ v1.60.0 shipped & DEPLOYED (More/Settings/system overlays recomposed to
+Technical Ledger — the final utility-surface pass; Forecast deferred). Commit
+`08d579b` on main, live on the apex (version.json 1.60.0 / build
+`2026.08.28.0008`). Presentation-only.
 
 **v1.60.0 — More / Settings / overlays (2026-08-28, DEPLOYED):**
 - **More** (`MoreSheet`): icon-tile grid → full-width hairline ledger rows
@@ -96,36 +153,49 @@ value; a few sample-data empty/`$0` states.
 
 ## State of play — read this first
 
-**LATEST SHIPPED: v1.59.2 / build `2026.08.28.0007`** — not yet committed/
-pushed/deployed as of this writing (see commit step below). All 26 runners +
-parse green; browser-verified (desktop + 390px mobile) via local static
-server. Changes:
-- **Currency retired as a tab.** Removed from `MORE_TABS`/`TAB_META`/the tab
-  render dispatch. `CurrencyView` itself is unchanged; it's now wrapped by a
-  new `CurrencySheet`, opened from a header icon button (new `I.Coins` glyph
-  — `I.Swap` was already used for the converter's own from/to swap control)
-  placed left of the sync-cloud pill and Settings. Uses the same full-screen
-  `.sheet-task` surface as Add/Edit Transaction (sharp corners, mono
-  head/body) — it initially shipped on the smaller rounded `.sheet`, then was
-  corrected to match. `navTabsFor` self-heals any device that had Currency
-  pinned to its custom nav bar (no migration needed — confirmed by
-  `navtabtest.cjs`'s existing "tab removed from the app" case).
-- **Bills desktop rail no longer renders the full Household expense grid
-  inline** (it was uncapped and made the rail's page scroll excessively).
-  New `HouseholdShareSummary` shows a read-only split bar + share totals plus
-  a "View shared expenses (N)" button; the full editable list (split slider,
-  row edit/delete, "Track in Bills", "Add shared expense") moved into a new
-  `SharedExpensesModal` (same `.sheet-task` pattern). Mobile is untouched —
-  its accordion still renders the unmodified `HouseholdView` inline, exactly
-  as before. No CRUD logic duplicated; `HouseholdView` itself is unchanged
-  and is reused verbatim inside the modal.
-- Household-tab removal itself was already shipped in v1.58.3 below; this
-  session found nothing left to do there (confirmed no lingering "household"
-  tab-registry entries) and instead fixed the real problem raised — the
-  rail's scroll length.
+**LATEST SHIPPED & DEPLOYED: v1.61.0 / build `2026.09.04.0001`** — commit
+`b2e70da` on `main`, confirmed live on the apex `https://whered-it-go.pages.dev`
+(served version.json 1.61.0, index BUILD_ID matches, manifest `Where'dItGo`,
+sw.js carries the SWR shell). All 26 runners + parse green; a scratchpad logic
+harness and a live Chrome drive-through verified all four changes. **First
+FUNCTIONAL change since the Technical Ledger redesign completed.** Full detail is
+in the v1.61.0 block at the very top of this file.
 
-**Next C screens: More → Settings → Forecast.** (Currency is done — it's not
-a screen any more.)
+**What v1.61.0 did (one line each):**
+- Transaction Title-autocomplete now pre-selects a remembered name's **last-used
+  category** (`nameLastCat`; tracked-only, name-only fallback, doesn't clobber a
+  valid pick). Repeat/Shortcut unchanged.
+- Net Worth **"up this month" is now per-profile** via `data.snapshots` (was
+  `data.history`, household-only → identical for Me/Wife). Hidden when no
+  month-start baseline.
+- PWA manifest renamed **Allocation → Where'dItGo** (`name`/`short_name`).
+- Service-worker shell **network-first → stale-while-revalidate** for instant
+  offline-first load, with a global **"Update available — tap to reload"** banner
+  (App-level `version.json` check) so freshness stays discoverable.
+
+**Carried forward / open for the next session:**
+- **SW cache-first is NOT verified live.** The instant-load claim rests on code +
+  parse-check only (a throwaway localhost port doesn't exercise a controlling
+  SW). Prove it: open the deployed PWA twice on a throttled connection (first
+  open warms the cache, second should paint instantly), and confirm the update
+  banner shows after a *later* deploy bumps the build.
+- **Net Worth sparkline is still household-only** under a personal profile view —
+  only the delta was made per-profile. Making the trend per-profile needs a
+  per-owner *monthly* series rebuilt from daily `snapshots`. Deferred.
+- **No committed runner** for the two behavioural changes (they're inline JSX
+  handlers, not sliceable module fns). Covered by a scratchpad logic harness +
+  the live drive-through; if either is refactored to module scope, add a runner
+  then.
+- **Forecast** is the one un-ported redesign screen (intentionally hidden in
+  `HIDDEN_TABS`).
+
+**Deploy reminder:** `node stage.cjs && npx wrangler pages deploy site
+--project-name=whered-it-go --branch=main`. `stage.cjs` enforces the 3-way
+version match (index/sw/version.json); wrangler is already authenticated
+(`pages:write`). Wrangler's output is **buffered when piped**, so a foreground
+`| tail` run can look hung — run the deploy **backgrounded** and poll its output
+file (this session killed a piped run prematurely before a clean backgrounded
+retry succeeded).
 
 ---
 

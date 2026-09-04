@@ -1,6 +1,23 @@
 # Implementation Roadmap
 
-## ▶ NEXT: Technical Ledger redesign — focused per-screen passes (2026-08-26)
+## ▶ NEXT (as of v1.61.0, 2026-09-04): pick from the carried-forward list
+
+The Technical Ledger redesign is **COMPLETE** (only the hidden Forecast tab is
+un-ported), and v1.61.0 shipped the first batch of functional work on top of it.
+There is no single mandated next build — choose from the open items recorded in
+`docs/current-status.md`'s "State of play" block:
+- **Verify the v1.61.0 SW cache-first change live** (throttled double-open of the
+  deployed PWA) — the one thing that shipped unverified.
+- **Net Worth trend sparkline → per-profile** (the delta already is; the sparkline
+  still reads combined `history[]` — needs a per-owner monthly series from
+  `snapshots`).
+- **Forecast** screen port (the last redesign gap), if/when it's un-hidden.
+- Otherwise, new feature work — grill scope first (`/grill-me`).
+
+_The per-screen redesign recipe below is retained for reference / the Forecast
+port; the screen backlog it lists is otherwise done._
+
+## Reference: Technical Ledger redesign — focused per-screen passes (2026-08-26)
 
 The visual overhaul's foundation + 5 direct-reference screens are done in the
 working tree (see `docs/current-status.md` top block + memory

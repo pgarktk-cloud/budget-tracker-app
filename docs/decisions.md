@@ -1,5 +1,64 @@
 # Architectural & Technical Decisions
 
+## Net Worth "up this month" is per-profile via snapshots, not history (2026-09-04, v1.61.0)
+
+`HeroCard`'s month delta read `data.history`, which is a **household-only**
+monthly timeline with no owner field — so it was byte-identical whether you
+viewed Me or Wife (the reported bug). The per-owner history needed to fix it
+already existed, but only in `data.snapshots` (the daily per-profile store the
+Net Worth tab's charts use). The fix reads that: baseline = the profile's latest
+snapshot dated **on or before the 1st of the current calendar month**, delta =
+live `netWorthByProfile(profile)` − baseline. Three non-obvious calls: (1) it
+**hides** the line when no month-start baseline exists rather than inventing one
+from a mid-month snapshot — honest over pretty, same stance as the trend-card
+gating; (2) all three profiles (incl. household) use the one snapshot path, so
+the household figure is now on the daily-snapshot basis too — a small shift from
+the old monthly `history` basis, accepted for a single code path; (3) the trend
+**sparkline** stays on `history[]` — a per-profile *monthly* series would mean
+rebuilding from daily snapshots, deliberately out of scope, so the sparkline is
+still the combined trend even under a personal view. `HeroCard` gained a
+`snapshots` prop; declaration order is fine because it reads `val`
+(`netWorthByProfile(profile)`) which is declared above the new delta block.
+
+## Category memory lives in the name chips, and the old "name-only" split was revisited on purpose (2026-09-04, v1.61.0)
+
+The Title autocomplete deliberately filled **name only** (a documented stance:
+name chips narrow as you type, Repeat/Shortcut are the whole-transaction refill).
+The user wanted the remembered category too, so that stance was **narrowed, not
+kept**: name chips now fill name + last-used category, and the split becomes
+"name+category (varying cost, one field left to type)" vs. "the exact past
+transaction incl. amount." The `name→last catId` map (`nameLastCat`) is a sibling
+memo to `recentNames` — `recentNames` already built exactly this map internally
+and returned only its keys, so the catId was recomputed rather than plumbed
+through the existing memo (kept them independent to avoid disturbing
+`recentNames`' other reader). Load-bearing: the chip applies the category **only
+when it's a live tracked option** (`allCatOptions.some(c=>c.id===cat&&c.tracked)`)
+— an owner-scoped/tracked check done at click time, so a since-deleted or
+now-untracked last category degrades to filling the name alone and **leaves any
+existing pick untouched**, never selecting an option the dropdown doesn't offer.
+Overwrites a valid current pick because tapping a remembered name is explicit
+intent. No new committed runner: the logic is an inline JSX handler, not a
+sliceable module fn — covered by a scratchpad logic harness + a live drive-through
+(add a runner if it's ever refactored to module scope).
+
+## The app shell is served cache-first again — freshness moved to an in-app prompt (2026-09-04, v1.61.0)
+
+`sw.js` had been switched to **network-first** for the shell specifically to
+avoid users being "one deploy behind" (the scroll-lock-fix "didn't appear" bug).
+That traded away the instant-open a PWA exists for and made the app hang on a
+slow-but-not-offline connection — the user's complaint. Reverted to
+**stale-while-revalidate**: cache paints instantly, network refreshes the cache
+for next launch. The freshness the old choice protected is now handled a
+different way, which is *better* than network-first because it's visible:
+`version.json` stays network-only, and a new **App-level** check drives a
+dismissible global **"Update available — tap to reload"** banner (reusing the
+exact `buildId !== BUILD_ID` compare + `reload()` that had been buried in
+`SettingsModal`, which only runs while Settings is open). So a returning user
+opens instantly AND is told when a newer build is live — the strictly better
+trade the network-first choice couldn't offer. `skipWaiting`/`clients.claim`
+already make the next launch adopt the fresh shell. NOT verified live (needs the
+SW controlling a real origin across two throttled opens); standard SWR pattern.
+
 ## Settings desktop two-pane must NOT disturb the accordion invariants (2026-08-28, v1.60.0)
 
 `settingstest.cjs` pins the accordion's *shape* — `section` is an arrow helper
